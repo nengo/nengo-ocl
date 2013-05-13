@@ -324,13 +324,10 @@ def plan_misc_gemv(queue, alpha, A, X, Xi, beta, Y, Y_in=None):
             const int bb = get_global_id(0);
 
             A_data += %(Aoffset)s + bb * %(As0)s;
-            Xi_data += %(Xioffset)s + bb * %(Xis0)s;
-            X_data += %(Xoffset)s + Xi_data[0] * %(Xs0)s;
+            X_data += %(Xoffset)s + Xi_data[%(Xioffset)s + bb * %(Xis0)s] * %(Xs0)s;
             Y_data += %(Yoffset)s + bb * %(Ys0)s;
             Y_in_data += %(Y_in_offset)s + bb * %(Ys0_in)s;
 
-            Y_data[0] = 0;
-            return;
             for (int mm = 0; mm < %(M)s; ++mm)
             {
                 %(Ytype)s ksum = 0.0;
@@ -351,9 +348,6 @@ def plan_misc_gemv(queue, alpha, A, X, Xi, beta, Y, Y_in=None):
             }
         }
     """ % locals()
-    print text
-
-    print Y.data
 
     _fn = cl.Program(queue.context, text).build().fn
     _fn.set_args(A.data, X.data, Xi.data, Y_in.data, Y.data)

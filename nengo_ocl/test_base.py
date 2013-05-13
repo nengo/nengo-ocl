@@ -127,7 +127,8 @@ def test_net_by_hand():
         encoders = ensemble.shared_encoders.get_value().astype('float32')
         alpha = ensemble.alpha.astype('float32')
         print 'encoders', encoders.shape, alpha.shape
-        return alpha[:, :, None] * encoders
+        print alpha
+        return encoders# * alpha[:, :, None]
 
     def get_bias(obj):
         ensemble = net.get_object(obj)
@@ -175,19 +176,30 @@ def test_net_by_hand():
     prog = lme.prog(dt=net.dt)
     signals_t = lme.signals.get()
     t0 = time.time()
-    print 'signals', lme.signals.data
     for ii in range(1000):
         signals_t[0] = np.sin(ii / 1000.0)
-        lme.signals.set(signals_t)
+        lme.signals.set(signals_t, queue=queue)
         prog()
         queue.finish()
-        signals_t = lme.signals.get()
-        signals.append(signals_t)
+        # N.B. prog currently overwrites the signals_t[0]
+        #      with 0 as the last thing it does, while
+        #      writing the other 3 signals. That's not
+        #      ideal, but a known issue.
+        signals_t = lme.signals.get(queue=queue)
+        signals.append(signals_t.copy())
+        #spikes = lme.lif_output.get(queue=queue)
+        #signals.append(spikes)
     t1 = time.time()
     print 'time', (t1 - t0)
 
     signals = np.asarray(signals)
-    plt.plot(signals[:, 0, 0])
-    plt.plot(signals[:, 1, 0])
+    plt.subplot(2, 1, 1)
+    plt.title('4 signals over time')
+    plt.plot(signals[:, 0])
+    plt.plot(signals[:, 1])
+    plt.plot(signals[:, 2])
+    plt.plot(signals[:, 3])
+    plt.subplot(2, 1, 2)
+    plt.title('TBD')
     plt.show()
 
