@@ -103,7 +103,7 @@ class LIFMultiEnsemble(object):
                 Y=self.signals,)
         return rval
 
-    def encoder_plan(self, lif_ic_beta):
+    def encoder_plan(self):
         if self.n_enc_per_population != 1:
             raise NotImplementedError()
         rval = plan_misc_gemv(self.queue,
@@ -111,14 +111,14 @@ class LIFMultiEnsemble(object):
                 A=self.encoders[:, :, 0],
                 X=self.signals, # use filtered here
                 Xi=self.encoders_signal_idx[:, 0],
-                beta=lif_ic_beta,
+                beta=1.0,
                 Y_in=self.lif_bias,
                 Y=self.lif_ic)
         return rval
 
     def prog(self, dt):
         return Prog([
-            self.encoder_plan(lif_ic_beta=1.0),
+            self.encoder_plan(),
             self.neuron_plan(dt=dt),
             self.decoder_plan(signals_beta=0.0),
         ])

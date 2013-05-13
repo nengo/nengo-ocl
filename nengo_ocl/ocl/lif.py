@@ -16,8 +16,10 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS, OSfilt,
     OStype = OS.ocldtype
     OSfilttype = OSfilt.ocldtype
 
+    # filtering is done outside the upsample loop
+    # so use the real dt, not the upsampled dt
     if pstc >= dt:
-        decay = math.exp(-upsample_dt / pstc)
+        decay = math.exp(-dt / pstc)
     else:
         decay = 0.0
 
@@ -77,8 +79,10 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS, OSfilt,
             }
             else
             {
-                out_spiked_filtered[gid] *= %(decay)s;
-                if (spiked) out_spiked_filtered[gid] += (1 - %(decay)s);
+                %(OSfilttype)s tmp = out_spiked_filtered[gid];
+                out_spiked_filtered[gid] = spiked 
+                    ? tmp * %(decay)s + (1 - %(decay)s)
+                    : tmp * %(decay)s;
 
             }
         }

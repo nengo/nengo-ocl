@@ -349,6 +349,8 @@ def plan_misc_gemv(queue, alpha, A, X, Xi, beta, Y, Y_in=None):
         }
     """ % locals()
 
+    print text
+
     _fn = cl.Program(queue.context, text).build().fn
     _fn.set_args(A.data, X.data, Xi.data, Y_in.data, Y.data)
 
