@@ -100,13 +100,13 @@ def test_net_by_hand():
             signal_size=1,
             queue=queue,
             )
-    lme.pop = {
+    pop = {
         'A': 0,
         'B': 1,
         'C': 2,
         'D': 3,
     }
-    lme.sig = {
+    sig = {
         'sin(t)': 0,
         'A.X': 1,
         'A.mult': 2,
@@ -131,38 +131,41 @@ def test_net_by_hand():
         ensemble = net.get_object(obj)
         return ensemble.bias.astype('float32')
 
-    encoders = lme.encoders.get()
+    # -- bring in neuron bias terms
     bias = lme.lif_bias.get()
-    for pop in 'A', 'B', 'C', 'D':
-        bias[lme.pop[pop], :] = get_bias(pop)
-        encoders[lme.pop[pop], :, 0, :] = get_encoders(pop)
-    lme.encoders.set(encoders)
+    for name in 'A', 'B', 'C', 'D':
+        bias[pop[name], :] = get_bias(name)
     lme.lif_bias.set(bias)
 
+    # -- bring in encoders
+    encoders = lme.encoders.get()
+    for name in 'A', 'B', 'C', 'D':
+        encoders[pop[name], :, 0, :] = get_encoders(name)
+    lme.encoders.set(encoders)
+
+    # -- enumerate incoming signals (for encoding)
     signal_idx = lme.encoders_signal_idx.get()
-    signal_idx[0, 0] = 0 # A <- in
-    signal_idx[1, 0] = 1 # B <- Adec
-    signal_idx[2, 0] = 2 # C <- Apow
-    signal_idx[3, 0] = 3 # D <- Amult
+    signal_idx[pop['A'], 0] = sig['sin(t)']
+    signal_idx[pop['B'], 0] = sig['A.X']
+    signal_idx[pop['C'], 0] = sig['A.pow']
+    signal_idx[pop['D'], 0] = sig['A.mult']
     lme.encoders_signal_idx.set(signal_idx)
 
+    # -- bring in decoder weights
     decoders = lme.decoders.get()
-    # -- leave them at zero
+    # -- leave decoders['sin(t)'] at zero
     #decoders[0, :, 0, :] = net.get_object('A').decoders
-    decoders[1, :, 0, :] = get_decoders('A', 'X')
-    decA = get_decoders('A', 'X')
-    decB = decoders[1, :, 0, :]
-    print decA.shape, decA.max(), decA.min(), decA.mean()
-    print decB.shape, decB.max(), decB.min(), decB.mean()
-    decoders[2, :, 0, :] = get_decoders('A', 'pow')
-    decoders[3, :, 0, :] = get_decoders('A', 'mult')
+    decoders[sig['A.X'], :, 0, :] = get_decoders('A', 'X')
+    decoders[sig['A.pow'], :, 0, :] = get_decoders('A', 'pow')
+    decoders[sig['A.mult'], :, 0, :] = get_decoders('A', 'mult')
     lme.decoders.set(decoders)
 
+    # -- enumerate incoming populations (for decoding)
     pop_idx = lme.decoders_population_idx.get()
-    pop_idx[0, 0] = 0 # sin   <- N/A
-    pop_idx[1, 0] = 0 # Adec  <- A
-    pop_idx[2, 0] = 0 # Apow  <- A
-    pop_idx[3, 0] = 0 # Amult <- A
+    pop_idx[sig['sin(t)'], 0] = 0 # sin   <- N/A
+    pop_idx[sig['A.X'], 0] = pop['A']
+    pop_idx[sig['A.pow'], 0] = pop['A']
+    pop_idx[sig['A.mult'], 0] = pop['A']
     lme.decoders_population_idx.set(pop_idx)
 
     signals = []
@@ -174,8 +177,8 @@ def test_net_by_hand():
         signals_t[0] = np.sin(ii / 1000.0)
         lme.signals.set(signals_t, queue=queue)
         prog()
-        queue.finish()
-        if ii % 4 == 0:
+        if ii % 10 == 0:
+            queue.finish()
             # N.B. prog currently overwrites the signals_t[0]
             #      with 0 as the last thing it does, while
             #      writing the other 3 signals. That's not
@@ -184,6 +187,7 @@ def test_net_by_hand():
             signals_t[0] = np.sin(ii / 1000.0)
             signals.append(signals_t.copy())
             spikes.append(lme.lif_output_filter.get(queue=queue))
+    queue.finish()
     t1 = time.time()
     print 'time', (t1 - t0)
 
