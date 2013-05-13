@@ -26,7 +26,8 @@ setup(
     description=description,
     long_description="",
     requires=[
-        "pyopencl",
         "numpy (>=1.5.0)",
+        "pyopencl",
+        "nose",
     ],
 )
