@@ -12,6 +12,27 @@ from nengo import nef_theano as nef
 
 
 def test_speed():
+    nengo_1s = {}
+    nengo_1s[(10, 10, 1)] = 0.802000045776
+    nengo_1s[(10, 10, 2)] = 0.666999816895
+    nengo_1s[(10, 10, 50)] = 1.08800005913
+    nengo_1s[(10, 100, 1)] = 1.15799999237
+    nengo_1s[(10, 100, 2)] = 1.37699985504
+    nengo_1s[(10, 100, 50)] = 1.72799992561
+
+    nengo_1s[(100, 10, 1)] = 1.28299999237
+    nengo_1s[(100, 10, 2)] = 1.36100006104
+    nengo_1s[(100, 10, 50)] = 3.16299986839
+    nengo_1s[(100, 100, 1)] = 6.14800000191
+    nengo_1s[(100, 100, 2)] = 6.14300012589
+    nengo_1s[(100, 100, 50)] = 9.89700007439
+
+    nengo_1s[(1000, 10, 1)] = 7.7009999752
+    nengo_1s[(1000, 10, 2)] = 8.11899995804
+    nengo_1s[(1000, 10, 50)] = 25.9370000362
+    nengo_1s[(1000, 100, 1)] = 50.736000061
+    nengo_1s[(1000, 100, 2)] = 52.0779998302
+    nengo_1s[(1000, 100, 50)] = 76.2179999352
     for n_ensembles in [10, 100, 1000, 10000]:
         for size in [10, 100, 1000]:
             for rank in [1, 2, 50]:
@@ -22,6 +43,7 @@ def test_speed():
                         n_neurons_per=size,
                         n_signals=n_ensembles,
                         signal_size=rank,
+                        lif_upsample=2,
                         queue=queue)
 
                 mdl._randomize_decoders(rng=np.random)
@@ -30,14 +52,21 @@ def test_speed():
 
                 prog() # once for allocation & warmup
                 t0 = time.time()
-                for i in range(200):
-                    map(cl.enqueue_nd_range_kernel,
-                        prog.queues, prog.kerns, prog.gsize, prog.lsize)
-                queue.finish()
+                prog.call_n_times(1000)
                 t1 = time.time()
                 elapsed = (t1 - t0)
-                print '%8i %8i %8i: %i neurons took %s seconds' %(
-                        n_ensembles, size, rank, n_ensembles * size, elapsed)
+
+                key = (n_ensembles, size, rank)
+                if key in nengo_1s:
+                    nengo_walltime = nengo_1s[key]
+                    speedup = nengo_walltime / elapsed
+                else:
+                    nengo_walltime = 'N/A'
+                    speedup = 'N/A'
+
+                print '%8i %8i %8i: %10i neurons took %4.4f (vs. %s, %sx) seconds' %(
+                        n_ensembles, size, rank, n_ensembles * size,
+                        elapsed, nengo_walltime, speedup)
 
 def make_net(N):
     net = nef.Network('Runtime Test', seed=123)
