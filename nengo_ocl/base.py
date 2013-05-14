@@ -5,6 +5,19 @@ from ocl.gemv_batched import plan_misc_gemv
 
 
 class LIFMultiEnsemble(object):
+    """
+    Object that allocates a bunch of buffers for
+    * lif neurons
+    * the signals they represent
+    * the encoders and decoders for relating the above
+
+    It isn't clear how this logic should be partitioned among
+    classes going forward, as we accomodate more neuron types.
+
+    Probably the n_dec_per_signal should disappear, be assumed
+    to be a constant=1, and multiple kernel calls should be used
+    to calculate populations with multiple signal inputs.
+    """
     def __init__(self, n_populations, n_neurons_per, n_signals, signal_size,
             n_dec_per_signal=1,
             n_enc_per_population=1,
@@ -64,14 +77,6 @@ class LIFMultiEnsemble(object):
                 shape=(n_signals, n_dec_per_signal),
                 dtype='int32')
 
-    def _randomize_encoders(self, rng):
-        encoders = rng.randn(*self.encoders.shape).astype('float32')
-        self.encoders.set(encoders)
-
-    def _randomize_decoders(self, rng):
-        decoders = rng.randn(*self.decoders.shape).astype('float32')
-        self.decoders.set(decoders)
-
     def neuron_plan(self, dt):
         # XXX add support for built-in filtering
         rval = plan_lif(self.queue,
@@ -92,6 +97,9 @@ class LIFMultiEnsemble(object):
         return rval
 
     def decoder_plan(self, signals_beta):
+        # XXX: do not overwrite the entire signals vector
+        #       when decoding, some of the signals are not
+        #       decoded from these populations.
         if self.n_dec_per_signal != 1:
             raise NotImplementedError()
         rval = plan_misc_gemv(self.queue,
@@ -109,7 +117,7 @@ class LIFMultiEnsemble(object):
         rval = plan_misc_gemv(self.queue,
                 alpha=1.0,
                 A=self.encoders[:, :, 0],
-                X=self.signals, # use filtered here
+                X=self.signals,
                 Xi=self.encoders_signal_idx[:, 0],
                 beta=1.0,
                 Y_in=self.lif_bias,

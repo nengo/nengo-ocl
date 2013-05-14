@@ -12,6 +12,11 @@ from nengo import nef_theano as nef
 
 
 def test_speed():
+    """
+    Produce some speed comparisons with the Java Nengo software.
+
+    (This was done with nengo-1.4, in prep for Frontiers article.)
+    """
     nengo_1s = {}
     nengo_1s[(10, 10, 1)] = 0.802000045776
     nengo_1s[(10, 10, 2)] = 0.666999816895
@@ -46,8 +51,10 @@ def test_speed():
                         lif_upsample=2,
                         queue=queue)
 
-                mdl._randomize_decoders(rng=np.random)
-                mdl._randomize_encoders(rng=np.random)
+                encoders = np.random.randn(*mdl.encoders.shape)
+                decoders = np.random.randn(*mdl.decoders.shape)
+                mdl.encoders.set(encoders.astype('float32'))
+                mdl.decoders.set(decoders.astype('float32'))
                 prog = mdl.prog(dt=0.001)
 
                 prog() # once for allocation & warmup
@@ -68,7 +75,12 @@ def test_speed():
                         n_ensembles, size, rank, n_ensembles * size,
                         elapsed, nengo_walltime, speedup)
 
+
 def make_net(N):
+    """
+    Helper method for other tests - constructs a simple
+    network with 4 populations and a few toy signals.
+    """
     net = nef.Network('Runtime Test', seed=123)
     print 'make_input'
     net.make_input('in', value=np.sin)
@@ -106,6 +118,11 @@ def make_net(N):
 
 
 def test_ref():
+    """
+    Constructs the network from make_net, runs it
+    and plots the results using matplotlib.
+    """
+
     # Makes the net and runs it
     net, Ap, Bp = make_net(1000)
 
@@ -114,6 +131,7 @@ def test_ref():
     t1 = time.time()
     print 'time', (t1 - t0)
 
+    # XXX: assert that the output is close to sin(t)
     plt.plot(Ap.get_data())
     plt.show()
 
@@ -203,15 +221,23 @@ def test_net_by_hand():
     signals_t = lme.signals.get()
     t0 = time.time()
     for ii in range(1000):
+        # TODO: add support for lme to have a signal for t itself
+        # TODO: add support for lme to update the t signal with a kernel
+        # TODO: add support for lme to update the sin(t) with a kernel
+        #       Generally - allow OpenCL "custom nodes" to simply write
+        #       their outputs to part of the signal buffer.
+        #       Otherwise, evaluate arbitrary "custom nodes" in Python
+        #       and write their numpy output into the OpenCL signal buffer.
         signals_t[0] = np.sin(ii / 1000.0)
         lme.signals.set(signals_t, queue=queue)
-        prog()
+        prog() # -- step the simulation by dt
         if ii % 10 == 0:
             queue.finish()
             # N.B. prog currently overwrites the signals_t[0]
             #      with 0 as the last thing it does, while
             #      writing the other 3 signals. That's not
-            #      ideal, but a known issue.
+            #      ideal, a known issue.
+            # TODO: a Simulator class should handle this "Probe" logic
             signals_t = lme.signals.get(queue=queue)
             signals_t[0] = np.sin(ii / 1000.0)
             signals.append(signals_t.copy())
@@ -224,6 +250,10 @@ def test_net_by_hand():
     spikes = np.asarray(spikes)
 
     plt.subplot(2, 1, 1)
+
+    # XXX: assert that the of signals[:, 1] is close to sin(t)
+    # XXX: assert that the of signals[:, 2] is close to sin(t) ** 2
+    # XXX: assert that the of signals[:, 3] is close to sin(t) * 2
 
     plt.title('4 signals over time')
     plt.plot(signals[:, 0], label='zero * sin(t)')
