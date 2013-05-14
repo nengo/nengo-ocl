@@ -55,6 +55,9 @@ def test_speed():
                 decoders = np.random.randn(*mdl.decoders.shape)
                 mdl.encoders.set(encoders.astype('float32'))
                 mdl.decoders.set(decoders.astype('float32'))
+                idx = np.arange(n_ensembles, dtype='int32')
+                mdl.decoders_population_idx.set(idx)
+                mdl.encoders_signal_idx.set(idx)
                 prog = mdl.prog(dt=0.001)
 
                 prog() # once for allocation & warmup
