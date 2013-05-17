@@ -5,10 +5,59 @@ import numpy as np
 import pyopencl as cl
 
 ctx = cl.create_some_context()
-queue = cl.CommandQueue(ctx)
 
 from base import LIFMultiEnsemble
 from nengo import nef_theano as nef
+
+def test_one_random():
+    queue = cl.CommandQueue(ctx,
+                            properties=cl.command_queue_properties.PROFILING_ENABLE)
+    n_ensembles = 6000
+    size = 100
+    rank = 2
+    mdl = LIFMultiEnsemble(
+            n_populations=n_ensembles,
+            n_neurons_per=size,
+            n_signals=n_ensembles,
+            signal_size=rank,
+            lif_upsample=2,
+            queue=queue)
+
+    # -- re-arrange memory for GPU
+    encoders = np.random.randn(*mdl.encoders.shape)
+    mdl.encoders.set(encoders.astype('float32'))
+
+    # -- re-arrange memory for GPU
+    decoders = np.random.randn(*mdl.decoders.shape)
+    mdl.decoders.set(decoders.astype('float32'))
+
+    # -- set each population to be self-connected
+    idx = np.arange(n_ensembles, dtype='int32')
+    mdl.decoders_population_idx.set(idx)
+    mdl.encoders_signal_idx.set(idx)
+
+    mdl.realloc_encoders_for_GPU()
+    mdl.realloc_decoders_for_GPU()
+
+    prog = mdl.prog(dt=0.001)
+
+    prog.call_n_times(1000)
+
+    clrk = cl.enqueue_nd_range_kernel
+    qs, ks, gs, ls = prog.queues, prog.kerns, prog.gsize, prog.lsize
+    evs = []
+    for ii in range(250):
+        evs.append(map(clrk, qs, ks, gs, ls))
+    evs[-1][-1].wait()
+
+    ctime = {}
+    for evlist in evs:
+        for ev, plan in zip(evlist, prog.plans):
+            ctime.setdefault(plan, 0)
+            ctime[plan] += ev.profile.end - ev.profile.start
+
+    for plan, ticks in ctime.items():
+        print ticks * 1e-9, plan
 
 
 def test_speed():
@@ -17,6 +66,7 @@ def test_speed():
 
     (This was done with nengo-1.4, in prep for Frontiers article.)
     """
+    queue = cl.CommandQueue(ctx)
     nengo_1s = {}
     nengo_1s[(10, 10, 1)] = 0.802000045776
     nengo_1s[(10, 10, 2)] = 0.666999816895
@@ -58,6 +108,10 @@ def test_speed():
                 idx = np.arange(n_ensembles, dtype='int32')
                 mdl.decoders_population_idx.set(idx)
                 mdl.encoders_signal_idx.set(idx)
+
+                mdl.realloc_encoders_for_GPU()
+                mdl.realloc_decoders_for_GPU()
+
                 prog = mdl.prog(dt=0.001)
 
                 prog() # once for allocation & warmup
@@ -142,6 +196,7 @@ def test_ref():
 def test_net_by_hand():
     net, Ap, Bp = make_net(1000)
     net.run(0.01)
+    queue = cl.CommandQueue(ctx)
 
     lme = LIFMultiEnsemble(
             n_populations=4,
@@ -217,6 +272,9 @@ def test_net_by_hand():
     pop_idx[sig['A.pow'], 0] = pop['A']
     pop_idx[sig['A.mult'], 0] = pop['A']
     lme.decoders_population_idx.set(pop_idx)
+
+    lme.realloc_encoders_for_GPU()
+    lme.realloc_decoders_for_GPU()
 
     signals = []
     spikes = []

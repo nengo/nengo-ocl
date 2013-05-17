@@ -284,36 +284,7 @@ def plan_map_gemv(queue, alpha, A, X, beta, Y, Y_in=None):
     return Plan(locals())
 
 
-def plan_misc_gemv(queue, alpha, A, X, Xi, beta, Y, Y_in=None):
-    if Y_in is None:
-        Y_in = Y
-    assert Y.dtype == Y_in.dtype
-
-    B, M, N = A.shape
-    assert N == X.shape[1]
-    assert (B,) == Xi.shape
-    assert (B, M) == Y.shape
-    assert (B, M) == Y_in.shape
-
-    As0, As1, As2 = A.itemstrides
-    Xs0, Xs1, = X.itemstrides
-    Xis0, = Xi.itemstrides
-    Ys0, Ys1, = Y.itemstrides
-    Ys0_in, Ys1_in, = Y_in.itemstrides
-
-    Atype = A.ocldtype
-    Xtype = X.ocldtype
-    Xitype = Xi.ocldtype
-    Ytype = Y.ocldtype
-
-    # TODO: is there another way to do this other than retrieving all these
-    # constants?
-    Aoffset = A.offset
-    Xoffset = X.offset
-    Xioffset = Xi.offset
-    Yoffset = Y.offset
-    Y_in_offset = Y_in.offset
-
+def _misc_gemv_ref(kwargs):
     text = """
         __kernel void fn(__global const %(Atype)s *A_data,
                          __global const %(Xtype)s *X_data,
@@ -347,10 +318,88 @@ def plan_misc_gemv(queue, alpha, A, X, Xi, beta, Y, Y_in=None):
                 }
             }
         }
-    """ % locals()
+    """ % kwargs
+    return text, (kwargs['B'],), None
+
+
+def _misc_gemv_1(kwargs):
+    text = """
+        __kernel void fn(__global const %(Atype)s *A_data,
+                         __global const %(Xtype)s *X_data,
+                         __global const %(Xitype)s *Xi_data,
+                         __global const %(Ytype)s *Y_in_data,
+                         __global %(Ytype)s *Y_data)
+        {
+            const int mm = get_global_id(0);
+            const int bb = get_global_id(1);
+
+            A_data += %(Aoffset)s + bb * %(As0)s + mm * %(As1)s;
+            X_data += %(Xoffset)s + Xi_data[%(Xioffset)s + bb * %(Xis0)s] * %(Xs0)s;
+            Y_data += %(Yoffset)s + bb * %(Ys0)s + %(Ys1)s * mm;
+            Y_in_data += %(Y_in_offset)s + bb * %(Ys0_in)s + %(Ys1_in)s * mm;
+
+            %(Ytype)s ksum = 0.0;
+            for (int nn = 0; nn < %(N)s; ++nn)
+            {
+                ksum += A_data[nn * %(As2)s  ] * X_data[nn * %(Xs1)s];
+            }
+
+            if (%(beta)s == 0)
+            {
+                Y_data[0] = %(alpha)s * ksum;
+            }
+            else
+            {
+                Y_data[0] = %(beta)s * Y_in_data[0] + %(alpha)s * ksum;
+            }
+        }
+    """  % kwargs
+    return text, (kwargs['M'], kwargs['B'],), None
+
+
+def plan_misc_gemv(queue, alpha, A, X, Xi, beta, Y, Y_in=None, tag=None):
+    if Y_in is None:
+        Y_in = Y
+    assert Y.dtype == Y_in.dtype
+
+    B, M, N = A.shape
+    assert N == X.shape[1]
+    assert (B,) == Xi.shape
+    assert (B, M) == Y.shape
+    assert (B, M) == Y_in.shape
+
+    As0, As1, As2 = A.itemstrides
+    Xs0, Xs1, = X.itemstrides
+    Xis0, = Xi.itemstrides
+    Ys0, Ys1, = Y.itemstrides
+    Ys0_in, Ys1_in, = Y_in.itemstrides
+
+    Atype = A.ocldtype
+    Xtype = X.ocldtype
+    Xitype = Xi.ocldtype
+    Ytype = Y.ocldtype
+
+    # TODO: is there another way to do this other than retrieving all these
+    # constants?
+    Aoffset = A.offset
+    Xoffset = X.offset
+    Xioffset = Xi.offset
+    Yoffset = Y.offset
+    Y_in_offset = Y_in.offset
+
+    if As1 == 1:
+        name = '_misc_gemv_1'
+    else:
+        name = '_misc_gemv_ref'
+
+    text, gsize, lsize = globals()[name](locals())
 
     _fn = cl.Program(queue.context, text).build().fn
     _fn.set_args(A.data, X.data, Xi.data, Y_in.data, Y.data)
 
-    return Plan(queue, _fn, (B,), None)
+    return Plan(queue, _fn, gsize, lsize,
+                name=name,
+                shape=(B, M, N),
+                tag=tag,
+               )
 

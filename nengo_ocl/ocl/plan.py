@@ -2,7 +2,7 @@ import pyopencl as cl
 
 class Plan(object):
 
-    def __init__(self, queue, kern, gsize, lsize, *kwargs):
+    def __init__(self, queue, kern, gsize, lsize, **kwargs):
         self.queue = queue
         self.kern = kern
         self.gsize = gsize
@@ -13,6 +13,15 @@ class Plan(object):
         cl.enqueue_nd_range_kernel(
             self.queue, self.kern, self.gsize, self.lsize)
         self.queue.finish()
+
+    def __str__(self):
+        return '%s{%s, %s, %s, %s, %s}' % (
+            self.__class__.__name__,
+            self.queue,
+            self.kern,
+            self.gsize,
+            self.lsize,
+            self.kwargs)
 
 
 class Prog(object):

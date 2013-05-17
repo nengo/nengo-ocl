@@ -80,6 +80,19 @@ class Array(cl.array.Array):
                      offset=self.offset,
                     )
 
+    def transpose(self, *new_order):
+        assert set(new_order) == set(range(self.ndim))
+        new_shape = [self.shape[i] for i in new_order]
+        new_strides = [self.strides[i] for i in new_order]
+        return Array(self.queue,
+                     shape=new_shape,
+                     dtype=self.dtype,
+                     data=self.data,
+                     strides=new_strides,
+                     offset=self.offset,
+                    )
+
+
     # TODO: call this ctype, use cl.tools.dtype_to_ctype
     @property
     def ocldtype(self):

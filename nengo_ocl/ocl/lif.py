@@ -92,5 +92,5 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS, OSfilt,
                 OS.data, OSfilt.data)
 
     # XXX ASSERT ALL CONTIGUOUS WITH IDENTICAL LAYOUT
-    return Plan(queue, fn, (V.size,), None,)
+    return Plan(queue, fn, (V.size,), None, name='lif')
 

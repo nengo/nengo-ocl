@@ -77,6 +77,18 @@ class LIFMultiEnsemble(object):
                 shape=(n_signals, n_dec_per_signal),
                 dtype='int32')
 
+    def realloc_encoders_for_GPU(self):
+        encoders = self.encoders.get(self.queue)
+        encoders = encoders.transpose(3, 2, 0, 1).copy()
+        cmajor_cl_encoders = array.to_device(self.queue, encoders)
+        self.encoders = cmajor_cl_encoders.transpose(2, 3, 1, 0)
+
+    def realloc_decoders_for_GPU(self):
+        decoders = self.decoders.get(self.queue)
+        decoders = decoders.transpose(3, 2, 0, 1).copy()
+        cmajor_cl_decoders = array.to_device(self.queue, decoders)
+        self.decoders = cmajor_cl_decoders.transpose(2, 3, 1, 0)
+
     def neuron_plan(self, dt):
         # XXX add support for built-in filtering
         rval = plan_lif(self.queue,
@@ -108,7 +120,8 @@ class LIFMultiEnsemble(object):
                 X=self.lif_output_filter,
                 Xi=self.decoders_population_idx[:, 0],
                 beta=signals_beta,
-                Y=self.signals,)
+                Y=self.signals,
+                tag='decoders')
         return rval
 
     def encoder_plan(self):
@@ -121,7 +134,8 @@ class LIFMultiEnsemble(object):
                 Xi=self.encoders_signal_idx[:, 0],
                 beta=1.0,
                 Y_in=self.lif_bias,
-                Y=self.lif_ic)
+                Y=self.lif_ic,
+                tag='encoders')
         return rval
 
     def prog(self, dt):
