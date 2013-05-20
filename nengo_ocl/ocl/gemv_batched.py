@@ -1,6 +1,7 @@
 import numpy as np
 import pyopencl as cl
 from plan import Plan
+from mako.template import Template
 
 def gemv_batched_ref(context, B, M, N, alpha,
                              Aoffset, AsB, AsM, AsN,
@@ -324,36 +325,39 @@ def _misc_gemv_ref(kwargs):
 
 def _misc_gemv_1(kwargs):
     text = """
-        __kernel void fn(__global const %(Atype)s *A_data,
-                         __global const %(Xtype)s *X_data,
-                         __global const %(Xitype)s *Xi_data,
-                         __global const %(Ytype)s *Y_in_data,
-                         __global %(Ytype)s *Y_data)
+        __kernel void fn(__global const ${Atype} *A_data,
+                         __global const ${Xtype} *X_data,
+                         __global const ${Xitype} *Xi_data,
+                         __global const ${Ytype} *Y_in_data,
+                         __global ${Ytype} *Y_data)
         {
             const int mm = get_global_id(0);
             const int bb = get_global_id(1);
 
-            A_data += %(Aoffset)s + bb * %(As0)s + mm * %(As1)s;
-            X_data += %(Xoffset)s + Xi_data[%(Xioffset)s + bb * %(Xis0)s] * %(Xs0)s;
-            Y_data += %(Yoffset)s + bb * %(Ys0)s + %(Ys1)s * mm;
-            Y_in_data += %(Y_in_offset)s + bb * %(Ys0_in)s + %(Ys1_in)s * mm;
+            A_data += ${Aoffset} + bb * ${As0} + mm * ${As1};
+            X_data += ${Xoffset} + Xi_data[${Xioffset} + bb * ${Xis0}] * ${Xs0};
+            Y_data += ${Yoffset} + bb * ${Ys0} + ${Ys1} * mm;
+            Y_in_data += ${Y_in_offset} + bb * ${Ys0_in} + ${Ys1_in} * mm;
 
-            %(Ytype)s ksum = 0.0;
-            for (int nn = 0; nn < %(N)s; ++nn)
+            ${Ytype} ksum = 0.0;
+
+            for (int nn = 0; nn < ${N}; ++nn)
             {
-                ksum += A_data[nn * %(As2)s  ] * X_data[nn * %(Xs1)s];
+                ksum += A_data[nn * ${As2}  ] * X_data[nn * ${Xs1}];
             }
 
-            if (%(beta)s == 0)
-            {
-                Y_data[0] = %(alpha)s * ksum;
-            }
-            else
-            {
-                Y_data[0] = %(beta)s * Y_in_data[0] + %(alpha)s * ksum;
-            }
+        % if beta == 0:
+            % if alpha == 1:
+                Y_data[0] = ksum;
+            % else:
+                Y_data[0] = ${alpha} * ksum;
+            % endif
+        % else:
+            Y_data[0] = ${beta} * Y_in_data[0] + ${alpha} * ksum;
+        % endif
         }
-    """  % kwargs
+    """
+    text = Template(text).render(**kwargs)
     return text, (kwargs['M'], kwargs['B'],), None
 
 
