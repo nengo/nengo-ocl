@@ -3,6 +3,44 @@ from ocl.plan import Prog
 from ocl.lif import plan_lif
 from ocl.gemv_batched import plan_misc_gemv
 
+class Signal(object):
+    def __init__(self, pop, pstc):
+        self.pop = pop
+        self.pstc = pstc
+
+
+class Population(object):
+    def __init__(self, n):
+        self.n = n
+
+
+class Connection(object):
+    def __init__(self, sigs, pop):
+        self.sigs = sigs
+        self.pop = pop
+
+
+class Model(object):
+    def __init__(self):
+        self.signals = []
+        self.populations = []
+        self.connections = []
+
+    def signal(self, *args, **kwargs):
+        rval = Signal(*args, **kwargs)
+        self.signals.append(rval)
+        return rval
+
+    def population(self, *args, **kwargs):
+        rval = Population(*args, **kwargs)
+        self.populations.append(rval)
+        return rval
+
+    def connection(self, *args, **kwargs):
+        rval = Connection(*args, **kwargs)
+        self.connections.append(rval)
+        return rval
+
 
 class LIFMultiEnsemble(object):
     """
@@ -11,12 +49,6 @@ class LIFMultiEnsemble(object):
     * the signals they represent
     * the encoders and decoders for relating the above
 
-    It isn't clear how this logic should be partitioned among
-    classes going forward, as we accomodate more neuron types.
-
-    Probably the n_dec_per_signal should disappear, be assumed
-    to be a constant=1, and multiple kernel calls should be used
-    to calculate populations with multiple signal inputs.
     """
     def __init__(self, n_populations, n_neurons_per, n_signals, signal_size,
             n_dec_per_signal=1,
@@ -76,6 +108,10 @@ class LIFMultiEnsemble(object):
         self.decoders_population_idx = array.zeros(queue,
                 shape=(n_signals, n_dec_per_signal),
                 dtype='int32')
+
+    def realloc_for_GPU(self):
+        self.realloc_encoders_for_GPU()
+        self.realloc_decoders_for_GPU()
 
     def realloc_encoders_for_GPU(self):
         encoders = self.encoders.get(self.queue)
@@ -139,10 +175,17 @@ class LIFMultiEnsemble(object):
         return rval
 
     def prog(self, dt):
+        """
+        A single loop through the simulator does the following things in order:
+
+        """
         return Prog([
             self.encoder_plan(),
             self.neuron_plan(dt=dt),
             self.decoder_plan(signals_beta=0.0),
         ])
+
+
+
 
 
