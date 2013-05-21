@@ -8,6 +8,11 @@ ctx = cl.create_some_context()
 
 from nengo import nef_theano as nef
 
+from ocl import array
+from ocl.plan import Prog
+from ocl.lif import plan_lif
+from ocl.gemv_batched import plan_misc_gemv
+
 
 class LIFMultiEnsemble(object):
     """
