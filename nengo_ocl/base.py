@@ -3,44 +3,6 @@ from ocl.plan import Prog
 from ocl.lif import plan_lif
 from ocl.gemv_batched import plan_misc_gemv
 
-class Signal(object):
-    def __init__(self, pop, pstc):
-        self.pop = pop
-        self.pstc = pstc
-
-
-class Population(object):
-    def __init__(self, n):
-        self.n = n
-
-
-class Connection(object):
-    def __init__(self, sigs, pop):
-        self.sigs = sigs
-        self.pop = pop
-
-
-class Model(object):
-    def __init__(self):
-        self.signals = []
-        self.populations = []
-        self.connections = []
-
-    def signal(self, *args, **kwargs):
-        rval = Signal(*args, **kwargs)
-        self.signals.append(rval)
-        return rval
-
-    def population(self, *args, **kwargs):
-        rval = Population(*args, **kwargs)
-        self.populations.append(rval)
-        return rval
-
-    def connection(self, *args, **kwargs):
-        rval = Connection(*args, **kwargs)
-        self.connections.append(rval)
-        return rval
-
 
 class LIFMultiEnsemble(object):
     """
