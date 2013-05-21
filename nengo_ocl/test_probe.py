@@ -484,3 +484,45 @@ def test_net_by_hand():
     plt.plot(spikes[:, 0, 4])
     plt.show()
 
+
+from base import Model, Simulator
+import math
+
+def test_probe_with_base():
+    m = Model()
+    steps = m.signal()
+    simtime = m.signal()
+    sint = m.signal()
+    Adec = m.signal()
+    Amult = m.signal()
+    Apow = m.signal()
+    Bdec = m.signal()
+    Cdec = m.signal()
+    Ddec = m.signal()
+
+    A = m.population(n=1000)
+    B = m.population(n=1000)
+    C = m.population(n=1000)
+    D = m.population(n=1000)
+
+    m.transform(steps, steps)
+    m.transform(steps, simtime)
+    m.math_transform(simtime, sint, func=math.sin)
+    m.filter(Adec)
+    m.filter(Amult)
+    m.filter(Apow)
+    m.encoder(sint, A)
+    m.encoder(Adec, B)
+    m.encoder(Adec, C)
+    m.encoder(Adec, D)
+    m.decoder(A, Adec)
+    m.decoder(A, Bdec)
+    m.decoder(A, Cdec)
+    m.decoder(A, Ddec)
+
+    sim = Simulator(m)
+
+    sim.alloc_all()
+    sim.do_all()
+
+
