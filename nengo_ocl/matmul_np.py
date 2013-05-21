@@ -2,7 +2,7 @@
 from base import Model, Simulator
 
 
-def test_matrix_mult_example():
+def test_matrix_mult_example(D1=1, D2=2, D3=3):
     # construct good way to do the 
     # examples/matrix_multiplication.py model
     # from nengo_theano
@@ -12,11 +12,6 @@ def test_matrix_mult_example():
     #  Input matrix B is D2xD3
     #  intermediate tensor of products D1 x D2 x D3
     #  result D is D1xD3
-
-    D1 = 1
-    D2 = 2
-    D3 = 3
-
 
     m = Model()
 
