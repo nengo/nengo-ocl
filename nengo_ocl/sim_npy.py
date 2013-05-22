@@ -380,7 +380,6 @@ class Simulator(object):
                 this_buffer = probe_out.buf[bufidx * buflen:]
                 try:
                     probe_out.buf = this_buffer
-                    print 'saving to probe'
                     ragged_gather_gemv(
                         Ms=self.sig_probes_Ms,
                         Ns=self.sig_probes_Ns,
@@ -392,7 +391,6 @@ class Simulator(object):
                         beta=0.0,
                         Y=probe_out,
                         )
-                    print orig_buffer
                 finally:
                     probe_out.buf = orig_buffer
 
