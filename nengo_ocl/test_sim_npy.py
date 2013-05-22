@@ -38,10 +38,7 @@ def make_net(N):
     net.connect('A', 'B')
     net.connect('A', 'C', func=pow)
     net.connect('A', 'D', func=mult)
-    # -- don't support this yet because
-    #    plan_misc_gemv doesn't support multiple decoders per signal
-    #    (see #XXX)
-    #net.connect('D', 'B', func=pow) # throw in some recurrency whynot
+    net.connect('D', 'B', func=pow) # throw in some recurrency
 
     Ap = net.make_probe('A', dt_sample=.01, pstc=0.01)
     Bp = net.make_probe('B', dt_sample=.01)
@@ -50,7 +47,11 @@ def make_net(N):
 
 def test_probe_with_base():
     net, Ap, Bp = make_net(1000)
-    get_bias = lambda *a: net_get_bias(net, *a)
+    def get_bias(*a):
+        bias = net_get_bias(net, *a)
+        if bias.shape[0] != 1:
+            raise NotImplementedError()
+        return bias[0]
     def get_encoders(*a):
         encoders = net_get_encoders(net, *a)
         if encoders.shape[0] != 1:
@@ -65,11 +66,13 @@ def test_probe_with_base():
     simtime = m.signal()
     sint = m.signal()
     Adec = m.signal()
+    Amult = m.signal()
+    Apow = m.signal()
+    Bin = m.signal()
     Bdec = m.signal()
     Cdec = m.signal()
     Ddec = m.signal()
-    Amult = m.signal()
-    Apow = m.signal()
+    Dpow = m.signal()
 
     A = m.population(n=1000, bias=get_bias('A'))
     B = m.population(n=1000, bias=get_bias('B'))
@@ -79,14 +82,19 @@ def test_probe_with_base():
     # set up linear filters (exp decay)
     # for the signals
     # XXX use their pstc constants
-    m.filter(.9, Adec, Adec)
-    m.transform(.1, Adec, Adec)
+    pstc = 0.01
+    decay = np.exp(-m.dt / pstc)
+    m.filter(decay, Adec, Adec)
+    m.transform(1 - decay, Adec, Adec)
 
-    m.filter(.9, Amult, Amult)
-    m.transform(.1, Amult, Amult)
+    m.filter(decay, Amult, Amult)
+    m.transform(1 - decay, Amult, Amult)
 
-    m.filter(.9, Apow, Apow)
-    m.transform(.1, Amult, Amult)
+    m.filter(decay, Apow, Apow)
+    m.transform(1 - decay, Apow, Apow)
+
+    m.filter(decay, Dpow, Dpow)
+    m.transform(1 - decay, Dpow, Dpow)
 
     # -- hold all constants on the line
     m.filter(1.0, one, one)
@@ -98,10 +106,16 @@ def test_probe_with_base():
     # simtime <- dt * steps
     m.filter(net.dt, steps, simtime)
 
+    # combine decoded [current] inputs to B
+    m.transform(1 - decay, Adec, Bin)
+    m.transform(1 - decay, Dpow, Bin)
+    # -- then smooth out Bin
+    m.filter(decay, Bin, Bin)
+
     m.custom_transform(np.sin, simtime, sint)
 
     m.encoder(sint, A, weights=get_encoders('A'))
-    m.encoder(Adec, B, weights=get_encoders('B'))
+    m.encoder(Bin, B, weights=get_encoders('B'))
     m.encoder(Adec, C, weights=get_encoders('C'))
     m.encoder(Adec, D, weights=get_encoders('D'))
 
@@ -111,16 +125,23 @@ def test_probe_with_base():
     m.decoder(D, Ddec, weights=get_decoders('D', 'X'))
     m.decoder(A, Apow, weights=get_decoders('A', 'pow'))
     m.decoder(A, Amult, weights=get_decoders('A', 'mult'))
+    m.decoder(D, Dpow, weights=get_decoders('D', 'pow'))
 
-    sim = Simulator(m)
+    m.signal_probe(sint, dt=0.01)
+    m.signal_probe(Adec, dt=0.01)
+
+    sim = Simulator(m, n_prealloc_probes=1000)
     sim.alloc_all()
-    for i in range(10):
+    for i in range(1000):
         sim.do_all()
-        print 'one', sim.sigs[sim.sidx[one]]
+        #print 'one', sim.sigs[sim.sidx[one]]
         assert sim.sigs[sim.sidx[one]] == [1.0]
-        print 'simtime', sim.sidx[simtime], sim.sigs[sim.sidx[simtime]]
+        #print 'simtime', sim.sidx[simtime], sim.sigs[sim.sidx[simtime]]
         assert sim.sigs[sim.sidx[simtime]] == [i * net.dt]
-        print 'sint', sim.sidx[sint], sim.sigs[sim.sidx[sint]]
+        #print 'sint', sim.sidx[sint], sim.sigs[sim.sidx[sint]]
         assert sim.sigs[sim.sidx[sint]] == [np.sin(i * net.dt)]
+
+    print sim.signal(sint)
+    print sim.signal(Adec)
 
 

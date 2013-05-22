@@ -1,6 +1,7 @@
 """
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
+import math
 import numpy as np
 
 
@@ -137,18 +138,20 @@ def lif_step(J, voltage, refractory_time, spiked, dt, tau_rc, tau_ref, upsample)
     
 
 class Simulator(object):
-    def __init__(self, model):
+    def __init__(self, model, n_prealloc_probes=1000):
         self.model = model
         self.sidx = dict((s, i) for (i, s) in enumerate(model.signals))
         self.pidx = dict((p, i) for (i, p) in enumerate(model.populations))
         self.eidx = dict((s, i) for (i, s) in enumerate(model.encoders))
         self.didx = dict((p, i) for (i, p) in enumerate(model.decoders))
+        self.n_prealloc_probes = n_prealloc_probes
+        self.sim_step = 0
 
         if not all(s.n == 1 for s in self.model.signals):
             raise NotImplementedError()
 
     def alloc_signals(self):
-        self.sigs_ic = RaggedArray([[0] for s in self.model.signals])
+        self.sigs_ic = RaggedArray([[0.0] for s in self.model.signals])
 
         self.sigs = RaggedArray([getattr(s, 'value', [0])
             for s in self.model.signals])
@@ -158,16 +161,44 @@ class Simulator(object):
         self._sigs_copy = RaggedArray([getattr(s, 'value', [0])
             for s in self.model.signals])
 
+    def alloc_signal_probes(self):
+        signal_probes = self.model.signal_probes
+        dts = list(sorted(set([sp.dt for sp in signal_probes])))
+        self.sig_probes_output = {}
+        self.sig_probes_buflen = {}
+        self.sig_probes_Ms = RaggedArray([[1]])
+        self.sig_probes_Ns = RaggedArray([[1]])
+        self.sig_probes_A = RaggedArray([[1.0]])
+        self.sig_probes_A_js = {}
+        self.sig_probes_X_js = {}
+        for dt in dts:
+            sp_dt = [sp for sp in signal_probes if sp.dt == dt]
+            period = int(dt // self.model.dt)
+
+            # -- allocate storage for the probe output
+            sig_probes = RaggedArray([[0.0] for sp in sp_dt])
+            buflen = len(sig_probes.buf)
+            sig_probes.buf = np.zeros(
+                    buflen * self.n_prealloc_probes,
+                    dtype=sig_probes.buf.dtype)
+            self.sig_probes_output[period] = sig_probes
+            self.sig_probes_buflen[period] = buflen
+            self.sig_probes_A_js[period] = RaggedArray([[0] for sp in sp_dt])
+            self.sig_probes_X_js[period] = RaggedArray(
+                [[self.sidx[sp.sig]] for sp in sp_dt])
+
+
     def alloc_populations(self):
-        def pop_props():
+        def zeros():
             return RaggedArray(
-                [[0] * p.n for p in self.model.populations])
+                [[0.0] * p.n for p in self.model.populations])
         # -- lif-specific stuff
-        self.pop_ic = pop_props()
-        self.pop_jbias = pop_props()
-        self.pop_voltage = pop_props()
-        self.pop_rt = pop_props()
-        self.pop_output = pop_props()
+        self.pop_ic = zeros()
+        self.pop_voltage = zeros()
+        self.pop_rt = zeros()
+        self.pop_output = zeros()
+        self.pop_jbias = RaggedArray(
+                [p.bias for p in self.model.populations])
 
     def alloc_transforms(self):
         signals = self.model.signals
@@ -248,6 +279,7 @@ class Simulator(object):
 
     def alloc_all(self):
         self.alloc_signals()
+        self.alloc_signal_probes()
         self.alloc_populations()
         self.alloc_transforms()
         self.alloc_filters()
@@ -313,14 +345,14 @@ class Simulator(object):
 
     def do_populations(self):
         lif_step(
-                J=self.pop_ic.buf,
-                voltage=self.pop_voltage.buf,
-                refractory_time=self.pop_rt.buf,
-                spiked=self.pop_output.buf,
-                dt=self.model.dt,
-                tau_rc=0.02,
-                tau_ref=0.002,
-                upsample=1)
+            J=self.pop_ic.buf,
+            voltage=self.pop_voltage.buf,
+            refractory_time=self.pop_rt.buf,
+            spiked=self.pop_output.buf,
+            dt=self.model.dt,
+            tau_rc=0.02,
+            tau_ref=0.002,
+            upsample=1)
 
     def do_decoders(self):
         ragged_gather_gemv(
@@ -335,6 +367,35 @@ class Simulator(object):
             Y=self.sigs_ic,
             )
 
+    def do_probes(self):
+        for period in self.sig_probes_output:
+            if 0 == self.sim_step % period:
+                probe_out = self.sig_probes_output[period]
+                buflen = self.sig_probes_buflen[period]
+                A_js = self.sig_probes_A_js[period]
+                X_js = self.sig_probes_X_js[period]
+
+                bufidx = int(self.sim_step // period)
+                orig_buffer = probe_out.buf
+                this_buffer = probe_out.buf[bufidx * buflen:]
+                try:
+                    probe_out.buf = this_buffer
+                    print 'saving to probe'
+                    ragged_gather_gemv(
+                        Ms=self.sig_probes_Ms,
+                        Ns=self.sig_probes_Ns,
+                        alpha=1.0,
+                        A=self.sig_probes_A,
+                        A_js=A_js,
+                        X=self.sigs,
+                        X_js=X_js,
+                        beta=0.0,
+                        Y=probe_out,
+                        )
+                    print orig_buffer
+                finally:
+                    probe_out.buf = orig_buffer
+
     def do_all(self):
         # -- step 1: sigs store all signal values of step t (sigs_t)
         self.do_encoders()          # encode sigs_t into pops
@@ -343,7 +404,32 @@ class Simulator(object):
         self.do_filters()           # make sigs_t's contribution to t + 1
         self.do_transforms()        # add sigs_ic's contribution to t + 1
         self.do_custom_transforms() # complete calculation of sigs of t + 1
+        self.do_probes()
+        self.sim_step += 1
 
     def step(self):
         do_all()
+
+    def signal(self, sig):
+        probes = [sp for sp in self.model.signal_probes if sp.sig == sig]
+        if len(probes) == 0:
+            raise KeyError()
+        elif len(probes) > 1:
+            raise KeyError()
+        else:
+            return self.signal_probe_output(probes[0])
+
+    def signal_probe_output(self, probe):
+        period = int(probe.dt // self.model.dt)
+        last_elem = int(math.ceil(self.sim_step / float(period)))
+
+        # -- figure out which signal it is among the ones with the same dt
+        sps_dt = [sp for sp in self.model.signal_probes if sp.dt == probe.dt]
+        probe_idx = sps_dt.index(probe)
+        all_rows = self.sig_probes_output[period].buf.reshape(
+                (-1, self.sig_probes_buflen[period]))
+        start = self.sig_probes_output[period].starts[probe_idx]
+        olen = self.sig_probes_output[period].lens[probe_idx]
+        return all_rows[:last_elem, start:start + olen]
+
 

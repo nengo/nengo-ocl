@@ -5,10 +5,15 @@ class DuplicateFilter(Exception):
     pass
 
 
-
 class Signal(object):
     def __init__(self, n=1):
         self.n = n
+
+
+class SignalProbe(object):
+    def __init__(self, sig, dt):
+        self.sig = sig
+        self.dt = dt
 
 
 class Constant(Signal):
@@ -20,8 +25,13 @@ class Constant(Signal):
 class Population(object):
     def __init__(self, n, bias=None):
         self.n = n
+        if bias is None:
+            bias = np.zeros(n)
+        else:
+            bias = np.asarray(bias, dtype=np.float64)
+            if bias.shape != (n,):
+                raise ValueError('shape', (bias.shape, n))
         self.bias = bias
-
 
 class Transform(object):
     def __init__(self, alpha, insig, outsig):
@@ -59,7 +69,6 @@ class Encoder(object):
                 raise ValueError('weight shape', weights.shape)
 
 
-
 class Decoder(object):
     def __init__(self, pop, sig, weights=None):
         self.pop = pop
@@ -83,6 +92,7 @@ class Model(object):
         self.transforms = []
         self.filters = []
         self.custom_transforms = []
+        self.signal_probes = []
 
     def signal(self, value=None):
         if value is None:
@@ -90,6 +100,11 @@ class Model(object):
         else:
             rval = Constant([value])
         self.signals.append(rval)
+        return rval
+
+    def signal_probe(self, sig, dt):
+        rval = SignalProbe(sig, dt)
+        self.signal_probes.append(rval)
         return rval
 
     def population(self, *args, **kwargs):
