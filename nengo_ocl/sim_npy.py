@@ -1,0 +1,349 @@
+"""
+numpy Simulator in the style of the OpenCL one, to get design right.
+"""
+import numpy as np
+
+
+class RaggedArray(object):
+    # a linear buffer that is partitioned into
+    # sections of various lengths.
+    # 
+    def __init__(self, listoflists):
+
+        starts = []
+        lens = []
+        buf = []
+
+        for l in listoflists:
+            starts.append(len(buf))
+            lens.append(len(l))
+            buf.extend(l)
+
+        self.starts = starts
+        self.lens = lens
+        self.buf = np.asarray(buf)
+
+    def __len__(self):
+        return len(self.starts)
+
+    def __getitem__(self, item):
+        o = self.starts[item]
+        n = self.lens[item]
+        rval = self.buf[o: o + n]
+        if len(rval) != n:
+            raise ValueError('buf not long enough')
+        return rval
+
+    def __setitem__(self, item, val):
+        o = self.starts[item]
+        n = self.lens[item]
+        if len(val) != n:
+            raise ValueError('wrong len')
+        rval = self.buf[o: o + n]
+        if len(rval) != n:
+            raise ValueError('buf not long enough')
+        self.buf[o: o + n] = val
+
+
+def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
+                       beta, Y, Y_in=None):
+    """
+    """
+    try:
+        float(alpha)
+        alpha = [alpha] * len(Y)
+    except TypeError:
+        pass
+
+    try:
+        float(beta)
+        beta = [beta] * len(Y)
+    except TypeError:
+        pass
+
+    if Y_in is None:
+        Y_in = Y
+
+    #print alpha
+    #print A.buf, 'A'
+    #print X.buf, 'X'
+    #print Y_in.buf, 'in'
+
+    for i in xrange(len(Y)):
+        try:
+            y_i = beta[i] * Y_in[i]  # -- ragged getitem
+        except:
+            print i, beta, Y_in
+            raise
+        alpha_i = alpha[i]
+
+        x_js_i = X_js[i] # -- ragged getitem
+        A_js_i = A_js[i] # -- ragged getitem
+
+        for xi, ai in zip(x_js_i, A_js_i):
+            x_ij = X[xi] # -- ragged getitem
+            M_i = Ms[ai]
+            N_i = Ns[ai]
+            assert N_i == len(x_ij)
+            A_ij = A[ai].reshape(N_i, M_i) # -- ragged getitem
+            #print xi, x_ij, A_ij
+            try:
+                y_i += alpha_i * np.dot(x_ij, A_ij.reshape(N_i, M_i))
+            except:
+                print i, xi, ai, A_ij, x_ij
+                raise
+
+        Y[i] = y_i
+    #print Y.buf, 'out'
+
+
+def lif_step(J, voltage, refractory_time, spiked, dt, tau_rc, tau_ref, upsample):
+    if upsample != 1.0:
+        raise NotImplementedError()
+
+    # Euler's method
+    dV = dt / tau_rc * (J - voltage)
+
+    # increase the voltage, ignore values below 0
+    v = np.maximum(voltage + dV, 0)  
+    
+    # handle refractory period        
+    post_ref = 1.0 - (refractory_time - dt) / dt
+
+    # set any post_ref elements < 0 = 0, and > 1 = 1
+    v *= np.clip(post_ref, 0, 1)
+    
+    # determine which neurons spike
+    # if v > 1 set spiked = 1, else 0
+    spiked[:] = (v > 1) * 1.0
+    
+    # adjust refractory time (neurons that spike get
+    # a new refractory time set, all others get it reduced by dt)
+
+    # linearly approximate time since neuron crossed spike threshold
+    overshoot = (v - 1) / dV 
+    spiketime = dt * (1.0 - overshoot)
+
+    # adjust refractory time (neurons that spike get a new
+    # refractory time set, all others get it reduced by dt)
+    new_refractory_time = spiked * (spiketime + tau_ref) \
+            + (1 - spiked) * (refractory_time - dt)
+
+    # return an ordered dictionary of internal variables to update
+    # (including setting a neuron that spikes to a voltage of 0)
+
+    voltage[:] = v * (1 - spiked)
+    refractory_time[:] = new_refractory_time
+    
+
+class Simulator(object):
+    def __init__(self, model):
+        self.model = model
+        self.sidx = dict((s, i) for (i, s) in enumerate(model.signals))
+        self.pidx = dict((p, i) for (i, p) in enumerate(model.populations))
+        self.eidx = dict((s, i) for (i, s) in enumerate(model.encoders))
+        self.didx = dict((p, i) for (i, p) in enumerate(model.decoders))
+
+        if not all(s.n == 1 for s in self.model.signals):
+            raise NotImplementedError()
+
+    def alloc_signals(self):
+        self.sigs_ic = RaggedArray([[0] for s in self.model.signals])
+
+        self.sigs = RaggedArray([getattr(s, 'value', [0])
+            for s in self.model.signals])
+
+        # -- not necessary in ocl if signals fit into shared memory
+        #    shared memory can be used as the copy in that case.
+        self._sigs_copy = RaggedArray([getattr(s, 'value', [0])
+            for s in self.model.signals])
+
+    def alloc_populations(self):
+        def pop_props():
+            return RaggedArray(
+                [[0] * p.n for p in self.model.populations])
+        # -- lif-specific stuff
+        self.pop_ic = pop_props()
+        self.pop_jbias = pop_props()
+        self.pop_voltage = pop_props()
+        self.pop_rt = pop_props()
+        self.pop_output = pop_props()
+
+    def alloc_transforms(self):
+        signals = self.model.signals
+        transforms = self.model.transforms
+
+        self.tf_weights = RaggedArray([[tf.alpha] for tf in transforms])
+        self.tf_Ns = [1] * len(transforms)
+        self.tf_Ms = [1] * len(transforms)
+
+        # -- which transform(s) does each signal use
+        tidx = dict((tf, i) for (i, tf) in enumerate(transforms))
+        self.tf_weights_js = RaggedArray([
+            [tidx[tf] for tf in transforms if tf.outsig == sig]
+            for sig in signals
+            ])
+
+        # -- which corresponding(s) signal is transformed
+        self.tf_signals_js = RaggedArray([
+            [self.sidx[tf.insig] for tf in transforms if tf.outsig == sig]
+            for sig in signals
+            ])
+
+    def alloc_filters(self):
+        signals = self.model.signals
+        filters = self.model.filters
+
+        self.f_weights = RaggedArray([[f.alpha] for f in filters])
+        self.f_Ns = [1] * len(filters)
+        self.f_Ms = [1] * len(filters)
+
+        # -- which weight(s) does each signal use
+        fidx = dict((f, i) for (i, f) in enumerate(filters))
+        self.f_weights_js = RaggedArray([
+            [fidx[f] for f in filters if f.newsig == sig]
+            for sig in signals
+            ])
+
+        # -- which corresponding(s) signal is transformed
+        self.f_signals_js = RaggedArray([
+            [self.sidx[f.oldsig] for f in filters if f.newsig == sig]
+            for sig in signals
+            ])
+
+    def alloc_encoders(self):
+        encoders = self.model.encoders
+        self.enc_weights = RaggedArray([enc.weights.flatten() for enc in encoders])
+
+        self.enc_Ms = [enc.weights.shape[0] for enc in encoders]
+        self.enc_Ns = [enc.weights.shape[1] for enc in encoders]
+
+        # -- which encoder(s) does each population use
+        self.enc_weights_js = [
+            [self.eidx[enc] for enc in encoders if enc.pop == pop]
+            for pop in self.model.populations]
+
+        # -- and which corresponding signal does it encode
+        self.enc_signals_js = [
+            [self.sidx[enc.sig]
+                for enc in encoders if enc.pop == pop]
+            for pop in self.model.populations]
+
+    def alloc_decoders(self):
+        decoders = self.model.decoders
+        self.dec_weights = RaggedArray([dec.weights.flatten() for dec in decoders])
+        self.dec_Ms = [dec.weights.shape[0] for dec in decoders]
+        self.dec_Ns = [dec.weights.shape[1] for dec in decoders]
+
+        # -- which decoder(s) does each signal use
+        self.dec_weights_js = [
+            [self.didx[dec] for dec in decoders if dec.sig == sig]
+            for sig in self.model.signals]
+
+        # -- and which corresponding population does it decode
+        self.dec_pops_js = [
+            [self.pidx[dec.pop]
+                for dec in decoders if dec.sig == sig]
+            for sig in self.model.signals]
+
+    def alloc_all(self):
+        self.alloc_signals()
+        self.alloc_populations()
+        self.alloc_transforms()
+        self.alloc_filters()
+        self.alloc_encoders()
+        self.alloc_decoders()
+
+    def do_transforms(self):
+        """
+        Combine the elements of input accumulator buffer (sigs_ic)
+        into *add* them into sigs
+        """
+        # ADD linear combinations of signals to some signals
+        ragged_gather_gemv(
+            Ms=self.tf_Ms,
+            Ns=self.tf_Ns,
+            alpha=1.0,
+            A=self.tf_weights,
+            A_js=self.tf_weights_js,
+            X=self.sigs_ic,
+            X_js=self.tf_signals_js,
+            beta=1.0,
+            Y=self.sigs,
+            )
+
+    def do_filters(self):
+        """
+        Recombine the elements of previous signal buffer (sigs)
+        and write them back to `sigs`
+        """
+        # ADD linear combinations of signals to some signals
+        self._sigs_copy.buf = self.sigs.buf.copy()
+        ragged_gather_gemv(
+            Ms=self.f_Ms,
+            Ns=self.f_Ns,
+            alpha=1.0,
+            A=self.f_weights,
+            A_js=self.f_weights_js,
+            X=self._sigs_copy,
+            X_js=self.f_signals_js,
+            beta=0.0,
+            Y=self.sigs,
+            )
+
+    def do_custom_transforms(self):
+        for ct in self.model.custom_transforms:
+            ipos = self.sidx[ct.insig]
+            opos = self.sidx[ct.outsig]
+            self.sigs[opos] = ct.func(self.sigs[ipos])
+
+    def do_encoders(self):
+        ragged_gather_gemv(
+            Ms=self.enc_Ms,
+            Ns=self.enc_Ns,
+            alpha=1.0,
+            A=self.enc_weights,
+            A_js=self.enc_weights_js,
+            X=self.sigs,
+            X_js=self.enc_signals_js,
+            beta=1.0,
+            Y_in=self.pop_jbias,
+            Y=self.pop_ic,
+            )
+
+    def do_populations(self):
+        lif_step(
+                J=self.pop_ic.buf,
+                voltage=self.pop_voltage.buf,
+                refractory_time=self.pop_rt.buf,
+                spiked=self.pop_output.buf,
+                dt=self.model.dt,
+                tau_rc=0.02,
+                tau_ref=0.002,
+                upsample=1)
+
+    def do_decoders(self):
+        ragged_gather_gemv(
+            Ms=self.dec_Ms,
+            Ns=self.dec_Ns,
+            alpha=1.0,
+            A=self.dec_weights,
+            A_js=self.dec_weights_js,
+            X=self.pop_output,
+            X_js=self.dec_pops_js,
+            beta=0.0,
+            Y=self.sigs_ic,
+            )
+
+    def do_all(self):
+        # -- step 1: sigs store all signal values of step t (sigs_t)
+        self.do_encoders()          # encode sigs_t into pops
+        self.do_populations()       # pop dynamics
+        self.do_decoders()          # decode into sigs_ic
+        self.do_filters()           # make sigs_t's contribution to t + 1
+        self.do_transforms()        # add sigs_ic's contribution to t + 1
+        self.do_custom_transforms() # complete calculation of sigs of t + 1
+
+    def step(self):
+        do_all()
+

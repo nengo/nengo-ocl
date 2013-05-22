@@ -13,6 +13,12 @@ from ocl.plan import Prog
 from ocl.lif import plan_lif
 from ocl.gemv_batched import plan_misc_gemv
 
+import base
+
+
+def allsame(seq):
+    return len(set(seq)) < 2
+
 
 class LIFMultiEnsemble(object):
     """
@@ -371,22 +377,13 @@ def test_net_by_hand():
     }
 
     def get_decoders(obj, signalname):
-        origin = net.get_object(obj).origin[signalname]
-        rval = origin.decoders.get_value().astype('float32')
-        r = origin.ensemble.radius
-        rval = rval * r / net.dt
-        rval.shape = rval.shape[:-1]
-        return rval
+        return base.net_get_decoders(net, obj, signalname)
 
     def get_encoders(obj):
-        ensemble = net.get_object(obj)
-        encoders = ensemble.shared_encoders.get_value().astype('float32')
-        # -- N.B. shared encoders already have "alpha" factored in
-        return encoders
+        return base.net_get_encoders(net, obj)
 
     def get_bias(obj):
-        ensemble = net.get_object(obj)
-        return ensemble.bias.astype('float32')
+        return base.net_get_bias(net, obj)
 
     # -- bring in neuron bias terms
     bias = lme.lif_bias.get()
@@ -483,73 +480,4 @@ def test_net_by_hand():
     plt.plot(spikes[:, 0, 3])
     plt.plot(spikes[:, 0, 4])
     plt.show()
-
-
-from base import Model, Simulator
-import math
-
-def test_probe_with_base():
-    dt = 0.001
-
-    m = Model()
-    one = m.signal(value=1.0)
-    steps = m.signal()
-    simtime = m.signal()
-    sint = m.signal()
-    Adec = m.signal()
-    Amult = m.signal()
-    Apow = m.signal()
-    Bdec = m.signal()
-    Cdec = m.signal()
-    Ddec = m.signal()
-
-    A = m.population(n=1000)
-    B = m.population(n=1000)
-    C = m.population(n=1000)
-    D = m.population(n=1000)
-
-    # set up linear filters (exp decay)
-    # for the signals
-    # XXX use their pstc constants
-    m.filter(.9, Adec, Adec)
-    m.transform(.1, Adec, Adec)
-
-    m.filter(.9, Amult, Amult)
-    m.transform(.1, Amult, Amult)
-
-    m.filter(.9, Apow, Apow)
-    m.transform(.1, Amult, Amult)
-
-    # -- hold all constants on the line
-    m.filter(1.0, one, one)
-
-    # -- steps counts by 1.0
-    m.filter(1.0, steps, steps)
-    m.filter(1.0, one, steps)
-
-    # simtime <- dt * steps
-    m.filter(dt, steps, simtime)
-
-    m.custom_transform(np.sin, simtime, sint)
-
-    m.encoder(sint, A)
-    m.encoder(Adec, B)
-    m.encoder(Adec, C)
-    m.encoder(Adec, D)
-    m.decoder(A, Adec)
-    m.decoder(A, Bdec)
-    m.decoder(A, Cdec)
-    m.decoder(A, Ddec)
-
-    sim = Simulator(m)
-    sim.alloc_all()
-    for i in range(10):
-        sim.do_all()
-        print 'one', sim.sigs[sim.sidx[one]]
-        assert sim.sigs[sim.sidx[one]] == [1.0]
-        print 'simtime', sim.sidx[simtime], sim.sigs[sim.sidx[simtime]]
-        assert sim.sigs[sim.sidx[simtime]] == [i * dt]
-        print 'sint', sim.sidx[sint], sim.sigs[sim.sidx[sint]]
-        assert sim.sigs[sim.sidx[sint]] == [np.sin(i * dt)]
-
 
