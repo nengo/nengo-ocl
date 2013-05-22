@@ -45,7 +45,8 @@ def make_net(N):
 
     return net, Ap, Bp
 
-def test_probe_with_base():
+
+def test_probe_with_base(show=False):
     net, Ap, Bp = make_net(1000)
     def get_bias(*a):
         bias = net_get_bias(net, *a)
@@ -129,6 +130,8 @@ def test_probe_with_base():
 
     m.signal_probe(sint, dt=0.01)
     m.signal_probe(Adec, dt=0.01)
+    m.signal_probe(Apow, dt=0.01)
+    m.signal_probe(Amult, dt=0.01)
 
     sim = Simulator(m, n_prealloc_probes=1000)
     sim.alloc_all()
@@ -141,7 +144,31 @@ def test_probe_with_base():
         #print 'sint', sim.sidx[sint], sim.sigs[sim.sidx[sint]]
         assert sim.sigs[sim.sidx[sint]] == [np.sin(i * net.dt)]
 
-    print sim.signal(sint)
-    print sim.signal(Adec)
+    sint_data = sim.signal(sint)
+    Adec_data = sim.signal(Adec)
+    Apow_data = sim.signal(Apow)
+    Amult_data = sim.signal(Amult)
+
+    assert sint_data.shape == (100, 1)
+    assert Adec_data.shape == (100, 1)
+    assert Apow_data.shape == (100, 1)
+    assert Amult_data.shape == (100, 1)
+
+    assert np.allclose(sint_data,
+            np.sin(np.arange(100) * .01).reshape(100, 1))
+
+    Adec_mse = np.mean((Adec_data - sint_data) ** 2)
+    print 'Adec MSE', Adec_mse
+    assert Adec_mse < 0.01  # getting .124 May 9 2013
+
+    if show:
+        from matplotlib import pyplot as plt
+        plt.title('4 signals over time')
+        plt.plot(sim.signal(sint), label='zero * sin(t)')
+        plt.plot(sim.signal(Adec), label='Asin(t)')
+        plt.plot(sim.signal(Apow), label='Asin(t)^2')
+        plt.plot(sim.signal(Amult), label='Asin(t)*2')
+        plt.legend(loc='upper left')
+        plt.show()
 
 
