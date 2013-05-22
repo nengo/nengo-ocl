@@ -489,7 +489,10 @@ from base import Model, Simulator
 import math
 
 def test_probe_with_base():
+    dt = 0.001
+
     m = Model()
+    one = m.signal(value=1.0)
     steps = m.signal()
     simtime = m.signal()
     sint = m.signal()
@@ -505,12 +508,21 @@ def test_probe_with_base():
     C = m.population(n=1000)
     D = m.population(n=1000)
 
-    m.transform(steps, steps)
-    m.transform(steps, simtime)
-    m.math_transform(simtime, sint, func=math.sin)
-    m.filter(Adec)
-    m.filter(Amult)
-    m.filter(Apow)
+    m.filter(Adec, beta=.9)
+    m.transform(.1, Adec, Adec)
+    m.filter(Amult, beta=.9)
+    m.transform(.1, Amult, Amult)
+    m.filter(Apow, beta=.9)
+    m.transform(.1, Amult, Amult)
+
+    m.filter(one, beta=1.0)
+    m.filter(steps, beta=1.0)
+
+    m.transform(1.0, one, steps)
+    m.transform(dt, steps, simtime)
+    m.transform(dt, one, simtime)
+    m.custom_transform(np.sin, simtime, sint)
+
     m.encoder(sint, A)
     m.encoder(Adec, B)
     m.encoder(Adec, C)
@@ -521,8 +533,14 @@ def test_probe_with_base():
     m.decoder(A, Ddec)
 
     sim = Simulator(m)
-
     sim.alloc_all()
-    sim.do_all()
+    for i in range(10):
+        sim.do_all()
+        print 'one', sim.sigs[sim.sidx[one]]
+        assert sim.sigs[sim.sidx[one]] == [1.0]
+        print 'simtime', sim.sidx[simtime], sim.sigs[sim.sidx[simtime]]
+        assert sim.sigs[sim.sidx[simtime]] == [i * dt]
+        print 'sint', sim.sidx[sint], sim.sigs[sim.sidx[sint]]
+        assert sim.sigs[sim.sidx[sint]] == [np.sin(i * dt)]
 
 

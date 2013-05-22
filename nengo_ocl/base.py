@@ -14,20 +14,33 @@ class Signal(object):
         self.n = n
 
 
+class Constant(Signal):
+    def __init__(self, value):
+        Signal.__init__(self, len(value))
+        self.value = value
+
+
 class Population(object):
     def __init__(self, n):
         self.n = n
 
 
 class Transform(object):
-    def __init__(self, insig, outsig):
+    def __init__(self, alpha, insig, outsig):
+        self.alpha = alpha
         self.insig = insig
         self.outsig = outsig
 
+class CustomTransform(object):
+    def __init__(self, func, insig, outsig):
+        self.func = func
+        self.insig = insig
+        self.outsig = outsig
 
 class Filter(object):
-    def __init__(self, sig):
+    def __init__(self, sig, beta):
         self.sig = sig
+        self.beta = beta
 
 
 class Encoder(object):
@@ -43,6 +56,7 @@ class Decoder(object):
         self.pop = pop
         self.sig = sig
 
+
 class Model(object):
     def __init__(self):
         self.signals = []
@@ -51,9 +65,13 @@ class Model(object):
         self.decoders = []
         self.transforms = []
         self.filters = []
+        self.custom_transforms = []
 
-    def signal(self, *args, **kwargs):
-        rval = Signal(*args, **kwargs)
+    def signal(self, value=None):
+        if value is None:
+            rval = Signal()
+        else:
+            rval = Constant([value])
         self.signals.append(rval)
         return rval
 
@@ -72,13 +90,23 @@ class Model(object):
         self.decoders.append(rval)
         return rval
 
-    def transform(self, insig, outsig):
-        rval = Transform(insig, outsig)
+    def transform(self, alpha, insig, outsig):
+        rval = Transform(alpha, insig, outsig)
         self.transforms.append(rval)
         return rval
 
-    def filter(self, insig, outsig):
-        rval = Filter(insig, outsig)
+    def custom_transform(self, func, insig, outsig):
+        rval = CustomTransform(func, insig, outsig)
+        self.custom_transforms.append(rval)
+        return rval
+
+    def filter(self, sig, beta):
+        rval = Filter(sig, beta)
+        for f in self.filters:
+            if f.sig == sig:
+                raise DuplicateFilter(
+                        'signal has multiple filters',
+                        sig)
         self.filters.append(rval)
         return rval
 
@@ -143,6 +171,11 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
     if Y_in is None:
         Y_in = Y
 
+    print alpha
+    print A.buf, 'A'
+    print X.buf, 'X'
+    print Y_in.buf, 'in'
+
     for i in xrange(len(Y)):
         try:
             y_i = beta[i] * Y_in[i]  # -- ragged getitem
@@ -153,13 +186,14 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
 
         x_js_i = X_js[i] # -- ragged getitem
         A_js_i = A_js[i] # -- ragged getitem
-        
+
         for xi, ai in zip(x_js_i, A_js_i):
             x_ij = X[xi] # -- ragged getitem
             M_i = Ms[ai]
             N_i = Ns[ai]
             assert N_i == len(x_ij)
             A_ij = A[ai].reshape(N_i, M_i) # -- ragged getitem
+            print xi, x_ij, A_ij
             try:
                 y_i += alpha_i * np.dot(x_ij, A_ij.reshape(N_i, M_i))
             except:
@@ -167,6 +201,7 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
                 raise
 
         Y[i] = y_i
+    print Y.buf, 'out'
 
 
 class Simulator(object):
@@ -181,10 +216,12 @@ class Simulator(object):
             raise NotImplementedError()
 
     def alloc_signals(self):
-        self.sigs = RaggedArray([[0] for s in self.model.signals])
+        self.sigs_ic = RaggedArray([getattr(s, 'value', [0])
+            for s in self.model.signals])
+        self.sigs = RaggedArray([getattr(s, 'value', [0])
+            for s in self.model.signals])
         
         # filtered, transformed signals
-        self.tf_sigs = RaggedArray([[0] for s in self.model.signals])
 
     def alloc_populations(self):
         def pop_props():
@@ -197,25 +234,20 @@ class Simulator(object):
         self.pop_rt = pop_props()
         self.pop_output = pop_props()
 
-    def alloc_filters_and_transforms(self):
+    def alloc_transforms(self):
         transforms = self.model.transforms
-        filters = self.model.filters
         signals = self.model.signals
+        filters = self.model.filters
 
-        filtersig = {}
+        sigbeta = {}
         for filt in filters:
-            if filt.sig in filtersig:
-                raise DuplicateFilter('signal has multiple filters',
-                                     filt.sig)
             # XXX use exp(), dt etc. to calculate filter coef
-            filtersig[filt.sig] = .01
+            sigbeta[filt.sig] = filt.beta
+        for sig in signals:
+            sigbeta.setdefault(sig, 0)
+        self.filt_beta = np.asarray([sigbeta[sig] for sig in signals]) 
 
-        self.tf_alpha = np.asarray([1 - filtersig.get(sig, 0)
-                                    for sig in signals])
-        self.tf_beta = np.asarray([filtersig.get(sig, 0)
-                                   for sig in signals])
-
-        self.tf_weights = RaggedArray([[0.1] for tf in transforms])
+        self.tf_weights = RaggedArray([[tf.alpha] for tf in transforms])
         self.tf_Ns = [1] * len(transforms)
         self.tf_Ms = [1] * len(transforms)
 
@@ -223,14 +255,20 @@ class Simulator(object):
         tidx = dict((tf, i) for (i, tf) in enumerate(transforms))
         self.tf_weights_js = RaggedArray([
             [tidx[tf] for tf in transforms if tf.outsig == sig]
-            for sig in self.model.signals
+            for sig in signals
             ])
 
         # -- which corresponding(s) signal is transformed
         self.tf_signals_js = RaggedArray([
             [self.sidx[tf.insig] for tf in transforms if tf.outsig == sig]
-            for sig in self.model.signals
+            for sig in signals
             ])
+
+        print self.tf_weights.starts
+        print self.tf_weights.lens
+        print self.tf_weights.buf
+        print self.tf_weights_js
+        print self.tf_signals_js
 
 
     def alloc_encoders(self):
@@ -273,23 +311,29 @@ class Simulator(object):
     def alloc_all(self):
         self.alloc_signals()
         self.alloc_populations()
-        self.alloc_filters_and_transforms()
+        self.alloc_transforms()
         self.alloc_encoders()
         self.alloc_decoders()
 
-
-    def do_signal_transform(self):
+    def do_transforms(self):
+        # ADD linear combinations of signals to some signals
         ragged_gather_gemv(
             Ms=self.tf_Ms,
             Ns=self.tf_Ns,
-            alpha=self.tf_alpha,
+            alpha=1.0,
             A=self.tf_weights,
             A_js=self.tf_weights_js,
-            X=self.sigs,
+            X=self.sigs_ic,
             X_js=self.tf_signals_js,
-            beta=self.tf_beta,
-            Y=self.tf_sigs,
+            beta=self.filt_beta,
+            Y=self.sigs,
             )
+
+    def do_custom_transforms(self):
+        for ct in self.model.custom_transforms:
+            ipos = self.sidx[ct.insig]
+            opos = self.sidx[ct.outsig]
+            self.sigs[opos] = ct.func(self.sigs[ipos])
 
     def do_encoders(self):
         ragged_gather_gemv(
@@ -298,7 +342,7 @@ class Simulator(object):
             alpha=1.0,
             A=self.enc_weights,
             A_js=self.enc_weights_js,
-            X=self.tf_sigs,
+            X=self.sigs,
             X_js=self.enc_signals_js,
             beta=1.0,
             Y_in=self.pop_jbias,
@@ -321,12 +365,15 @@ class Simulator(object):
             Y=self.sigs,
             )
 
+    def do_all(self):
+        self.do_transforms()
+        self.do_custom_transforms()
+        #self.do_encoders()
+        #self.do_populations()
+        #self.do_decoders()
 
     def step(self):
-        self.do_signal_transform()
-        self.do_encoders()
-        self.do_populations()
-        self.do_decoders()
+        do_all()
 
 
 
