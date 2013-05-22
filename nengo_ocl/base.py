@@ -31,16 +31,19 @@ class Transform(object):
         self.insig = insig
         self.outsig = outsig
 
+
 class CustomTransform(object):
     def __init__(self, func, insig, outsig):
         self.func = func
         self.insig = insig
         self.outsig = outsig
 
+
 class Filter(object):
-    def __init__(self, sig, beta):
-        self.sig = sig
-        self.beta = beta
+    def __init__(self, alpha, oldsig, newsig):
+        self.oldsig = oldsig
+        self.newsig = newsig
+        self.alpha = alpha
 
 
 class Encoder(object):
@@ -95,19 +98,14 @@ class Model(object):
         self.transforms.append(rval)
         return rval
 
+    def filter(self, alpha, oldsig, newsig):
+        rval = Filter(alpha, oldsig, newsig)
+        self.filters.append(rval)
+        return rval
+
     def custom_transform(self, func, insig, outsig):
         rval = CustomTransform(func, insig, outsig)
         self.custom_transforms.append(rval)
-        return rval
-
-    def filter(self, sig, beta):
-        rval = Filter(sig, beta)
-        for f in self.filters:
-            if f.sig == sig:
-                raise DuplicateFilter(
-                        'signal has multiple filters',
-                        sig)
-        self.filters.append(rval)
         return rval
 
 
@@ -171,10 +169,10 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
     if Y_in is None:
         Y_in = Y
 
-    print alpha
-    print A.buf, 'A'
-    print X.buf, 'X'
-    print Y_in.buf, 'in'
+    #print alpha
+    #print A.buf, 'A'
+    #print X.buf, 'X'
+    #print Y_in.buf, 'in'
 
     for i in xrange(len(Y)):
         try:
@@ -218,10 +216,14 @@ class Simulator(object):
     def alloc_signals(self):
         self.sigs_ic = RaggedArray([getattr(s, 'value', [0])
             for s in self.model.signals])
+
         self.sigs = RaggedArray([getattr(s, 'value', [0])
             for s in self.model.signals])
-        
-        # filtered, transformed signals
+
+        # -- not necessary in ocl if signals fit into shared memory
+        #    shared memory can be used as the copy in that case.
+        self._sigs_copy = RaggedArray([getattr(s, 'value', [0])
+            for s in self.model.signals])
 
     def alloc_populations(self):
         def pop_props():
@@ -235,17 +237,8 @@ class Simulator(object):
         self.pop_output = pop_props()
 
     def alloc_transforms(self):
-        transforms = self.model.transforms
         signals = self.model.signals
-        filters = self.model.filters
-
-        sigbeta = {}
-        for filt in filters:
-            # XXX use exp(), dt etc. to calculate filter coef
-            sigbeta[filt.sig] = filt.beta
-        for sig in signals:
-            sigbeta.setdefault(sig, 0)
-        self.filt_beta = np.asarray([sigbeta[sig] for sig in signals]) 
+        transforms = self.model.transforms
 
         self.tf_weights = RaggedArray([[tf.alpha] for tf in transforms])
         self.tf_Ns = [1] * len(transforms)
@@ -264,12 +257,26 @@ class Simulator(object):
             for sig in signals
             ])
 
-        print self.tf_weights.starts
-        print self.tf_weights.lens
-        print self.tf_weights.buf
-        print self.tf_weights_js
-        print self.tf_signals_js
+    def alloc_filters(self):
+        signals = self.model.signals
+        filters = self.model.filters
 
+        self.f_weights = RaggedArray([[f.alpha] for f in filters])
+        self.f_Ns = [1] * len(filters)
+        self.f_Ms = [1] * len(filters)
+
+        # -- which weight(s) does each signal use
+        fidx = dict((f, i) for (i, f) in enumerate(filters))
+        self.f_weights_js = RaggedArray([
+            [fidx[f] for f in filters if f.newsig == sig]
+            for sig in signals
+            ])
+
+        # -- which corresponding(s) signal is transformed
+        self.f_signals_js = RaggedArray([
+            [self.sidx[f.oldsig] for f in filters if f.newsig == sig]
+            for sig in signals
+            ])
 
     def alloc_encoders(self):
         encoders = self.model.encoders
@@ -312,10 +319,15 @@ class Simulator(object):
         self.alloc_signals()
         self.alloc_populations()
         self.alloc_transforms()
+        self.alloc_filters()
         self.alloc_encoders()
         self.alloc_decoders()
 
     def do_transforms(self):
+        """
+        Combine the elements of input accumulator buffer (sigs_ic)
+        into *add* them into sigs
+        """
         # ADD linear combinations of signals to some signals
         ragged_gather_gemv(
             Ms=self.tf_Ms,
@@ -325,7 +337,26 @@ class Simulator(object):
             A_js=self.tf_weights_js,
             X=self.sigs_ic,
             X_js=self.tf_signals_js,
-            beta=self.filt_beta,
+            beta=1.0,
+            Y=self.sigs,
+            )
+
+    def do_filters(self):
+        """
+        Recombine the elements of previous signal buffer (sigs)
+        and write them back to `sigs`
+        """
+        # ADD linear combinations of signals to some signals
+        self._sigs_copy.buf = self.sigs.buf.copy()
+        ragged_gather_gemv(
+            Ms=self.f_Ms,
+            Ns=self.f_Ns,
+            alpha=1.0,
+            A=self.f_weights,
+            A_js=self.f_weights_js,
+            X=self._sigs_copy,
+            X_js=self.f_signals_js,
+            beta=0.0,
             Y=self.sigs,
             )
 
@@ -366,11 +397,13 @@ class Simulator(object):
             )
 
     def do_all(self):
-        self.do_transforms()
-        self.do_custom_transforms()
-        #self.do_encoders()
-        #self.do_populations()
-        #self.do_decoders()
+        # -- step 1: sigs store all signal values of step t (sigs_t)
+        #self.do_encoders()          # encode sigs_t into pops
+        #self.do_populations()       # pop dynamics
+        #self.do_decoders()          # decode into sigs_ic
+        self.do_filters()           # make sigs_t's contribution to t + 1
+        self.do_transforms()        # add sigs_ic's contribution to t + 1
+        self.do_custom_transforms() # complete calculation of sigs of t + 1
 
     def step(self):
         do_all()

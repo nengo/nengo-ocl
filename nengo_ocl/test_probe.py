@@ -508,19 +508,28 @@ def test_probe_with_base():
     C = m.population(n=1000)
     D = m.population(n=1000)
 
-    m.filter(Adec, beta=.9)
+    # set up linear filters (exp decay)
+    # for the signals
+    # XXX use their pstc constants
+    m.filter(.9, Adec, Adec)
     m.transform(.1, Adec, Adec)
-    m.filter(Amult, beta=.9)
-    m.transform(.1, Amult, Amult)
-    m.filter(Apow, beta=.9)
+
+    m.filter(.9, Amult, Amult)
     m.transform(.1, Amult, Amult)
 
-    m.filter(one, beta=1.0)
-    m.filter(steps, beta=1.0)
+    m.filter(.9, Apow, Apow)
+    m.transform(.1, Amult, Amult)
 
-    m.transform(1.0, one, steps)
-    m.transform(dt, steps, simtime)
-    m.transform(dt, one, simtime)
+    # -- hold all constants on the line
+    m.filter(1.0, one, one)
+
+    # -- steps counts by 1.0
+    m.filter(1.0, steps, steps)
+    m.filter(1.0, one, steps)
+
+    # simtime <- dt * steps
+    m.filter(dt, steps, simtime)
+
     m.custom_transform(np.sin, simtime, sint)
 
     m.encoder(sint, A)
