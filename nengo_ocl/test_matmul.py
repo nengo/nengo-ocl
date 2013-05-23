@@ -1,5 +1,6 @@
 
-from base import Model, Simulator
+from base import Model
+from sim_npy import Simulator
 
 
 def test_matrix_mult_example(D1=1, D2=2, D3=3):
@@ -13,7 +14,7 @@ def test_matrix_mult_example(D1=1, D2=2, D3=3):
     #  intermediate tensor of products D1 x D2 x D3
     #  result D is D1xD3
 
-    m = Model()
+    m = Model(dt=0.001)
 
     A = {}
     A_in = {}
@@ -48,8 +49,8 @@ def test_matrix_mult_example(D1=1, D2=2, D3=3):
                 C[(i, j, k)] = m.population(200)
                 C_in[(i, j, k)] = m.signal()
                 C_dec[(i, j, k)] = m.signal()
-                m.transform(A_dec[(i, j)], C_in[(i, j, k)])
-                m.transform(B_dec[(i, j)], C_in[(i, j, k)])
+                m.transform(1.0, A_dec[(i, j)], C_in[(i, j, k)])
+                m.transform(1.0, B_dec[(i, j)], C_in[(i, j, k)])
                 m.encoder(C_in[(i, j, k)], C[(i, j, k)])
                 m.decoder(C[(i, j, k)], C_dec[(i, j, k)])
 
@@ -62,7 +63,7 @@ def test_matrix_mult_example(D1=1, D2=2, D3=3):
             D_in[(i, j)] = m.signal()
             D_dec[(i, j)] = m.signal()
             for k in range(D2):
-                m.transform(C_dec[(i, k, j)], D_in[(i, j)])
+                m.transform(1.0, C_dec[(i, k, j)], D_in[(i, j)])
             m.encoder(D_in[(i, j)], D[(i, j)])
             m.decoder(D[(i, j)], D_dec[(i, j)])
 

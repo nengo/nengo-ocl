@@ -187,7 +187,6 @@ class Simulator(object):
             self.sig_probes_X_js[period] = RaggedArray(
                 [[self.sidx[sp.sig]] for sp in sp_dt])
 
-
     def alloc_populations(self):
         def zeros():
             return RaggedArray(
@@ -403,10 +402,14 @@ class Simulator(object):
         self.do_transforms()        # add sigs_ic's contribution to t + 1
         self.do_custom_transforms() # complete calculation of sigs of t + 1
         self.do_probes()
-        self.sim_step += 1
 
     def step(self):
-        do_all()
+        self.do_all()
+        self.sim_step += 1
+
+    def run_steps(self, N):
+        for i in xrange(N):
+            self.step()
 
     def signal(self, sig):
         probes = [sp for sp in self.model.signal_probes if sp.sig == sig]
