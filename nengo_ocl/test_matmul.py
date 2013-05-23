@@ -1,3 +1,4 @@
+import time
 import numpy as np
 from base import Model
 from base import net_get_bias
@@ -228,9 +229,11 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2):
     sim = Simulator(m)
 
     sim.alloc_all()
-    print sim.sigs
+
+    t0 = time.time()
     sim.run_steps(1000)
-    print sim.sigs
+    t1 = time.time()
+    print 'sim_npy takes', (t1 - t0)
 
     plt.subplot(4, 1, 1)
     plt.title('A')
@@ -260,7 +263,10 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2):
 
     #Cprobe = net.make_probe('C', dt_sample=0.01, pstc=0.01)
     Dprobe = net.make_probe('D', dt_sample=0.01, pstc=0.1)
+    t0 = time.time()
     net.run(1) # run for 1 second
+    t1 = time.time()
+    print 'nengo_theano takes', (t1 - t0)
 
     plt.subplot(4, 1, 4)
     plt.plot(Dprobe.get_data()[:, 0])

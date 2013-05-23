@@ -150,15 +150,18 @@ class Simulator(object):
         if not all(s.n == 1 for s in self.model.signals):
             raise NotImplementedError()
 
-    def alloc_signals(self):
-        self.sigs_ic = RaggedArray([[0.0] for s in self.model.signals])
+    def RaggedArray(self, *args, **kwargs):
+        return RaggedArray(*args, **kwargs)
 
-        self.sigs = RaggedArray([[getattr(s, 'value', 0.0)]
+    def alloc_signals(self):
+        self.sigs_ic = self.RaggedArray([[0.0] for s in self.model.signals])
+
+        self.sigs = self.RaggedArray([[getattr(s, 'value', 0.0)]
             for s in self.model.signals])
 
         # -- not necessary in ocl if signals fit into shared memory
         #    shared memory can be used as the copy in that case.
-        self._sigs_copy = RaggedArray([[getattr(s, 'value', 0.0)]
+        self._sigs_copy = self.RaggedArray([[getattr(s, 'value', 0.0)]
             for s in self.model.signals])
 
     def alloc_signal_probes(self):
@@ -166,9 +169,9 @@ class Simulator(object):
         dts = list(sorted(set([sp.dt for sp in signal_probes])))
         self.sig_probes_output = {}
         self.sig_probes_buflen = {}
-        self.sig_probes_Ms = RaggedArray([[1]])
-        self.sig_probes_Ns = RaggedArray([[1]])
-        self.sig_probes_A = RaggedArray([[1.0]])
+        self.sig_probes_Ms = self.RaggedArray([[1]])
+        self.sig_probes_Ns = self.RaggedArray([[1]])
+        self.sig_probes_A = self.RaggedArray([[1.0]])
         self.sig_probes_A_js = {}
         self.sig_probes_X_js = {}
         for dt in dts:
@@ -176,46 +179,46 @@ class Simulator(object):
             period = int(dt // self.model.dt)
 
             # -- allocate storage for the probe output
-            sig_probes = RaggedArray([[0.0] for sp in sp_dt])
+            sig_probes = self.RaggedArray([[0.0] for sp in sp_dt])
             buflen = len(sig_probes.buf)
             sig_probes.buf = np.zeros(
                     buflen * self.n_prealloc_probes,
                     dtype=sig_probes.buf.dtype)
             self.sig_probes_output[period] = sig_probes
             self.sig_probes_buflen[period] = buflen
-            self.sig_probes_A_js[period] = RaggedArray([[0] for sp in sp_dt])
-            self.sig_probes_X_js[period] = RaggedArray(
+            self.sig_probes_A_js[period] = self.RaggedArray([[0] for sp in sp_dt])
+            self.sig_probes_X_js[period] = self.RaggedArray(
                 [[self.sidx[sp.sig]] for sp in sp_dt])
 
     def alloc_populations(self):
         def zeros():
-            return RaggedArray(
+            return self.RaggedArray(
                 [[0.0] * p.n for p in self.model.populations])
         # -- lif-specific stuff
         self.pop_ic = zeros()
         self.pop_voltage = zeros()
         self.pop_rt = zeros()
         self.pop_output = zeros()
-        self.pop_jbias = RaggedArray(
+        self.pop_jbias = self.RaggedArray(
                 [p.bias for p in self.model.populations])
 
     def alloc_transforms(self):
         signals = self.model.signals
         transforms = self.model.transforms
 
-        self.tf_weights = RaggedArray([[tf.alpha] for tf in transforms])
+        self.tf_weights = self.RaggedArray([[tf.alpha] for tf in transforms])
         self.tf_Ns = [1] * len(transforms)
         self.tf_Ms = [1] * len(transforms)
 
         # -- which transform(s) does each signal use
         tidx = dict((tf, i) for (i, tf) in enumerate(transforms))
-        self.tf_weights_js = RaggedArray([
+        self.tf_weights_js = self.RaggedArray([
             [tidx[tf] for tf in transforms if tf.outsig == sig]
             for sig in signals
             ])
 
         # -- which corresponding(s) signal is transformed
-        self.tf_signals_js = RaggedArray([
+        self.tf_signals_js = self.RaggedArray([
             [self.sidx[tf.insig] for tf in transforms if tf.outsig == sig]
             for sig in signals
             ])
@@ -224,26 +227,26 @@ class Simulator(object):
         signals = self.model.signals
         filters = self.model.filters
 
-        self.f_weights = RaggedArray([[f.alpha] for f in filters])
+        self.f_weights = self.RaggedArray([[f.alpha] for f in filters])
         self.f_Ns = [1] * len(filters)
         self.f_Ms = [1] * len(filters)
 
         # -- which weight(s) does each signal use
         fidx = dict((f, i) for (i, f) in enumerate(filters))
-        self.f_weights_js = RaggedArray([
+        self.f_weights_js = self.RaggedArray([
             [fidx[f] for f in filters if f.newsig == sig]
             for sig in signals
             ])
 
         # -- which corresponding(s) signal is transformed
-        self.f_signals_js = RaggedArray([
+        self.f_signals_js = self.RaggedArray([
             [self.sidx[f.oldsig] for f in filters if f.newsig == sig]
             for sig in signals
             ])
 
     def alloc_encoders(self):
         encoders = self.model.encoders
-        self.enc_weights = RaggedArray([enc.weights.flatten() for enc in encoders])
+        self.enc_weights = self.RaggedArray([enc.weights.flatten() for enc in encoders])
 
         self.enc_Ms = [enc.weights.shape[0] for enc in encoders]
         self.enc_Ns = [enc.weights.shape[1] for enc in encoders]
@@ -261,7 +264,7 @@ class Simulator(object):
 
     def alloc_decoders(self):
         decoders = self.model.decoders
-        self.dec_weights = RaggedArray([dec.weights.flatten() for dec in decoders])
+        self.dec_weights = self.RaggedArray([dec.weights.flatten() for dec in decoders])
         self.dec_Ms = [dec.weights.shape[0] for dec in decoders]
         self.dec_Ns = [dec.weights.shape[1] for dec in decoders]
 

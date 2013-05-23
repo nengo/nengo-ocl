@@ -46,20 +46,14 @@ def make_net(N):
     return net, Ap, Bp
 
 
-def test_probe_with_base(show=False):
+def test_probe_with_base(show=False, Simulator=Simulator):
     net, Ap, Bp = make_net(1000)
-    def get_bias(*a):
-        bias = net_get_bias(net, *a)
-        if bias.shape[0] != 1:
-            raise NotImplementedError()
-        return bias[0]
-    def get_encoders(*a):
-        encoders = net_get_encoders(net, *a)
-        if encoders.shape[0] != 1:
-            raise NotImplementedError()
-        return encoders[0]
-
-    get_decoders = lambda *a: net_get_decoders(net, *a)
+    def get_bias(obj):
+        return net_get_bias(net, obj, 0)
+    def get_encoders(obj):
+        return net_get_encoders(net, obj, 0)
+    def get_decoders(obj, name):
+        return net_get_decoders(net, obj, name, 0)
 
     m = Model(net.dt)
     one = m.signal(value=1.0)
@@ -136,7 +130,7 @@ def test_probe_with_base(show=False):
     sim = Simulator(m, n_prealloc_probes=1000)
     sim.alloc_all()
     for i in range(1000):
-        sim.do_all()
+        sim.step()
         #print 'one', sim.sigs[sim.sidx[one]]
         assert sim.sigs[sim.sidx[one]] == [1.0]
         #print 'simtime', sim.sidx[simtime], sim.sigs[sim.sidx[simtime]]
@@ -149,10 +143,10 @@ def test_probe_with_base(show=False):
     Apow_data = sim.signal(Apow)
     Amult_data = sim.signal(Amult)
 
-    assert sint_data.shape == (100, 1)
-    assert Adec_data.shape == (100, 1)
-    assert Apow_data.shape == (100, 1)
-    assert Amult_data.shape == (100, 1)
+    assert sint_data.shape == (100, 1), sint_data.shape
+    assert Adec_data.shape == (100, 1), Adec_data.shape
+    assert Apow_data.shape == (100, 1), Apow_data.shape
+    assert Amult_data.shape == (100, 1), Amult_data.shape
 
     assert np.allclose(sint_data,
             np.sin(np.arange(100) * .01).reshape(100, 1))
