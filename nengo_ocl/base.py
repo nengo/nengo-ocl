@@ -18,8 +18,8 @@ class SignalProbe(object):
 
 class Constant(Signal):
     def __init__(self, value):
-        Signal.__init__(self, len(value))
-        self.value = value
+        Signal.__init__(self, 1)
+        self.value = float(value)
 
 
 class Population(object):
@@ -98,7 +98,7 @@ class Model(object):
         if value is None:
             rval = Signal()
         else:
-            rval = Constant([value])
+            rval = Constant(value)
         self.signals.append(rval)
         return rval
 
