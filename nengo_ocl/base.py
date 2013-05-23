@@ -143,23 +143,40 @@ class Model(object):
 # ----------------------------------------------------------------------
 
 
-def net_get_decoders(net, obj, signalname):
-    origin = net.get_object(obj).origin[signalname]
+def net_get_decoders(net, obj, origin_name, idx=None):
+    ensemble = net.get_object(obj)
+    try:
+        origin = ensemble.origin[origin_name]
+    except KeyError:
+        print 'Origin names:', ensemble.origin.keys()
+        raise
     rval = origin.decoders.get_value().astype('float32')
     r = origin.ensemble.radius
     rval = rval * r / net.dt
-    rval.shape = rval.shape[:-1]
-    return rval
+    if idx is None:
+        assert rval.shape[0] == 1
+        return rval[0].T
+    else:
+        return rval[idx].T
 
-def net_get_encoders(net, obj):
+def net_get_encoders(net, obj, idx=None):
     ensemble = net.get_object(obj)
     encoders = ensemble.shared_encoders.get_value().astype('float32')
     # -- N.B. shared encoders already have "alpha" factored in
-    return encoders
+    if idx is None:
+        assert encoders.shape[0] == 1
+        return encoders[0]
+    else:
+        return encoders[idx]
 
-def net_get_bias(net, obj):
+def net_get_bias(net, obj, idx=None):
     ensemble = net.get_object(obj)
-    return ensemble.bias.astype('float32')
+    bias = ensemble.bias.astype('float32')
+    if idx is None:
+        assert bias.shape[0] == 1
+        return bias[0]
+    else:
+        return bias[idx]
 
 try:
     import nengo.nef_theano.ensemble

@@ -153,12 +153,12 @@ class Simulator(object):
     def alloc_signals(self):
         self.sigs_ic = RaggedArray([[0.0] for s in self.model.signals])
 
-        self.sigs = RaggedArray([getattr(s, 'value', [0])
+        self.sigs = RaggedArray([[getattr(s, 'value', 0.0)]
             for s in self.model.signals])
 
         # -- not necessary in ocl if signals fit into shared memory
         #    shared memory can be used as the copy in that case.
-        self._sigs_copy = RaggedArray([getattr(s, 'value', [0])
+        self._sigs_copy = RaggedArray([[getattr(s, 'value', 0.0)]
             for s in self.model.signals])
 
     def alloc_signal_probes(self):
