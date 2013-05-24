@@ -90,3 +90,17 @@ def plan_copy(queue, src, dst, tag=None):
         """ % config).build().fn
     _fn.set_args(src.data, dst.data)
     return Plan(queue, _fn, (src.data.size,), None, name='copy', tag=tag)
+
+def plan_inc(queue, buf, amt, tag=None):
+    # XXX: only copy the parts of the buffer that are part of the logical Array
+    # XXX: use the elemwise kernel generator above
+    config = {'buf_type': buf.ocldtype, 'amt': amt}
+    _fn = cl.Program(queue.context, """
+        __kernel void fn(__global %(dst_type)s *dst)
+        {
+            dst[get_global_id(0)] = dst[get_global_id(0)] + %(amt)s;
+        }
+        """ % config).build().fn
+    _fn.set_args(buf.data,)
+    return Plan(queue, _fn, (buf.data.size,), None, name='inc', amt=amt, tag=tag)
+
