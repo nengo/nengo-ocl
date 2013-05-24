@@ -1,3 +1,4 @@
+import time
 import numpy as np
 
 from nengo import nef_theano as nef
@@ -46,8 +47,17 @@ def make_net(N):
     return net, Ap, Bp
 
 
-def test_probe_with_base(show=False, Simulator=Simulator,
-                        skip_loop_asserts=False):
+def test_ref():
+    net, Ap, Bp = make_net(1000)
+    net.run(0.1)
+
+    t0 = time.time()
+    net.run(1.0)
+    t1 = time.time()
+    print '1000 steps took', (t1 - t0)
+
+
+def test_probe_with_base(show=False, Simulator=Simulator):
     net, Ap, Bp = make_net(1000)
     def get_bias(obj):
         return net_get_bias(net, obj, 0)
@@ -130,15 +140,10 @@ def test_probe_with_base(show=False, Simulator=Simulator,
 
     sim = Simulator(m, n_prealloc_probes=1000)
     sim.alloc_all()
-    for i in range(1000):
-        sim.step()
-        if not skip_loop_asserts:
-            #print 'one', sim.sigs[sim.sidx[one]]
-            assert sim.sigs[sim.sidx[one]] == [1.0]
-            #print 'simtime', sim.sidx[simtime], sim.sigs[sim.sidx[simtime]]
-            assert sim.sigs[sim.sidx[simtime]] == [i * net.dt]
-            #print 'sint', sim.sidx[sint], sim.sigs[sim.sidx[sint]]
-            assert sim.sigs[sim.sidx[sint]] == [np.sin(i * net.dt)]
+    t0 = time.time()
+    sim.run_steps(1000)
+    t1 = time.time()
+    print '1000 steps took', (t1 - t0)
 
     sint_data = sim.signal(sint)
     Adec_data = sim.signal(Adec)
