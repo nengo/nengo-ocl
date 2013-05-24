@@ -37,6 +37,7 @@ class Prog(object):
             import sys
             print >> sys.stderr, p
             p()
+            self.queues[0].finish()
 
 
     def call_n_times(self, n):

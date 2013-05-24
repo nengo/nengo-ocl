@@ -152,6 +152,7 @@ class Simulator(sim_npy.Simulator):
 
     def plan_custom_transforms(self):
         for ct in self.model.custom_transforms:
+            raise NotImplementedError()
             ipos = self.sidx[ct.insig]
             opos = self.sidx[ct.outsig]
             self.sigs[opos] = ct.func(self.sigs[ipos])
@@ -214,7 +215,7 @@ class Simulator(sim_npy.Simulator):
                 this_buffer = probe_out.buf[bufidx * buflen:]
                 try:
                     probe_out.buf = this_buffer
-                    return plan_ragged_gather_gemv(
+                    plan = plan_ragged_gather_gemv(
                         Ms=self.sig_probes_Ms,
                         Ns=self.sig_probes_Ns,
                         alpha=1.0,
@@ -225,6 +226,7 @@ class Simulator(sim_npy.Simulator):
                         beta=0.0,
                         Y=probe_out,
                         )
+                    raise NotImplementedError()
                 finally:
                     probe_out.buf = orig_buffer
 
@@ -237,9 +239,9 @@ class Simulator(sim_npy.Simulator):
             self.plan_copy_sigs(),
             self.plan_filters(),
             self.plan_transforms(),
-            #self.plan_custom_transforms(),
-            #self.plan_probes(),
+            self.plan_custom_transforms(),
         ])
+        self.probe_plans = self.plan_probes()
 
 
     def step(self):

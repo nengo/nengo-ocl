@@ -447,22 +447,22 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
 
     text = """
         __kernel void fn(
-            __global const int *Ns,
-            __global const ${type_alpha} * alphas,
-            __global const int *A_starts,
-            __global const ${type_A} *A_data,
-            __global const int *A_js_starts,
-            __global const int *A_js_lens,
-            __global const int *A_js_data,
-            __global const int *X_starts,
-            __global const ${type_X} *X_data,
-            __global const int *X_js_starts,
-            __global const int *X_js_data,
-            __global const ${type_beta} * betas,
-            __global const int *Y_in_starts,
-            __global const ${type_Y} *Y_in_data,
-            __global const int *Y_starts,
-            __global const int *Y_lens,
+            __global int *Ns,
+            __global ${type_alpha} * alphas,
+            __global int *A_starts,
+            __global ${type_A} *A_data,
+            __global int *A_js_starts,
+            __global int *A_js_lens,
+            __global int *A_js_data,
+            __global int *X_starts,
+            __global ${type_X} *X_data,
+            __global int *X_js_starts,
+            __global int *X_js_data,
+            __global ${type_beta} * betas,
+            __global int *Y_in_starts,
+            __global ${type_Y} *Y_in_data,
+            __global int *Y_starts,
+            __global int *Y_lens,
             __global ${type_Y} *Y_data)
         {
             const int bb = get_global_id(0);
@@ -506,11 +506,12 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
             }
         }
     """
-    text = Template(text).render(**textconf)
+
+    text = Template(text, output_encoding='ascii').render(**textconf)
     gsize = (len(Y),)
     lsize = None
     _fn = cl.Program(queue.context, text).build().fn
-    _fn.set_args(cl_Ns.data,
+    full_args = (cl_Ns.data,
                  cl_alpha.data,
                  A.starts.data,
                  A.buf.data,
@@ -528,8 +529,14 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
                  Y.lens.data,
                  Y.buf.data,
                 )
-    return Plan(queue, _fn, gsize, lsize,
+    _fn.set_args(*full_args)
+    rval = Plan(queue, _fn, gsize, lsize,
                 name='ref_ragged_gather_gemv',
                 tag=tag,
                )
+    # prevent garbage-collection
+    rval.alpha = cl_alpha
+    rval.beta = cl_beta
+    rval.Ns = cl_Ns
+    return rval
 
