@@ -426,15 +426,15 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
     except TypeError:
         pass
 
-    cl_alpha = to_device(queue, alpha)
-    cl_beta = to_device(queue, beta)
+    cl_alpha = to_device(queue, np.asarray(alpha, Y.buf.dtype))
+    cl_beta = to_device(queue, np.asarray(beta, Y.buf.dtype))
 
     if Y_in is None:
         Y_in = Y
 
     # XXX check for e.g. all Ns being the same thing
     #     especially all Ns == 1
-    cl_Ns = to_device(queue, Ns)
+    cl_Ns = to_device(queue, np.asarray(Ns, 'int32'))
 
     # XXX check that all the ints are ints not longs
     textconf = {

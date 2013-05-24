@@ -4,7 +4,7 @@ import pyopencl as cl
 import sim_npy
 #from ocl.array import Array
 from ocl.array import to_device
-from ocl.plan import Prog
+from ocl.plan import Plan
 #from ocl.array import empty
 from ocl.gemv_batched import plan_ragged_gather_gemv
 from ocl.lif import plan_lif
@@ -151,11 +151,23 @@ class Simulator(sim_npy.Simulator):
             )
 
     def plan_custom_transforms(self):
+        rval = []
         for ct in self.model.custom_transforms:
-            raise NotImplementedError()
+            # XXX Think of a better way...
             ipos = self.sidx[ct.insig]
             opos = self.sidx[ct.outsig]
-            self.sigs[opos] = ct.func(self.sigs[ipos])
+            text =  """ __kernel void fn(__global %s *x)
+                {
+                x[%i] = sin(x[%i]);
+                }
+                """ % (self.sigs.buf.ocldtype, opos, ipos)
+            print text
+            kern = cl.Program(self.queue.context, text).build().fn
+            kern.set_args(self.sigs.buf.data)
+            plan = Plan(
+                self.queue, kern, (1,), None, tag='custom sin transform')
+            rval.append(plan)
+        return rval
 
     def plan_encoders(self):
         return plan_ragged_gather_gemv(
@@ -223,7 +235,7 @@ class Simulator(sim_npy.Simulator):
                 Y=probe_out,
                 tag='probe:%i' % period,
                 )
-            adv_ptr_plan = plan_inc(
+            advance_plan = plan_inc(
                 self.queue,
                 probe_out.starts,
                 amt=buflen,
@@ -241,8 +253,8 @@ class Simulator(sim_npy.Simulator):
             self.plan_copy_sigs(),
             self.plan_filters(),
             self.plan_transforms(),
-            self.plan_custom_transforms(),
         ]
+        tick_plans.extend(self.plan_custom_transforms())
         self.probe_plans = self.plan_probes()
         periods = [1] + self.probe_plans.keys()
         def gcd(a, b):
@@ -251,24 +263,28 @@ class Simulator(sim_npy.Simulator):
             return a
         def lcm(a, b):
             return a * b // gcd(a, b)
-        periodlen = reduce(lcm, periods)
-        print 'creating a command sequence for', periodlen,
-        print 'iterations at once', periods
+        period_len = reduce(lcm, periods)
+        print 'creating a command sequence for', period_len,
+        print 'iterations at once: periods =', periods
         self.all_plans = []
-        self.all_plans_periodlen = periodlen
+        self.all_plans_period_len = period_len
         self.all_plans_start = []
         self.all_plans_stop = []
         # XXX figure out when probe pointers go off the end
-        for ii in xrange(periodlen):
+        for ii in xrange(period_len):
             self.all_plans_start.append(len(self.all_plans))
             self.all_plans.extend(tick_plans)
-            for period in periods:
+            for period in self.probe_plans:
                 if ii % period == 0:
                     self.all_plans.extend(self.probe_plans[period])
             self.all_plans_stop.append(len(self.all_plans))
 
     def step(self):
-        period_pos = self.sim_step % self.period_len
+        try:
+            self.all_plans
+        except AttributeError:
+            self.plan_all()
+        period_pos = self.sim_step % self.all_plans_period_len
         start = self.all_plans_start[period_pos]
         stop = self.all_plans_stop[period_pos]
         plans = self.all_plans[start:stop]
@@ -297,10 +313,13 @@ class Simulator(sim_npy.Simulator):
         # -- figure out which signal it is among the ones with the same dt
         sps_dt = [sp for sp in self.model.signal_probes if sp.dt == probe.dt]
         probe_idx = sps_dt.index(probe)
-        all_rows = self.sig_probes_output[period].buf.get().reshape(
-                (-1, self.sig_probes_buflen[period]))
-        start = self.sig_probes_output[period].starts.get()[probe_idx]
-        olen = self.sig_probes_output[period].lens.get()[probe_idx]
+        all_rows = self.sig_probes_output[period].buf.get()
+        starts = self.sig_probes_output[period].starts.get()
+        lens = self.sig_probes_output[period].lens.get()
+
+        all_rows = all_rows.reshape((-1, self.sig_probes_buflen[period]))
+        start = starts[probe_idx] % self.sig_probes_buflen[period]
+        olen = lens[probe_idx]
         return all_rows[:last_elem, start:start + olen]
 
 

@@ -96,7 +96,7 @@ def plan_inc(queue, buf, amt, tag=None):
     # XXX: use the elemwise kernel generator above
     config = {'buf_type': buf.ocldtype, 'amt': amt}
     _fn = cl.Program(queue.context, """
-        __kernel void fn(__global %(dst_type)s *dst)
+        __kernel void fn(__global %(buf_type)s *dst)
         {
             dst[get_global_id(0)] = dst[get_global_id(0)] + %(amt)s;
         }

@@ -133,6 +133,7 @@ def test_probe_with_base(show=False, Simulator=Simulator):
     m.decoder(A, Amult, weights=get_decoders('A', 'mult'))
     m.decoder(D, Dpow, weights=get_decoders('D', 'pow'))
 
+    m.signal_probe(simtime, dt=0.01)
     m.signal_probe(sint, dt=0.01)
     m.signal_probe(Adec, dt=0.01)
     m.signal_probe(Apow, dt=0.01)
@@ -144,7 +145,12 @@ def test_probe_with_base(show=False, Simulator=Simulator):
     sim.run_steps(1000)
     t1 = time.time()
     print '1000 steps took', (t1 - t0)
+    try:
+        print sim.sigs.buf.get()
+    except:
+        print sim.sigs.buf
 
+    time_data = sim.signal(simtime)
     sint_data = sim.signal(sint)
     Adec_data = sim.signal(Adec)
     Apow_data = sim.signal(Apow)
@@ -155,6 +161,7 @@ def test_probe_with_base(show=False, Simulator=Simulator):
     assert Apow_data.shape == (100, 1), Apow_data.shape
     assert Amult_data.shape == (100, 1), Amult_data.shape
 
+    #print sint_data
     assert np.allclose(sint_data,
             np.sin(np.arange(100) * .01).reshape(100, 1))
 
