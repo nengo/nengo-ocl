@@ -46,7 +46,8 @@ def make_net(N):
     return net, Ap, Bp
 
 
-def test_probe_with_base(show=False, Simulator=Simulator):
+def test_probe_with_base(show=False, Simulator=Simulator,
+                        skip_loop_asserts=False):
     net, Ap, Bp = make_net(1000)
     def get_bias(obj):
         return net_get_bias(net, obj, 0)
@@ -131,12 +132,13 @@ def test_probe_with_base(show=False, Simulator=Simulator):
     sim.alloc_all()
     for i in range(1000):
         sim.step()
-        #print 'one', sim.sigs[sim.sidx[one]]
-        assert sim.sigs[sim.sidx[one]] == [1.0]
-        #print 'simtime', sim.sidx[simtime], sim.sigs[sim.sidx[simtime]]
-        assert sim.sigs[sim.sidx[simtime]] == [i * net.dt]
-        #print 'sint', sim.sidx[sint], sim.sigs[sim.sidx[sint]]
-        assert sim.sigs[sim.sidx[sint]] == [np.sin(i * net.dt)]
+        if not skip_loop_asserts:
+            #print 'one', sim.sigs[sim.sidx[one]]
+            assert sim.sigs[sim.sidx[one]] == [1.0]
+            #print 'simtime', sim.sidx[simtime], sim.sigs[sim.sidx[simtime]]
+            assert sim.sigs[sim.sidx[simtime]] == [i * net.dt]
+            #print 'sint', sim.sidx[sint], sim.sigs[sim.sidx[sint]]
+            assert sim.sigs[sim.sidx[sint]] == [np.sin(i * net.dt)]
 
     sint_data = sim.signal(sint)
     Adec_data = sim.signal(Adec)

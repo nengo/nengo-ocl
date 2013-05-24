@@ -252,15 +252,15 @@ class Simulator(object):
         self.enc_Ns = [enc.weights.shape[1] for enc in encoders]
 
         # -- which encoder(s) does each population use
-        self.enc_weights_js = [
+        self.enc_weights_js = self.RaggedArray([
             [self.eidx[enc] for enc in encoders if enc.pop == pop]
-            for pop in self.model.populations]
+            for pop in self.model.populations])
 
         # -- and which corresponding signal does it encode
-        self.enc_signals_js = [
+        self.enc_signals_js = self.RaggedArray([
             [self.sidx[enc.sig]
                 for enc in encoders if enc.pop == pop]
-            for pop in self.model.populations]
+            for pop in self.model.populations])
 
     def alloc_decoders(self):
         decoders = self.model.decoders
@@ -269,15 +269,15 @@ class Simulator(object):
         self.dec_Ns = [dec.weights.shape[1] for dec in decoders]
 
         # -- which decoder(s) does each signal use
-        self.dec_weights_js = [
+        self.dec_weights_js = self.RaggedArray([
             [self.didx[dec] for dec in decoders if dec.sig == sig]
-            for sig in self.model.signals]
+            for sig in self.model.signals])
 
         # -- and which corresponding population does it decode
-        self.dec_pops_js = [
+        self.dec_pops_js = self.RaggedArray([
             [self.pidx[dec.pop]
                 for dec in decoders if dec.sig == sig]
-            for sig in self.model.signals]
+            for sig in self.model.signals])
 
     def alloc_all(self):
         self.alloc_signals()

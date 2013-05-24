@@ -2,9 +2,8 @@ import math
 import pyopencl as cl
 from plan import Plan
 
-def plan_lif(queue, V, RT, J, OV, ORT, OS, OSfilt,
-             dt, tau_rc, tau_ref, V_threshold, upsample, pstc):
-    V_threshold = 1.0
+def plan_lif(queue, V, RT, J, OV, ORT, OS,
+             dt, tau_rc, tau_ref, V_threshold, upsample):
     tau_rc_inv = 1.0 / tau_rc
 
     upsample_dt = dt / upsample
@@ -14,14 +13,6 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS, OSfilt,
     Vtype = V.ocldtype
     RTtype = RT.ocldtype
     OStype = OS.ocldtype
-    OSfilttype = OSfilt.ocldtype
-
-    # filtering is done outside the upsample loop
-    # so use the real dt, not the upsampled dt
-    if pstc >= dt:
-        decay = math.exp(-dt / pstc)
-    else:
-        decay = 0.0
 
     fn = cl.Program(queue.context, """
         __kernel void foo(
@@ -30,8 +21,7 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS, OSfilt,
             __global const %(RTtype)s *refractory_time,
             __global %(Vtype)s *out_voltage,
             __global %(RTtype)s *out_refractory_time,
-            __global %(OStype)s *out_spiked,
-            __global %(OSfilttype)s *out_spiked_filtered
+            __global %(OStype)s *out_spiked
                      )
         {
             const %(RTtype)s dt = %(upsample_dt)s;
@@ -73,23 +63,11 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS, OSfilt,
             out_voltage[gid] = v;
             out_refractory_time[gid] = rt;
             out_spiked[gid] = spiked;
-            if (%(decay)s == 0.0)
-            {
-                out_spiked_filtered[gid] = spiked;
-            }
-            else
-            {
-                %(OSfilttype)s tmp = out_spiked_filtered[gid];
-                out_spiked_filtered[gid] = spiked 
-                    ? tmp * %(decay)s + (1 - %(decay)s)
-                    : tmp * %(decay)s;
-
-            }
         }
         """ % locals()).build().foo
 
     fn.set_args(J.data, V.data, RT.data, OV.data, ORT.data,
-                OS.data, OSfilt.data)
+                OS.data)
 
     # XXX ASSERT ALL CONTIGUOUS WITH IDENTICAL LAYOUT
     return Plan(queue, fn, (V.size,), None, name='lif')
