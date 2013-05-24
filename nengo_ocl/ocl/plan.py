@@ -37,11 +37,7 @@ class Prog(object):
 
     def __call__(self):
         for p in self.plans:
-            import sys
-            print >> sys.stderr, p
             p()
-            self.queues[0].finish()
-
 
     def call_n_times(self, n):
         self.enqueue_n_times(n)
