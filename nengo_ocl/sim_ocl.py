@@ -69,9 +69,16 @@ class RaggedArray(object):
 
 class Simulator(sim_npy.Simulator):
 
-    def __init__(self, context, model, n_prealloc_probes=1000):
+    def __init__(self, context, model, n_prealloc_probes=1000,
+                profiling=False):
         self.context = context
-        self.queue = cl.CommandQueue(context)
+        self.profiling = profiling
+        if profiling:
+            self.queue = cl.CommandQueue(
+                context,
+                properties=cl.command_queue_properties.PROFILING_ENABLE)
+        else:
+            self.queue = cl.CommandQueue(context)
         sim_npy.Simulator.__init__(self, model,
                                   n_prealloc_probes=n_prealloc_probes)
 
@@ -311,15 +318,31 @@ class Simulator(sim_npy.Simulator):
             N -= steps_left
             self.sim_step += steps_left
         full_cycles = N // plen
+        evs = []
         for ii in xrange(full_cycles):
             for p in self.all_plans:
-                p.enqueue()
+                evs.append((p, p.enqueue()))
         N -= full_cycles * plen
         self.sim_step += full_cycles * plen
         if N:
             return self.run_steps(N)
         else:
             self.queue.finish()
+
+            if self.profiling:
+                # XXX evs doesn't include the off-full-cycle bits
+                ctime = {}
+                for ii, evlist in enumerate(evs):
+                    print ii , len(evs)
+                    if ii > 1000:
+                        break
+                    for plan, ev in evs:
+                        ctime.setdefault(plan, 0)
+                        ctime[plan] += ev.profile.end - ev.profile.start
+                times = [(t, p) for p, t in ctime.items()]
+                times = reversed(sorted(times))
+                for (ticks, plan) in times:
+                    print ticks * 1e-9, plan
 
     def signal(self, sig):
         probes = [sp for sp in self.model.signal_probes if sp.sig == sig]

@@ -92,7 +92,7 @@ def test_ref():
     plt.show()
 
 
-def test_matrix_mult_example(D1=1, D2=2, D3=2):
+def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
     # construct good way to do the 
     # examples/matrix_multiplication.py model
     # from nengo_theano
@@ -235,26 +235,25 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2):
     t1 = time.time()
     print 'sim_npy takes', (t1 - t0)
 
-    plt.subplot(4, 1, 1)
-    plt.title('A')
-    for i in range(D1):
-        for j in range(D2):
-            plt.plot(sim.signal(A_dec[(i, j)]))
+    if show:
+        plt.subplot(4, 1, 1)
+        plt.title('A')
+        for i in range(D1):
+            for j in range(D2):
+                plt.plot(sim.signal(A_dec[(i, j)]))
 
-    plt.subplot(4, 1, 2)
-    plt.title("C")
-    for i in range(D1):
-        for j in range(D2):
+        plt.subplot(4, 1, 2)
+        plt.title("C")
+        for i in range(D1):
+            for j in range(D2):
+                for k in range(D3):
+                    plt.plot(sim.signal(C_dec[(i, j, k)]))
+
+        plt.subplot(4, 1, 3)
+        plt.title("D")
+        for i in range(D1):
             for k in range(D3):
-                plt.plot(sim.signal(C_dec[(i, j, k)]))
-
-    plt.subplot(4, 1, 3)
-    plt.title("D")
-    for i in range(D1):
-        for k in range(D3):
-            plt.plot(sim.signal(D_dec[(i, k)]))
-
-
+                plt.plot(sim.signal(D_dec[(i, k)]))
 
     net.get_object('input A').origin['X'].decoded_output.set_value(
         np.asarray([.5, -.5]).astype('float32'))
@@ -268,12 +267,13 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2):
     t1 = time.time()
     print 'nengo_theano takes', (t1 - t0)
 
-    plt.subplot(4, 1, 4)
-    plt.plot(Dprobe.get_data()[:, 0])
-    plt.plot(Dprobe.get_data()[:, 1])
-    #plt.plot(Cprobe.get_data()[:, 2])
-    #plt.plot(Cprobe.get_data()[:, 3])
+    if show:
+        plt.subplot(4, 1, 4)
+        plt.plot(Dprobe.get_data()[:, 0])
+        plt.plot(Dprobe.get_data()[:, 1])
+        #plt.plot(Cprobe.get_data()[:, 2])
+        #plt.plot(Cprobe.get_data()[:, 3])
 
-    plt.show()
+        plt.show()
 
 

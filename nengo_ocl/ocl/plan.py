@@ -14,7 +14,7 @@ class Plan(object):
         self.queue.finish()
 
     def enqueue(self):
-        cl.enqueue_nd_range_kernel(
+        return cl.enqueue_nd_range_kernel(
             self.queue, self.kern, self.gsize, self.lsize)
 
     def __str__(self):
@@ -25,7 +25,6 @@ class Plan(object):
             self.gsize,
             self.lsize,
             self.kwargs)
-
 
 class Prog(object):
     def __init__(self, plans):
