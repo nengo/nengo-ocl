@@ -294,8 +294,32 @@ class Simulator(sim_npy.Simulator):
         self.sim_step += 1
 
     def run_steps(self, N):
-        for i in xrange(N):
-            self.step()
+        try:
+            self.all_plans
+        except AttributeError:
+            self.plan_all()
+        plen = self.all_plans_period_len
+        period_pos = self.sim_step % plen
+        if period_pos:
+            steps_left = min(self.all_plans_period_len - period_pos, N)
+            period_goal = period_pos + steps_left
+            start = self.all_plans_start[period_pos]
+            stop = self.all_plans_stop[period_goal - 1]
+            plans = self.all_plans[start:stop]
+            for p in plans:
+                p.enqueue()
+            N -= steps_left
+            self.sim_step += steps_left
+        full_cycles = N // plen
+        for ii in xrange(full_cycles):
+            for p in self.all_plans:
+                p.enqueue()
+        N -= full_cycles * plen
+        self.sim_step += full_cycles * plen
+        if N:
+            return self.run_steps(N)
+        else:
+            self.queue.finish()
 
     def signal(self, sig):
         probes = [sp for sp in self.model.signal_probes if sp.sig == sig]
