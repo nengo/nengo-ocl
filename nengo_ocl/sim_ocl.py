@@ -8,7 +8,7 @@ from ocl.plan import Prog
 #from ocl.array import empty
 from ocl.gemv_batched import plan_ragged_gather_gemv
 from ocl.lif import plan_lif
-from ocl.elemwise import plan_copy
+from ocl.elemwise import plan_copy, plan_inc
 
 class RaggedArray(object):
     # a linear buffer that is partitioned into
@@ -203,36 +203,38 @@ class Simulator(sim_npy.Simulator):
             )
 
     def plan_probes(self):
+        plans = {}
         for period in self.sig_probes_output:
-            if 0 == self.sim_step % period:
-                probe_out = self.sig_probes_output[period]
-                buflen = self.sig_probes_buflen[period]
-                A_js = self.sig_probes_A_js[period]
-                X_js = self.sig_probes_X_js[period]
+            probe_out = self.sig_probes_output[period]
+            buflen = self.sig_probes_buflen[period]
+            A_js = self.sig_probes_A_js[period]
+            X_js = self.sig_probes_X_js[period]
 
-                bufidx = int(self.sim_step // period)
-                orig_buffer = probe_out.buf
-                this_buffer = probe_out.buf[bufidx * buflen:]
-                try:
-                    probe_out.buf = this_buffer
-                    plan = plan_ragged_gather_gemv(
-                        Ms=self.sig_probes_Ms,
-                        Ns=self.sig_probes_Ns,
-                        alpha=1.0,
-                        A=self.sig_probes_A,
-                        A_js=A_js,
-                        X=self.sigs,
-                        X_js=X_js,
-                        beta=0.0,
-                        Y=probe_out,
-                        )
-                    raise NotImplementedError()
-                finally:
-                    probe_out.buf = orig_buffer
+            write_plan = plan_ragged_gather_gemv(
+                self.queue,
+                Ms=self.sig_probes_Ms,
+                Ns=self.sig_probes_Ns,
+                alpha=1.0,
+                A=self.sig_probes_A,
+                A_js=A_js,
+                X=self.sigs,
+                X_js=X_js,
+                beta=0.0,
+                Y=probe_out,
+                tag='probe:%i' % period,
+                )
+            adv_ptr_plan = plan_inc(
+                self.queue,
+                probe_out.starts,
+                amt=buflen,
+                tag='probe_inc:%i' % period,
+                )
+            plans[period] = (write_plan, advance_plan,)
+        return plans
 
     def plan_all(self):
         # see sim_npy for rationale of this ordering
-        self.prog = Prog([
+        tick_plans = [
             self.plan_encoders(),
             self.plan_populations(),
             self.plan_decoders(),
@@ -240,16 +242,39 @@ class Simulator(sim_npy.Simulator):
             self.plan_filters(),
             self.plan_transforms(),
             self.plan_custom_transforms(),
-        ])
+        ]
         self.probe_plans = self.plan_probes()
-
+        periods = [1] + self.probe_plans.keys()
+        def gcd(a, b):
+            while b:
+                a, b = b, a % b
+            return a
+        def lcm(a, b):
+            return a * b // gcd(a, b)
+        periodlen = reduce(lcm, periods)
+        print 'creating a command sequence for', periodlen,
+        print 'iterations at once', periods
+        self.all_plans = []
+        self.all_plans_periodlen = periodlen
+        self.all_plans_start = []
+        self.all_plans_stop = []
+        # XXX figure out when probe pointers go off the end
+        for ii in xrange(periodlen):
+            self.all_plans_start.append(len(self.all_plans))
+            self.all_plans.extend(tick_plans)
+            for period in periods:
+                if ii % period == 0:
+                    self.all_plans.extend(self.probe_plans[period])
+            self.all_plans_stop.append(len(self.all_plans))
 
     def step(self):
-        try:
-            self.prog
-        except AttributeError:
-            self.plan_all()
-        self.prog()
+        period_pos = self.sim_step % self.period_len
+        start = self.all_plans_start[period_pos]
+        stop = self.all_plans_stop[period_pos]
+        plans = self.all_plans[start:stop]
+        for p in plans:
+            p.enqueue()
+        self.queue.finish()
         self.sim_step += 1
 
     def run_steps(self, N):

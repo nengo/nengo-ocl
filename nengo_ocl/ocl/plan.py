@@ -10,9 +10,12 @@ class Plan(object):
         self.kwargs = kwargs
 
     def __call__(self):
+        self.enqueue()
+        self.queue.finish()
+
+    def enqueue(self):
         cl.enqueue_nd_range_kernel(
             self.queue, self.kern, self.gsize, self.lsize)
-        self.queue.finish()
 
     def __str__(self):
         return '%s{%s, %s, %s, %s, %s}' % (
