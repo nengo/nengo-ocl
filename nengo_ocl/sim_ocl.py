@@ -333,16 +333,16 @@ class Simulator(sim_npy.Simulator):
                 # XXX evs doesn't include the off-full-cycle bits
                 ctime = {}
                 for ii, evlist in enumerate(evs):
-                    print ii , len(evs)
-                    if ii > 1000:
+                    if ii >= 20:
                         break
                     for plan, ev in evs:
                         ctime.setdefault(plan, 0)
                         ctime[plan] += ev.profile.end - ev.profile.start
                 times = [(t, p) for p, t in ctime.items()]
-                times = reversed(sorted(times))
-                for (ticks, plan) in times:
-                    print ticks * 1e-9, plan
+                #print self.queue.context.devices[0].profiling_timer_offset_amd
+                #print self.queue.context.devices[0].profiling_timer_resolution
+                for (ticks, plan) in reversed(sorted(times)):
+                    print ticks * 1.0e-9, plan
 
     def signal(self, sig):
         probes = [sp for sp in self.model.signal_probes if sp.sig == sig]
