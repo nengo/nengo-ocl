@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pyopencl as cl
 
@@ -70,7 +71,9 @@ class RaggedArray(object):
 class Simulator(sim_npy.Simulator):
 
     def __init__(self, context, model, n_prealloc_probes=1000,
-                profiling=False):
+                profiling=None):
+        if profiling is None:
+            profiling = bool(int(os.getenv("NENGO_OCL_PROFILING")))
         self.context = context
         self.profiling = profiling
         if profiling:
@@ -333,14 +336,12 @@ class Simulator(sim_npy.Simulator):
                 # XXX evs doesn't include the off-full-cycle bits
                 ctime = {}
                 for ii, evlist in enumerate(evs):
-                    if ii >= 20:
+                    if ii >= 200:
                         break
                     for plan, ev in evs:
                         ctime.setdefault(plan, 0)
                         ctime[plan] += ev.profile.end - ev.profile.start
                 times = [(t, p) for p, t in ctime.items()]
-                #print self.queue.context.devices[0].profiling_timer_offset_amd
-                #print self.queue.context.devices[0].profiling_timer_resolution
                 for (ticks, plan) in reversed(sorted(times)):
                     print ticks * 1.0e-9, plan
 

@@ -1,4 +1,3 @@
-import os
 import sim_ocl
 import pyopencl as cl
 
@@ -7,15 +6,16 @@ import test_matmul
 
 ctx = cl.create_some_context()
 
-def test_probe_with_base(show=False, profiling=False):
+def test_probe_with_base(show=False):
     def Simulator(*args, **kwargs):
-        return sim_ocl.Simulator(ctx, *args, profiling=profiling, **kwargs)
+        return sim_ocl.Simulator(ctx, *args, **kwargs)
     return test_sim_npy.test_probe_with_base(show=show, Simulator=Simulator)
 
-def test_matrix_mult(show=False, profiling=None):
-    if profiling is None:
-        profiling = bool(os.getenv("NENGO_OCL_PROFILING"))
+
+def test_matrix_mult(show=False):
     def Simulator(*args, **kwargs):
-        return sim_ocl.Simulator(ctx, *args, profiling=profiling, **kwargs)
-    return test_matmul.test_matrix_mult_example(show=show, Simulator=Simulator)
+        return sim_ocl.Simulator(ctx, *args, **kwargs)
+    return test_matmul.test_matrix_mult_example(
+            D1=3, D2=4, D3=5,
+            show=show, Simulator=Simulator)
 

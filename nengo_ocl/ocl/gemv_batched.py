@@ -221,7 +221,6 @@ def choose_gemv_batched_plan(queue,
 
 
 def plan_map_gemv(queue, alpha, A, X, beta, Y, Y_in=None):
-
     if Y_in is None:
         Y_in = Y
     assert Y.dtype == Y_in.dtype
@@ -408,6 +407,7 @@ def plan_misc_gemv(queue, alpha, A, X, Xi, beta, Y, Y_in=None, tag=None):
                 tag=tag,
                )
 
+
 def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
                        beta, Y, Y_in=None, tag=None):
     """
@@ -465,7 +465,8 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
             __global int *Y_lens,
             __global ${type_Y} *Y_data)
         {
-            const int bb = get_global_id(0);
+            const int mm = get_global_id(0);
+            const int bb = get_global_id(1);
 
             const ${type_alpha} alpha = alphas[bb];
             const ${type_beta} beta = betas[bb];
@@ -475,10 +476,10 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
             int y_in_offset = Y_in_starts[bb];
 
             X_js_data += X_js_starts[bb];
-            A_js_data += X_js_starts[bb];
+            A_js_data += A_js_starts[bb];
             const int M = Y_lens[bb];
 
-            for (int mm = 0; mm < M; ++mm)
+            if (mm < M)
             {
                 Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm];
             }
@@ -493,7 +494,7 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
 
                 // compute the matrix-vector product
                 // dot(X[x_i], A[a_i])
-                for (int mm = 0; mm < M; ++mm)
+                if (mm < M)
                 {
                     ${type_Y} y_sum = 0;
                     for (int nn = 0; nn < N_i; ++nn)
@@ -508,7 +509,7 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
     """
 
     text = Template(text, output_encoding='ascii').render(**textconf)
-    gsize = (len(Y),)
+    gsize = (int(max(Ms)), int(len(Y)),)
     lsize = None
     _fn = cl.Program(queue.context, text).build().fn
     full_args = (cl_Ns.data,

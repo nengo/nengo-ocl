@@ -101,6 +101,8 @@ def plan_inc(queue, buf, amt, tag=None):
             dst[get_global_id(0)] = dst[get_global_id(0)] + %(amt)s;
         }
         """ % config).build().fn
+    assert buf.offset == 0
+    L, = buf.shape
     _fn.set_args(buf.data,)
-    return Plan(queue, _fn, (buf.data.size,), None, name='inc', amt=amt, tag=tag)
+    return Plan(queue, _fn, (L,), None, name='inc', amt=amt, tag=tag)
 

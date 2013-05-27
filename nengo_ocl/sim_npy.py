@@ -46,6 +46,45 @@ class RaggedArray(object):
         self.buf[o: o + n] = val
 
 
+def raw_ragged_gather_gemv(BB,
+        Ns, alphas,
+        A_starts, A_data,
+        A_js_starts,
+        A_js_lens,
+        A_js_data,
+        X_starts,
+        X_data,
+        X_js_starts,
+        X_js_data,
+        betas,
+        Y_in_starts,
+        Y_in_data,
+        Y_starts,
+        Y_lens,
+        Y_data):
+    for bb in xrange(BB):
+        alpha = alphas[bb]
+        beta = betas[bb]
+        n_dot_products = A_js_lens[bb]
+        y_offset = Y_starts[bb]
+        y_in_offset = Y_in_starts[bb]
+        M = Y_lens[bb]
+        for mm in xrange(M):
+            Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm]
+
+        for ii in xrange(n_dot_products):
+            x_i = X_js_data[X_js_starts[bb] + ii]
+            a_i = A_js_data[A_js_starts[bb] + ii]
+            N_i = Ns[ii]
+            x_offset = X_starts[x_i]
+            a_offset = A_starts[a_i]
+            for mm in xrange(M):
+                y_sum = 0.0
+                for nn in xrange(N_i):
+                    y_sum += X_data[x_offset + nn] * A_data[a_offset + nn * M + mm]
+                Y_data[y_offset + mm] += alpha * y_sum
+
+
 def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
                        beta, Y, Y_in=None):
     """
@@ -64,6 +103,28 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
 
     if Y_in is None:
         Y_in = Y
+
+    return raw_ragged_gather_gemv(
+        len(Y),
+        Ns,
+        alpha,
+        A.starts,
+        A.buf,
+        A_js.starts,
+        A_js.lens,
+        A_js.buf,
+        X.starts,
+        X.buf,
+        X_js.starts,
+        X_js.buf,
+        beta,
+        Y_in.starts,
+        Y_in.buf,
+        Y.starts,
+        Y.lens,
+        Y.buf)
+
+
 
     #print alpha
     #print A.buf, 'A'

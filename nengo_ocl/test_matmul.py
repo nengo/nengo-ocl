@@ -117,7 +117,9 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
         A_vals = [[.5, -.5]]
         B_vals = [[0, -1], [1, 0]]
     else:
-        raise NotImplementedError()
+        net = net_matrixmul(D1, D2, D3)
+        A_vals = np.random.RandomState(123).rand(D1, D2)
+        B_vals = np.random.RandomState(124).rand(D2, D3)
 
     A = {}
     A_in = {}
@@ -256,9 +258,9 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
                 plt.plot(sim.signal(D_dec[(i, k)]))
 
     net.get_object('input A').origin['X'].decoded_output.set_value(
-        np.asarray([.5, -.5]).astype('float32'))
+        np.asarray(A_vals.flatten()).astype('float32'))
     net.get_object('input B').origin['X'].decoded_output.set_value(
-        np.asarray([0, 1, -1, 0]).astype('float32'))
+        np.asarray(B_vals.flatten()).astype('float32'))
 
     #Cprobe = net.make_probe('C', dt_sample=0.01, pstc=0.01)
     Dprobe = net.make_probe('D', dt_sample=0.01, pstc=0.1)
