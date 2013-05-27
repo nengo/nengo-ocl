@@ -104,59 +104,60 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
     if Y_in is None:
         Y_in = Y
 
-    return raw_ragged_gather_gemv(
-        len(Y),
-        Ns,
-        alpha,
-        A.starts,
-        A.buf,
-        A_js.starts,
-        A_js.lens,
-        A_js.buf,
-        X.starts,
-        X.buf,
-        X_js.starts,
-        X_js.buf,
-        beta,
-        Y_in.starts,
-        Y_in.buf,
-        Y.starts,
-        Y.lens,
-        Y.buf)
+    use_raw_fn = 1
+    if use_raw_fn:
+        # This is close to the OpenCL reference impl
+        return raw_ragged_gather_gemv(
+            len(Y),
+            Ns,
+            alpha,
+            A.starts,
+            A.buf,
+            A_js.starts,
+            A_js.lens,
+            A_js.buf,
+            X.starts,
+            X.buf,
+            X_js.starts,
+            X_js.buf,
+            beta,
+            Y_in.starts,
+            Y_in.buf,
+            Y.starts,
+            Y.lens,
+            Y.buf)
+    else:
+        # -- less-close to the OpenCL impl
+        #print alpha
+        #print A.buf, 'A'
+        #print X.buf, 'X'
+        #print Y_in.buf, 'in'
 
-
-
-    #print alpha
-    #print A.buf, 'A'
-    #print X.buf, 'X'
-    #print Y_in.buf, 'in'
-
-    for i in xrange(len(Y)):
-        try:
-            y_i = beta[i] * Y_in[i]  # -- ragged getitem
-        except:
-            print i, beta, Y_in
-            raise
-        alpha_i = alpha[i]
-
-        x_js_i = X_js[i] # -- ragged getitem
-        A_js_i = A_js[i] # -- ragged getitem
-
-        for xi, ai in zip(x_js_i, A_js_i):
-            x_ij = X[xi] # -- ragged getitem
-            M_i = Ms[ai]
-            N_i = Ns[ai]
-            assert N_i == len(x_ij)
-            A_ij = A[ai].reshape(N_i, M_i) # -- ragged getitem
-            #print xi, x_ij, A_ij
+        for i in xrange(len(Y)):
             try:
-                y_i += alpha_i * np.dot(x_ij, A_ij.reshape(N_i, M_i))
+                y_i = beta[i] * Y_in[i]  # -- ragged getitem
             except:
-                print i, xi, ai, A_ij, x_ij
+                print i, beta, Y_in
                 raise
+            alpha_i = alpha[i]
 
-        Y[i] = y_i
-    #print Y.buf, 'out'
+            x_js_i = X_js[i] # -- ragged getitem
+            A_js_i = A_js[i] # -- ragged getitem
+
+            for xi, ai in zip(x_js_i, A_js_i):
+                x_ij = X[xi] # -- ragged getitem
+                M_i = Ms[ai]
+                N_i = Ns[ai]
+                assert N_i == len(x_ij)
+                A_ij = A[ai].reshape(N_i, M_i) # -- ragged getitem
+                #print xi, x_ij, A_ij
+                try:
+                    y_i += alpha_i * np.dot(x_ij, A_ij.reshape(N_i, M_i))
+                except:
+                    print i, xi, ai, A_ij, x_ij
+                    raise
+
+            Y[i] = y_i
 
 
 def lif_step(J, voltage, refractory_time, spiked, dt, tau_rc, tau_ref, upsample):

@@ -114,8 +114,8 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
 
     if (1, 2, 2) == (D1, D2, D3):
         net = net_matrixmul(1, 2, 2)
-        A_vals = [[.5, -.5]]
-        B_vals = [[0, -1], [1, 0]]
+        A_vals = np.asarray([[.5, -.5]])
+        B_vals = np.asarray([[0, -1], [1, 0]])
     else:
         net = net_matrixmul(D1, D2, D3)
         A_vals = np.random.RandomState(123).rand(D1, D2)
