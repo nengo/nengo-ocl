@@ -8,10 +8,15 @@ class Plan(object):
         self.gsize = gsize
         self.lsize = lsize
         self.kwargs = kwargs
+        self.ctime = 0.0
+        self.n_calls = 0
 
-    def __call__(self):
-        self.enqueue()
+    def __call__(self, profiling=False):
+        ev = self.enqueue()
         self.queue.finish()
+        if profiling:
+            self.ctime += 1e-9 * (ev.profile.end - ev.profile.start)
+            self.n_calls += 1
 
     def enqueue(self):
         return cl.enqueue_nd_range_kernel(
@@ -34,9 +39,9 @@ class Prog(object):
         self.gsize = [p.gsize for p in self.plans]
         self.lsize = [p.lsize for p in self.plans]
 
-    def __call__(self):
+    def __call__(self, profiling=False):
         for p in self.plans:
-            p()
+            p(profiling=profiling)
 
     def call_n_times(self, n):
         self.enqueue_n_times(n)

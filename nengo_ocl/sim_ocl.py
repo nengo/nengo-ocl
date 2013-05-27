@@ -5,7 +5,7 @@ import pyopencl as cl
 import sim_npy
 #from ocl.array import Array
 from ocl.array import to_device
-from ocl.plan import Plan
+from ocl.plan import Plan, Prog
 #from ocl.array import empty
 from ocl.gemv_batched import plan_ragged_gather_gemv
 from ocl.lif import plan_lif
@@ -264,6 +264,7 @@ class Simulator(sim_npy.Simulator):
             self.plan_filters(),
             self.plan_transforms(),
         ]
+        self.tick_plans = tick_plans
         tick_plans.extend(self.plan_custom_transforms())
         self.probe_plans = self.plan_probes()
         periods = [1] + self.probe_plans.keys()
@@ -288,6 +289,7 @@ class Simulator(sim_npy.Simulator):
                 if ii % period == 0:
                     self.all_plans.extend(self.probe_plans[period])
             self.all_plans_stop.append(len(self.all_plans))
+        self.all_plans_prog = Prog(self.all_plans)
 
     def step(self):
         try:
@@ -316,34 +318,40 @@ class Simulator(sim_npy.Simulator):
             start = self.all_plans_start[period_pos]
             stop = self.all_plans_stop[period_goal - 1]
             plans = self.all_plans[start:stop]
-            for p in plans:
-                p.enqueue()
+            if self.profiling:
+                for p in plans:
+                    p(profiling=True)
+            else:
+                for p in plans:
+                    p.enqueue()
             N -= steps_left
             self.sim_step += steps_left
         full_cycles = N // plen
-        evs = []
-        for ii in xrange(full_cycles):
-            for p in self.all_plans:
-                evs.append((p, p.enqueue()))
+        if self.profiling:
+            for ii in xrange(full_cycles):
+                for p in self.all_plans:
+                    p(profiling=True)
+            #for nn in xrange(N):
+            #    for p in self.tick_plans:
+            #        p(self.profiling)
+            #for p in self.tick_plans:
+            #    print p.ctime / p.n_calls, p
+        else:
+            self.all_plans_prog.enqueue_n_times(full_cycles)
+
         N -= full_cycles * plen
         self.sim_step += full_cycles * plen
         if N:
             return self.run_steps(N)
         else:
-            self.queue.finish()
 
             if self.profiling:
-                # XXX evs doesn't include the off-full-cycle bits
-                ctime = {}
-                for ii, evlist in enumerate(evs):
-                    if ii >= 200:
-                        break
-                    for plan, ev in evs:
-                        ctime.setdefault(plan, 0)
-                        ctime[plan] += ev.profile.end - ev.profile.start
-                times = [(t, p) for p, t in ctime.items()]
-                for (ticks, plan) in reversed(sorted(times)):
-                    print ticks * 1.0e-9, plan
+                times = [(p.ctime, p) for p in set(self.all_plans)]
+                for (ctime, p) in reversed(sorted(times)):
+                    n_calls = max(1, p.n_calls)
+                    print ctime, p.n_calls, (ctime / n_calls), p
+            else:
+                self.queue.finish()
 
     def signal(self, sig):
         probes = [sp for sp in self.model.signal_probes if sp.sig == sig]

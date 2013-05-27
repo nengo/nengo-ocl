@@ -231,6 +231,7 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
     sim = Simulator(m)
 
     sim.alloc_all()
+    sim.plan_all()
 
     t0 = time.time()
     sim.run_steps(1000)
