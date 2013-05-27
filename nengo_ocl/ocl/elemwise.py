@@ -89,7 +89,8 @@ def plan_copy(queue, src, dst, tag=None):
         }
         """ % config).build().fn
     _fn.set_args(src.data, dst.data)
-    return Plan(queue, _fn, (src.data.size,), None, name='copy', tag=tag)
+    L, = src.shape
+    return Plan(queue, _fn, (L,), None, name='copy', tag=tag)
 
 def plan_inc(queue, buf, amt, tag=None):
     # XXX: only copy the parts of the buffer that are part of the logical Array
