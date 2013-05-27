@@ -28,13 +28,13 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS,
             const int gid = get_global_id(0);
             ${Vtype} v = voltage[gid];
             ${RTtype} rt = refractory_time[gid];
-            ${Jtype} input_current = J[gid];
+            ${Jtype} j = J[gid];
             ${OStype} spiked = 0;
             ${Vtype} dV, overshoot;
             ${RTtype} post_ref, spiketime;
 
           % for ii in range(upsample):
-            dV = ${upsample_dt} * ${tau_rc_inv} * (input_current - v);
+            dV = ${upsample_dt} * ${tau_rc_inv} * (j - v);
             post_ref = 1.0 - (rt - ${upsample_dt}) * ${upsample_dt_inv};
             v += dV;
             v = v > 0 ?
@@ -56,11 +56,18 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS,
         """
 
     text = Template(text, output_encoding='ascii').render(**locals())
-    fn = cl.Program(queue.context, text).build().foo
+    build_options = [
+            '-cl-fast-relaxed-math',
+            '-cl-mad-enable',
+            '-cl-strict-aliasing',
+            ]
+    fn = cl.Program(queue.context, text).build(build_options).foo
 
     fn.set_args(J.data, V.data, RT.data, OV.data, ORT.data,
                 OS.data)
 
     # XXX ASSERT ALL CONTIGUOUS WITH IDENTICAL LAYOUT
-    return Plan(queue, fn, (V.size,), None, name='lif')
+    # TODO: Solve by compiling kernel using elemwise.py
+    L, = V.shape
+    return Plan(queue, fn, (L,), None, name='lif')
 
