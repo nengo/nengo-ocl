@@ -92,8 +92,9 @@ def test_ref():
     plt.show()
 
 
-def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
-    # construct good way to do the 
+def test_matrix_mult_example(D1=1, D2=2, D3=2, N=50,
+        Simulator=Simulator, show=True):
+    # construct good way to do the
     # examples/matrix_multiplication.py model
     # from nengo_theano
 
@@ -113,11 +114,11 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
     # linearized matrices in row-major or col-major order?
 
     if (1, 2, 2) == (D1, D2, D3):
-        net = net_matrixmul(1, 2, 2)
+        net = net_matrixmul(1, 2, 2, N=N)
         A_vals = np.asarray([[.5, -.5]])
         B_vals = np.asarray([[0, -1], [1, 0]])
     else:
-        net = net_matrixmul(D1, D2, D3)
+        net = net_matrixmul(D1, D2, D3, N=N)
         A_vals = np.random.RandomState(123).rand(D1, D2)
         B_vals = np.random.RandomState(124).rand(D2, D3)
 
@@ -130,7 +131,7 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
             A_in[(i, j)] = m.signal(value=A_vals[i][j])
             # XXX ensure all constants are held on line like this
             m.filter(1.0, A_in[(i, j)], A_in[(i, j)])
-            A[(i, j)] = m.population(50,
+            A[(i, j)] = m.population(N,
                                      bias=net_get_bias(net, 'A', idx))
             A_dec[(i, j)] = m.signal()
 
@@ -155,7 +156,7 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
             B_in[(i, j)] = m.signal(value=B_vals[i][j])
             # XXX ensure all constants are held on line like this
             m.filter(1.0, B_in[(i, j)], B_in[(i, j)])
-            B[(i, j)] = m.population(50,
+            B[(i, j)] = m.population(N,
                                      bias=net_get_bias(net, 'B', idx))
             B_dec[(i, j)] = m.signal()
 
@@ -176,7 +177,7 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
     for i in range(D1):
         for j in range(D3):
             idx = i * D3 + j
-            D[(i, j)] = m.population(50,
+            D[(i, j)] = m.population(N,
                                      bias=net_get_bias(net, 'D', idx))
             D_in[(i, j)] = m.signal()
             D_dec[(i, j)] = m.signal()
@@ -202,7 +203,7 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, Simulator=Simulator, show=True):
         for k in range(D3):
             for j in range(D2):
                 idx = i * D2 * D3 + k + j * D3
-                C[(i, j, k)] = m.population(200,
+                C[(i, j, k)] = m.population(4 * N,
                                            bias=net_get_bias(net, 'C', idx))
                 C_dec[(i, j, k)] = m.signal()
                 m.encoder(

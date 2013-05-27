@@ -16,6 +16,6 @@ def test_matrix_mult(show=False):
     def Simulator(*args, **kwargs):
         return sim_ocl.Simulator(ctx, *args, **kwargs)
     return test_matmul.test_matrix_mult_example(
-            D1=3, D2=4, D3=5,
+            D1=5, D2=5, D3=5, N=200,
             show=show, Simulator=Simulator)
 
