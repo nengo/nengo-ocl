@@ -59,7 +59,7 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS,
     build_options = [
             '-cl-fast-relaxed-math',
             '-cl-mad-enable',
-            '-cl-strict-aliasing',
+            #'-cl-strict-aliasing',
             ]
     fn = cl.Program(queue.context, text).build(build_options).foo
 
