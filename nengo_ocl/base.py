@@ -17,9 +17,9 @@ class SignalProbe(object):
 
 
 class Constant(Signal):
-    def __init__(self, value):
-        Signal.__init__(self, 1)
-        self.value = float(value)
+    def __init__(self, n, value):
+        Signal.__init__(self, n)
+        self.value = value
 
 
 class Population(object):
@@ -94,11 +94,11 @@ class Model(object):
         self.custom_transforms = []
         self.signal_probes = []
 
-    def signal(self, value=None):
+    def signal(self, n=1, value=None):
         if value is None:
-            rval = Signal()
+            rval = Signal(n)
         else:
-            rval = Constant(value)
+            rval = Constant(n, value)
         self.signals.append(rval)
         return rval
 
