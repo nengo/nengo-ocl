@@ -8,6 +8,8 @@ class Plan(object):
         self.gsize = gsize
         self.lsize = lsize
         self.kwargs = kwargs
+        self.atime = 0.0
+        self.btime = 0.0
         self.ctime = 0.0
         self.n_calls = 0
 
@@ -15,6 +17,8 @@ class Plan(object):
         ev = self.enqueue()
         self.queue.finish()
         if profiling:
+            self.atime += 1e-9 * (ev.profile.submit - ev.profile.queued)
+            self.btime += 1e-9 * (ev.profile.start - ev.profile.submit)
             self.ctime += 1e-9 * (ev.profile.end - ev.profile.start)
             self.n_calls += 1
 
