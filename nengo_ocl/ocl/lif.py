@@ -29,7 +29,7 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS,
             ${Vtype} v = voltage[gid];
             ${RTtype} rt = refractory_time[gid];
             ${Jtype} j = J[gid];
-            ${OStype} spiked = 0;
+            char spiked = 0;
             ${Vtype} dV, overshoot;
             ${RTtype} post_ref, spiketime;
 
@@ -42,16 +42,16 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS,
                 : 0;
             spiked |= v > ${V_threshold};
             overshoot = (v - ${V_threshold}) / dV;
-            spiketime = ${upsample_dt} * (1.0 - overshoot);
+            spiketime = ${upsample_dt} * (1.0f - overshoot);
             rt = (v > ${V_threshold}) ?
                 spiketime + ${tau_ref}
                 : rt - ${upsample_dt};
-            v = (v > ${V_threshold}) ? 0.0: v;
+            v = (v > ${V_threshold}) ? 0.0f: v;
           % endfor
 
             out_voltage[gid] = v;
             out_refractory_time[gid] = rt;
-            out_spiked[gid] = spiked;
+            out_spiked[gid] = spiked ? 1.0f : 0.0f;
         }
         """
 
