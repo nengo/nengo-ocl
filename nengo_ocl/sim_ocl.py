@@ -1,3 +1,4 @@
+import time
 import os
 import numpy as np
 import pyopencl as cl
@@ -326,6 +327,7 @@ class Simulator(sim_npy.Simulator):
                     p.enqueue()
             N -= steps_left
             self.sim_step += steps_left
+        t0 = time.time()
         full_cycles = N // plen
         if self.profiling:
             for ii in xrange(full_cycles):
@@ -341,6 +343,8 @@ class Simulator(sim_npy.Simulator):
 
         N -= full_cycles * plen
         self.sim_step += full_cycles * plen
+        t1 = time.time()
+        print "A", (t1 - t0)
         if N:
             return self.run_steps(N)
         else:
@@ -349,7 +353,7 @@ class Simulator(sim_npy.Simulator):
                 times = [(p.ctime, p) for p in set(self.all_plans)]
                 for (ctime, p) in reversed(sorted(times)):
                     n_calls = max(1, p.n_calls)
-                    print ctime, p.n_calls, (ctime / n_calls), p
+                    print ctime, p.n_calls, (ctime / n_calls), p.atime, p.btime, p
             else:
                 self.queue.finish()
 

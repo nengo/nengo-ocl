@@ -233,11 +233,12 @@ def test_matrix_mult_example(D1=1, D2=2, D3=2, N=50,
 
     sim.alloc_all()
     sim.plan_all()
+    sim.queue.flush()
 
     t0 = time.time()
     sim.run_steps(1000)
     t1 = time.time()
-    print 'sim_npy takes', (t1 - t0)
+    print sim.__class__.__name__, 'takes', (t1 - t0)
 
     if show:
         plt.subplot(4, 1, 1)
