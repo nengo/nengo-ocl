@@ -27,6 +27,22 @@ class RaggedArray(object):
         self.lens = lens
         self.buf = np.asarray(buf)
 
+    def shallow_copy(self):
+        rval = self.__class__.__new__(self.__class__)
+        rval.starts = self.starts
+        rval.lens = self.lens
+        rval.buf = self.buf
+        return rval
+
+    def add_view(self, start, length):
+        assert start >= 0
+        assert start + length <= len(self.buf)
+        # -- creates copies, same semantics
+        #    as OCL version
+        self.starts = self.starts + [start]
+        self.lens = self.lens + [length]
+        return len(self.starts) - 1
+
     def __len__(self):
         return len(self.starts)
 
@@ -178,6 +194,9 @@ def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
     tf_Ns = [1] * len(transforms)
     tf_Ms = [1] * len(transforms)
 
+    tf_sigs = sigs.shallow_copy()
+    del sigs
+
     # -- which transform(s) does each signal use
     tf_weights_js = [[tidx[tf] for tf in tf_by_outsig[sig]]
         for sig in signals]
@@ -195,27 +214,34 @@ def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
     #    TODO: still do something like this for a 
     #    *part* of the wjs/sjs if possible
     #    TODO: sort the sjs or wjs to canonicalize things
-    for ii, (wjs, sjs) in enumerate(
+    if 1:
+      for ii, (wjs, sjs) in enumerate(
             zip(tf_weights_js, tf_signals_js)):
         assert len(wjs) == len(sjs)
-        if len(wjs) == 0:
+        K = len(wjs)
+        if len(wjs) <= 1:
             continue
         if wjs != range(wjs[0], wjs[0] + len(wjs)):
             continue
         if sjs != range(sjs[0], sjs[0] + len(sjs)):
             continue
         # -- precondition satisfied
-        new_w_j = tf_weights.add_view(wjs[0], len(wjs))
-        new_s_j = sigs.add_view(sjs[0], len(sjs))
-        tf_Ns.append(len(wjs))
+        # XXX length should be the sum of the lenghts
+        #     of the tf_weights[i] for i in wjs
+        new_w_j = tf_weights.add_view(
+            int(tf_weights.starts[wjs[0]]), K)
+        tf_Ns.append(K)
         tf_Ms.append(1)
+        new_s_j = tf_sigs.add_view(
+            int(tf_sigs.starts[sjs[0]]), K)
         tf_weights_js[ii] = [new_w_j]
         tf_signals_js[ii] = [new_s_j]
 
-    for ii, (wjs, sjs) in enumerate(
-            zip(tf_weights_js, tf_signals_js)):
-        if wjs:
-            print wjs, sjs
+    if 0:
+        for ii, (wjs, sjs) in enumerate(
+                zip(tf_weights_js, tf_signals_js)):
+            if wjs:
+                print wjs, sjs
 
     return locals()
 
@@ -289,7 +315,7 @@ class Simulator(object):
         stuff = alloc_transform_helper(
                 self.model.signals,
                 self.model.transforms,
-                self.sigs,
+                self.sigs_ic,
                 self.sidx,
                 self.RaggedArray,
                 (lambda f: f.outsig),
@@ -299,6 +325,7 @@ class Simulator(object):
         self.tf_weights_js = self.RaggedArray(stuff['tf_weights_js'])
         self.tf_signals_js = self.RaggedArray(stuff['tf_signals_js'])
         self.tf_weights = stuff['tf_weights']
+        self.tf_signals = stuff['tf_sigs']
         self.tf_Ns = stuff['tf_Ns']
         self.tf_Ms = stuff['tf_Ms']
 
@@ -306,13 +333,14 @@ class Simulator(object):
         stuff = alloc_transform_helper(
                 self.model.signals,
                 self.model.filters,
-                self.sigs,
+                self._sigs_copy,
                 self.sidx,
                 self.RaggedArray,
                 (lambda f: f.newsig),
                 (lambda f: f.oldsig),
                 )
 
+        self.f_signals = stuff['tf_sigs']
         self.f_weights = stuff['tf_weights']
         self.f_weights_js = self.RaggedArray(stuff['tf_weights_js'])
         self.f_signals_js = self.RaggedArray(stuff['tf_signals_js'])
@@ -375,7 +403,7 @@ class Simulator(object):
             alpha=1.0,
             A=self.tf_weights,
             A_js=self.tf_weights_js,
-            X=self.sigs_ic,
+            X=self.tf_signals,
             X_js=self.tf_signals_js,
             beta=1.0,
             Y=self.sigs,
@@ -387,14 +415,14 @@ class Simulator(object):
         and write them back to `sigs`
         """
         # ADD linear combinations of signals to some signals
-        self._sigs_copy.buf = self.sigs.buf.copy()
+        self._sigs_copy.buf[:] = self.sigs.buf
         ragged_gather_gemv(
             Ms=self.f_Ms,
             Ns=self.f_Ns,
             alpha=1.0,
             A=self.f_weights,
             A_js=self.f_weights_js,
-            X=self._sigs_copy,
+            X=self.f_signals,
             X_js=self.f_signals_js,
             beta=0.0,
             Y=self.sigs,

@@ -37,6 +37,14 @@ class RaggedArray(object):
         self.buf = to_device(queue, buf)
         self.queue = queue
 
+    def shallow_copy(self):
+        rval = self.__class__.__new__(self.__class__)
+        rval.buf = self.buf
+        rval.starts = self.starts
+        rval.lens = self.lens
+        rval.queue = self.queue
+        return rval
+
     def add_view(self, start, length):
         starts = list(self.starts.get(self.queue))
         lens = list(self.lens.get(self.queue))
@@ -46,6 +54,7 @@ class RaggedArray(object):
         lens.append(length)
         self.starts = to_device(self.queue, np.asarray(starts).astype('int32'))
         self.lens = to_device(self.queue, np.asarray(lens).astype('int32'))
+        self.queue.flush()
         return rval
 
     def __len__(self):
@@ -139,7 +148,7 @@ class Simulator(sim_npy.Simulator):
             alpha=1.0,
             A=self.tf_weights,
             A_js=self.tf_weights_js,
-            X=self.sigs_ic,
+            X=self.tf_signals,
             X_js=self.tf_signals_js,
             beta=1.0,
             Y=self.sigs,
@@ -165,7 +174,7 @@ class Simulator(sim_npy.Simulator):
             alpha=1.0,
             A=self.f_weights,
             A_js=self.f_weights_js,
-            X=self._sigs_copy,
+            X=self.f_signals,
             X_js=self.f_signals_js,
             beta=0.0,
             Y=self.sigs,

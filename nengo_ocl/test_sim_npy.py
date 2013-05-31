@@ -141,6 +141,7 @@ def test_probe_with_base(show=False, Simulator=Simulator):
 
     sim = Simulator(m, n_prealloc_probes=1000)
     sim.alloc_all()
+    print 'running for some steps'
     t0 = time.time()
     sim.run_steps(1000)
     t1 = time.time()
@@ -179,4 +180,28 @@ def test_probe_with_base(show=False, Simulator=Simulator):
         plt.legend(loc='upper left')
         plt.show()
 
+
+def test_filter():
+    dt = .001
+    m = Model(dt)
+    one = m.signal(value=1.0)
+    steps = m.signal()
+    simtime = m.signal()
+
+    # -- hold all constants on the line
+    m.filter(1.0, one, one)
+
+    # -- steps counts by 1.0
+    m.filter(1.0, steps, steps)
+    m.filter(1.0, one, steps)
+
+    # simtime <- dt * steps
+    m.filter(dt, steps, simtime)
+
+    sim = Simulator(m, n_prealloc_probes=1000)
+    sim.alloc_all()
+
+    for i in range(10):
+        sim.step()
+        print sim.sigs.buf
 
