@@ -6,7 +6,7 @@ from sim_ocl import Simulator
 
 ctx = cl.create_some_context()
 
-def test_mini(D=4):
+def test_mini(D=4, n_nets=1, neurons_per_product=3):
     # D is dimensionality of semantic pointers
 
     m = Model(.001)
@@ -66,19 +66,24 @@ def test_mini(D=4):
                     alpha = self.fourier_matrix[ii, jj]
                     m.transform(alpha, self.CF[jj], self.C[ii])
 
-    CircularConvolution(m, A, B, neurons_per_product=3)
+    for ii in range(n_nets):
+        CircularConvolution(m, A, B,
+            neurons_per_product=neurons_per_product)
 
     sim = Simulator(ctx, m)
     sim.alloc_all()
     sim.plan_all()
 
     t0 = time.time()
-    sim.run_steps(1000)
+    sim.run_steps(100)
     t1 = time.time()
 
-    print 'time', (t1 - t0)
+    print 'time', ((t1 - t0) * 10)
 
 def test_large():
-    return test_mini(D=500)
+    return test_mini(
+        D=500,
+        n_nets=5,
+        neurons_per_product=128)
 
 

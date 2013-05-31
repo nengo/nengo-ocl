@@ -45,13 +45,13 @@ class RaggedArray(object):
         rval.queue = self.queue
         return rval
 
-    def add_view(self, start, length):
+    def add_views(self, starts, lens):
         starts = list(self.starts.get(self.queue))
         lens = list(self.lens.get(self.queue))
         rval = len(starts)
         assert len(starts) == len(lens)
-        starts.append(start)
-        lens.append(length)
+        starts.extend(starts)
+        lens.extend(lens)
         self.starts = to_device(self.queue, np.asarray(starts).astype('int32'))
         self.lens = to_device(self.queue, np.asarray(lens).astype('int32'))
         self.queue.flush()

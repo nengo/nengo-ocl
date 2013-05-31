@@ -34,14 +34,13 @@ class RaggedArray(object):
         rval.buf = self.buf
         return rval
 
-    def add_view(self, start, length):
-        assert start >= 0
-        assert start + length <= len(self.buf)
+    def add_view(self, starts, lens):
+        #assert start >= 0
+        #assert start + length <= len(self.buf)
         # -- creates copies, same semantics
         #    as OCL version
-        self.starts = self.starts + [start]
-        self.lens = self.lens + [length]
-        return len(self.starts) - 1
+        self.starts = self.starts + starts
+        self.lens = self.lens + lens
 
     def __len__(self):
         return len(self.starts)
@@ -215,27 +214,36 @@ def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
     #    *part* of the wjs/sjs if possible
     #    TODO: sort the sjs or wjs to canonicalize things
     if 1:
-      for ii, (wjs, sjs) in enumerate(
-            zip(tf_weights_js, tf_signals_js)):
-        assert len(wjs) == len(sjs)
-        K = len(wjs)
-        if len(wjs) <= 1:
-            continue
-        if wjs != range(wjs[0], wjs[0] + len(wjs)):
-            continue
-        if sjs != range(sjs[0], sjs[0] + len(sjs)):
-            continue
-        # -- precondition satisfied
-        # XXX length should be the sum of the lenghts
-        #     of the tf_weights[i] for i in wjs
-        new_w_j = tf_weights.add_view(
-            int(tf_weights.starts[wjs[0]]), K)
-        tf_Ns.append(K)
-        tf_Ms.append(1)
-        new_s_j = tf_sigs.add_view(
-            int(tf_sigs.starts[sjs[0]]), K)
-        tf_weights_js[ii] = [new_w_j]
-        tf_signals_js[ii] = [new_s_j]
+        wstarts = []
+        wlens = []
+        sstarts = []
+        slens = []
+        for ii, (wjs, sjs) in enumerate(
+                zip(tf_weights_js, tf_signals_js)):
+            assert len(wjs) == len(sjs)
+            K = len(wjs)
+            if len(wjs) <= 1:
+                continue
+            if wjs != range(wjs[0], wjs[0] + len(wjs)):
+                continue
+            if sjs != range(sjs[0], sjs[0] + len(sjs)):
+                continue
+            # -- precondition satisfied
+            # XXX length should be the sum of the lenghts
+            #     of the tf_weights[i] for i in wjs
+            wstarts.append(int(tf_weights.starts[wjs[0]]))
+            wlens.append(K)
+            new_w_j = len(tf_weights_js) + len(wstarts) - 1
+            tf_Ns.append(K)
+            tf_Ms.append(1)
+            sstarts.append(int(tf_sigs.starts[sjs[0]]))
+            slens.append(K)
+            new_s_j = len(tf_signals_js) + len(sstarts) - 1
+            tf_weights_js[ii] = [new_w_j]
+            tf_signals_js[ii] = [new_s_j]
+
+        tf_weights.add_views(wstarts, wlens)
+        tf_sigs.add_views(sstarts, slens)
 
     if 0:
         for ii, (wjs, sjs) in enumerate(
