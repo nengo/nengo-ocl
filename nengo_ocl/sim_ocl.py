@@ -85,7 +85,7 @@ class Simulator(sim_npy.Simulator):
     def __init__(self, context, model, n_prealloc_probes=1000,
                 profiling=None):
         if profiling is None:
-            profiling = bool(int(os.getenv("NENGO_OCL_PROFILING")))
+            profiling = bool(int(os.getenv("NENGO_OCL_PROFILING", 0)))
         self.context = context
         self.profiling = profiling
         if profiling:
