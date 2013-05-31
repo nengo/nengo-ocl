@@ -467,35 +467,31 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
         {
             const int mm = get_global_id(0);
             const int bb = get_global_id(1);
-
-            const ${type_alpha} alpha = alphas[bb];
-            const ${type_beta} beta = betas[bb];
-
-            int n_dot_products = A_js_lens[bb];
-            int y_offset = Y_starts[bb];
-            int y_in_offset = Y_in_starts[bb];
-
-            X_js_data += X_js_starts[bb];
-            A_js_data += A_js_starts[bb];
             const int M = Y_lens[bb];
-
             if (mm < M)
             {
+                const ${type_alpha} alpha = alphas[bb];
+                const ${type_beta} beta = betas[bb];
+
+                int n_dot_products = A_js_lens[bb];
+                int y_offset = Y_starts[bb];
+                int y_in_offset = Y_in_starts[bb];
+
+                X_js_data += X_js_starts[bb];
+                A_js_data += A_js_starts[bb];
+
                 Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm];
-            }
 
-            for (int ii = 0; ii < n_dot_products; ++ii)
-            {
-                int x_i = X_js_data[ii];
-                int a_i = A_js_data[ii];
-                int N_i = Ns[ii];
-                int x_offset = X_starts[x_i];
-                int a_offset = A_starts[a_i];
-
-                // compute the matrix-vector product
-                // dot(X[x_i], A[a_i])
-                if (mm < M)
+                for (int ii = 0; ii < n_dot_products; ++ii)
                 {
+                    int x_ji = X_js_data[ii];
+                    int a_ji = A_js_data[ii];
+                    int N_i = Ns[ii];
+                    int x_offset = X_starts[x_ji];
+                    int a_offset = A_starts[a_ji];
+
+                    // compute the matrix-vector product
+                    // dot(X[x_ji], A[a_ji])
                     ${type_Y} y_sum = 0;
                     for (int nn = 0; nn < N_i; ++nn)
                     {
@@ -512,25 +508,26 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
     gsize = (int(max(Ms)), int(len(Y)),)
     lsize = None
     _fn = cl.Program(queue.context, text).build().fn
-    full_args = (cl_Ns.data,
-                 cl_alpha.data,
-                 A.starts.data,
-                 A.buf.data,
-                 A_js.starts.data,
-                 A_js.lens.data,
-                 A_js.buf.data,
-                 X.starts.data,
-                 X.buf.data,
-                 X_js.starts.data,
-                 X_js.buf.data,
-                 cl_beta.data,
-                 Y_in.starts.data,
-                 Y_in.buf.data,
-                 Y.starts.data,
-                 Y.lens.data,
-                 Y.buf.data,
+    full_args = (cl_Ns,
+                 cl_alpha,
+                 A.starts,
+                 A.buf,
+                 A_js.starts,
+                 A_js.lens,
+                 A_js.buf,
+                 X.starts,
+                 X.buf,
+                 X_js.starts,
+                 X_js.buf,
+                 cl_beta,
+                 Y_in.starts,
+                 Y_in.buf,
+                 Y.starts,
+                 Y.lens,
+                 Y.buf,
                 )
-    _fn.set_args(*full_args)
+    #print [str(arr.dtype)[0] for arr in full_args]
+    _fn.set_args(*[arr.data for arr in full_args])
     rval = Plan(queue, _fn, gsize, lsize,
                 name='ref_ragged_gather_gemv',
                 tag=tag,
