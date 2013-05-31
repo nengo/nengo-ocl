@@ -1,6 +1,7 @@
 """
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
+from collections import defaultdict
 import math
 import numpy as np
 
@@ -238,14 +239,18 @@ class Simulator(object):
 
         # -- which transform(s) does each signal use
         tidx = dict((tf, i) for (i, tf) in enumerate(transforms))
+        tf_by_outsig = defaultdict(list)
+        for tf in transforms:
+            tf_by_outsig[tf.outsig].append(tf)
+
         self.tf_weights_js = self.RaggedArray([
-            [tidx[tf] for tf in transforms if tf.outsig == sig]
+            [tidx[tf] for tf in tf_by_outsig[sig]]
             for sig in signals
             ])
 
         # -- which corresponding(s) signal is transformed
         self.tf_signals_js = self.RaggedArray([
-            [self.sidx[tf.insig] for tf in transforms if tf.outsig == sig]
+            [self.sidx[tf.insig] for tf in tf_by_outsig[sig]]
             for sig in signals
             ])
 
@@ -259,14 +264,18 @@ class Simulator(object):
 
         # -- which weight(s) does each signal use
         fidx = dict((f, i) for (i, f) in enumerate(filters))
+        f_by_newsig = defaultdict(list)
+        for f in filters:
+            f_by_newsig[f.newsig].append(f)
+
         self.f_weights_js = self.RaggedArray([
-            [fidx[f] for f in filters if f.newsig == sig]
+            [fidx[f] for f in f_by_newsig[sig]]
             for sig in signals
             ])
 
         # -- which corresponding(s) signal is transformed
         self.f_signals_js = self.RaggedArray([
-            [self.sidx[f.oldsig] for f in filters if f.newsig == sig]
+            [self.sidx[f.oldsig] for f in f_by_newsig[sig]]
             for sig in signals
             ])
 
