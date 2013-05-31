@@ -163,6 +163,62 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
             Y[i] = y_i
 
 
+def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
+        outsig_fn, insig_fn,
+        ):
+    tidx = dict((tf, i) for (i, tf) in enumerate(transforms))
+    tf_by_outsig = defaultdict(list)
+    for tf in transforms:
+        tf_by_outsig[outsig_fn(tf)].append(tf)
+
+    # N.B. the optimization below may not be valid
+    # when alpha is not a scalar multiplier
+    tf_weights = RaggedArray(
+        [[tf.alpha] for tf in transforms])
+    tf_Ns = [1] * len(transforms)
+    tf_Ms = [1] * len(transforms)
+
+    # -- which transform(s) does each signal use
+    tf_weights_js = [[tidx[tf] for tf in tf_by_outsig[sig]]
+        for sig in signals]
+
+    # -- which corresponding(s) signal is transformed
+    tf_signals_js = [[sidx[insig_fn(tf)] for tf in tf_by_outsig[sig]]
+        for sig in signals]
+
+    # -- Optimization:
+    #    If any output signal is the sum of 
+    #    consecutive weights with consecutive signals
+    #    then turn that into *one* dot product
+    #    of a new longer weight vector with a new
+    #    longer signal vector.
+    #    TODO: still do something like this for a 
+    #    *part* of the wjs/sjs if possible
+    #    TODO: sort the sjs or wjs to canonicalize things
+    for ii, (wjs, sjs) in enumerate(
+            zip(tf_weights_js, tf_signals_js)):
+        assert len(wjs) == len(sjs)
+        if len(wjs) == 0:
+            continue
+        if wjs != range(wjs[0], wjs[0] + len(wjs)):
+            continue
+        if sjs != range(sjs[0], sjs[0] + len(sjs)):
+            continue
+        # -- precondition satisfied
+        new_w_j = tf_weights.add_view(wjs[0], len(wjs))
+        new_s_j = sigs.add_view(sjs[0], len(sjs))
+        tf_Ns.append(len(wjs))
+        tf_Ms.append(1)
+        tf_weights_js[ii] = [new_w_j]
+        tf_signals_js[ii] = [new_s_j]
+
+    for ii, (wjs, sjs) in enumerate(
+            zip(tf_weights_js, tf_signals_js)):
+        if wjs:
+            print wjs, sjs
+
+    return locals()
+
 
 class Simulator(object):
     def __init__(self, model, n_prealloc_probes=1000):
@@ -230,54 +286,38 @@ class Simulator(object):
                 [p.bias for p in self.model.populations])
 
     def alloc_transforms(self):
-        signals = self.model.signals
-        transforms = self.model.transforms
+        stuff = alloc_transform_helper(
+                self.model.signals,
+                self.model.transforms,
+                self.sigs,
+                self.sidx,
+                self.RaggedArray,
+                (lambda f: f.outsig),
+                (lambda f: f.insig),
+                )
 
-        self.tf_weights = self.RaggedArray([[tf.alpha] for tf in transforms])
-        self.tf_Ns = [1] * len(transforms)
-        self.tf_Ms = [1] * len(transforms)
-
-        # -- which transform(s) does each signal use
-        tidx = dict((tf, i) for (i, tf) in enumerate(transforms))
-        tf_by_outsig = defaultdict(list)
-        for tf in transforms:
-            tf_by_outsig[tf.outsig].append(tf)
-
-        self.tf_weights_js = self.RaggedArray([
-            [tidx[tf] for tf in tf_by_outsig[sig]]
-            for sig in signals
-            ])
-
-        # -- which corresponding(s) signal is transformed
-        self.tf_signals_js = self.RaggedArray([
-            [self.sidx[tf.insig] for tf in tf_by_outsig[sig]]
-            for sig in signals
-            ])
+        self.tf_weights_js = self.RaggedArray(stuff['tf_weights_js'])
+        self.tf_signals_js = self.RaggedArray(stuff['tf_signals_js'])
+        self.tf_weights = stuff['tf_weights']
+        self.tf_Ns = stuff['tf_Ns']
+        self.tf_Ms = stuff['tf_Ms']
 
     def alloc_filters(self):
-        signals = self.model.signals
-        filters = self.model.filters
+        stuff = alloc_transform_helper(
+                self.model.signals,
+                self.model.filters,
+                self.sigs,
+                self.sidx,
+                self.RaggedArray,
+                (lambda f: f.newsig),
+                (lambda f: f.oldsig),
+                )
 
-        self.f_weights = self.RaggedArray([[f.alpha] for f in filters])
-        self.f_Ns = [1] * len(filters)
-        self.f_Ms = [1] * len(filters)
-
-        # -- which weight(s) does each signal use
-        fidx = dict((f, i) for (i, f) in enumerate(filters))
-        f_by_newsig = defaultdict(list)
-        for f in filters:
-            f_by_newsig[f.newsig].append(f)
-
-        self.f_weights_js = self.RaggedArray([
-            [fidx[f] for f in f_by_newsig[sig]]
-            for sig in signals
-            ])
-
-        # -- which corresponding(s) signal is transformed
-        self.f_signals_js = self.RaggedArray([
-            [self.sidx[f.oldsig] for f in f_by_newsig[sig]]
-            for sig in signals
-            ])
+        self.f_weights = stuff['tf_weights']
+        self.f_weights_js = self.RaggedArray(stuff['tf_weights_js'])
+        self.f_signals_js = self.RaggedArray(stuff['tf_signals_js'])
+        self.f_Ns = stuff['tf_Ns']
+        self.f_Ms = stuff['tf_Ms']
 
     def alloc_encoders(self):
         encoders = self.model.encoders

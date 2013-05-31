@@ -37,11 +37,22 @@ class RaggedArray(object):
         self.buf = to_device(queue, buf)
         self.queue = queue
 
+    def add_view(self, start, length):
+        starts = list(self.starts.get(self.queue))
+        lens = list(self.lens.get(self.queue))
+        rval = len(starts)
+        assert len(starts) == len(lens)
+        starts.append(start)
+        lens.append(length)
+        self.starts = to_device(self.queue, np.asarray(starts).astype('int32'))
+        self.lens = to_device(self.queue, np.asarray(lens).astype('int32'))
+        return rval
+
     def __len__(self):
         return self.starts.shape[0]
 
     def __getitem__(self, item):
-        print 'OCL RaggedArray getitem horribly slow'
+        #print 'OCL RaggedArray getitem horribly slow'
         # XXX only retrieve the bit we need
         starts = self.starts.get(self.queue)
         lens = self.lens.get(self.queue)
