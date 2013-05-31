@@ -48,8 +48,33 @@ class Array(cl.array.Array):
                     data=self.data,
                     strides=strides,
                     offset=offset)
+        elif isinstance(item, (int, np.integer)):
+            if len(self.shape) == 0:
+                raise IndexError()
+            if not (0 <= item < self.shape[0]):
+                raise NotImplementedError()
+            shape = self.shape[1:]
+            strides = self.strides[1:]
+            offset = self.offset + item * self.strides[0]
+            return self.__class__(
+                    self.queue, shape, self.dtype,
+                    data=self.data,
+                    strides=strides,
+                    offset=offset)
         else:
             raise NotImplementedError(item)
+
+    def __int__(self):
+        if self.size == 1:
+            return int(self.get())
+        else:
+            raise TypeError()
+
+    def __float__(self):
+        if self.size == 1:
+            return float(self.get())
+        else:
+            raise TypeError()
 
     def same_view_as(self, other):
         return ( self.data is other.offset
