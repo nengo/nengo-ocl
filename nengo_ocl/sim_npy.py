@@ -34,7 +34,7 @@ class RaggedArray(object):
         rval.buf = self.buf
         return rval
 
-    def add_view(self, starts, lens):
+    def add_views(self, starts, lens):
         #assert start >= 0
         #assert start + length <= len(self.buf)
         # -- creates copies, same semantics
@@ -46,12 +46,19 @@ class RaggedArray(object):
         return len(self.starts)
 
     def __getitem__(self, item):
-        o = self.starts[item]
-        n = self.lens[item]
-        rval = self.buf[o: o + n]
-        if len(rval) != n:
-            raise ValueError('buf not long enough')
-        return rval
+        if isinstance(item, (list, tuple)):
+            rval = self.__class__.__new__(self.__class__)
+            rval.starts = [self.starts[i] for i in item]
+            rval.lens = [self.lens[i] for i in item]
+            rval.buf = self.buf
+            return rval
+        else:
+            o = self.starts[item]
+            n = self.lens[item]
+            rval = self.buf[o: o + n]
+            if len(rval) != n:
+                raise ValueError('buf not long enough')
+            return rval
 
     def __setitem__(self, item, val):
         o = self.starts[item]
@@ -104,7 +111,9 @@ def raw_ragged_gather_gemv(BB,
 
 
 def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
-                       beta, Y, Y_in=None):
+                       beta, Y, Y_in=None,
+                       use_raw_fn=True,
+                      ):
     """
     """
     try:
@@ -122,7 +131,6 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
     if Y_in is None:
         Y_in = Y
 
-    use_raw_fn = 1
     if use_raw_fn:
         # This is close to the OpenCL reference impl
         return raw_ragged_gather_gemv(
@@ -178,13 +186,59 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
             Y[i] = y_i
 
 
+def lif_step(dt, J, voltage, refractory_time, spiked, tau_ref, tau_rc,
+             upsample):
+    """
+    Replicates nengo.nonlinear.LIF's step_math0 function, except for
+    a) not requiring a LIF instance and
+    b) not adding the bias
+    """
+    if upsample != 1:
+        raise NotImplementedError()
+
+    # Euler's method
+    dV = dt / tau_rc * (J - voltage)
+
+    # increase the voltage, ignore values below 0
+    v = np.maximum(voltage + dV, 0)
+
+    # handle refractory period
+    post_ref = 1.0 - (refractory_time - dt) / dt
+
+    # set any post_ref elements < 0 = 0, and > 1 = 1
+    v *= np.clip(post_ref, 0, 1)
+
+    # determine which neurons spike
+    # if v > 1 set spiked = 1, else 0
+    spiked[:] = (v > 1) * 1.0
+
+    old = np.seterr(all='ignore')
+    try:
+
+        # linearly approximate time since neuron crossed spike threshold
+        overshoot = (v - 1) / dV
+        spiketime = dt * (1.0 - overshoot)
+
+        # adjust refractory time (neurons that spike get a new
+        # refractory time set, all others get it reduced by dt)
+        new_refractory_time = spiked * (spiketime + tau_ref) \
+                              + (1 - spiked) * (refractory_time - dt)
+    finally:
+        np.seterr(**old)
+
+    # return an ordered dictionary of internal variables to update
+    # (including setting a neuron that spikes to a voltage of 0)
+
+    voltage[:] = v * (1 - spiked)
+    refractory_time[:] = new_refractory_time
+
 def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
         outsig_fn, insig_fn,
         ):
     # -- this is a function that is used to construct the
     #    so-called transforms and filters, which map from signals to signals.
 
-    tidx = idxs(transforms))
+    tidx = idxs(transforms)
     tf_by_outsig = defaultdict(list)
     for tf in transforms:
         tf_by_outsig[outsig_fn(tf)].append(tf)
@@ -216,7 +270,7 @@ def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
     #    TODO: still do something like this for a 
     #    *part* of the wjs/sjs if possible
     #    TODO: sort the sjs or wjs to canonicalize things
-    if 1:
+    if 0:
         wstarts = []
         wlens = []
         sstarts = []
@@ -272,25 +326,12 @@ def islifrate(obj):
 class Simulator(object):
     def __init__(self, model, n_prealloc_probes=1000):
         self.model = model
-        self.lifs = []
-        self.lifrates = []
-        self.populations = []
-        for nl in self.model.nonlinearities:
-            if islif(nl):
-                self.lifs.append(nl)
-            elif islifrate(nl):
-                self.lifrates.append(nl)
-            else:
-                self.populations.append(nl)
-
+        self.nonlinearities = sorted(self.model.nonlinearities)
 
         self.sidx = idxs(model.signals)
+        self.pidx = idxs(self.nonlinearities)
         self.eidx = idxs(model.encoders)
         self.didx = idxs(model.decoders)
-
-        self.idxs_lif = idxs(self.lifs)
-        self.idxs_lifrates = idxs(self.lifrates)
-        self.idxs_pops = idxs(self.populations)
 
         self.n_prealloc_probes = n_prealloc_probes
         self.sim_step = 0
@@ -333,25 +374,39 @@ class Simulator(object):
             self.sig_probes_X_js[period] = self.RaggedArray(
                 [[self.sidx[sp.sig]] for sp in sp_dt])
 
-    def alloc_lifs(self):
-        def zeros():
-            return self.RaggedArray([np.zeros_like(p.bias) for p in self.lifs])
-
-        # -- lif-specific stuff
-        self.lif_J = zeros()
-        self.lif_voltage = zeros()
-        self.lif_rt = zeros()
-        self.lif_output = zeros()
-        self.lif_jbias = self.RaggedArray([p.bias for p in self.lifs])
-
-    def alloc_lif_rates(self):
-        raise NotImplementedError()
-
     def alloc_populations(self):
-        def zeros():
-            return self.RaggedArray([np.zeros_like(p.bias) for p in self.lifs])
-        self.pop_J = zeros()
-        self.pop_output = zeros()
+        pops = self.nonlinearities
+        self.pop_J = self.RaggedArray(
+            [np.zeros(p.n_in) for p in pops])
+        self.pop_bias = self.RaggedArray(
+            [getattr(p, 'bias', np.zeros(p.n_in)) for p in pops])
+        self.pop_output = self.RaggedArray(
+            [np.zeros(p.n_out) for p in pops])
+
+        lif_idxs = []
+        direct_idxs = []
+        for i, p in enumerate(pops):
+            if islif(p):
+                lif_idxs.append(i)
+            else:
+                direct_idxs.append(i)
+
+        # sorting in the constructor was supposed to ensure this:
+        assert lif_idxs == range(lif_idxs[0], lif_idxs[0] + len(lif_idxs))
+        if lif_idxs and (pops[lif_idxs[0]] != pops[lif_idxs[-1]]):
+            raise NotImplementedError('Non-homogeneous lif population')
+
+        self.pop_lif_rep = pops[lif_idxs[0]]
+        self.pop_lif_J = self.pop_J[lif_idxs]
+        self.pop_lif_output = self.pop_output[lif_idxs]
+        self.pop_lif_start = self.pop_lif_J.starts[0]
+        lif_len = sum(self.pop_lif_J.lens)
+        self.pop_lif_end = self.pop_lif_start + lif_len
+        self.pop_lif_voltage = np.zeros(lif_len)
+        self.pop_lif_reftime = np.zeros(lif_len)
+
+        self.pop_direct_idxs = direct_idxs
+
 
     def alloc_transforms(self):
         stuff = alloc_transform_helper(
@@ -391,7 +446,8 @@ class Simulator(object):
 
     def alloc_encoders(self):
         encoders = self.model.encoders
-        self.enc_weights = self.RaggedArray([enc.weights.flatten() for enc in encoders])
+        self.enc_weights = self.RaggedArray(
+            [enc.weights.flatten() for enc in encoders])
 
         self.enc_Ms = [enc.weights.shape[0] for enc in encoders]
         self.enc_Ns = [enc.weights.shape[1] for enc in encoders]
@@ -399,17 +455,18 @@ class Simulator(object):
         # -- which encoder(s) does each population use
         self.enc_weights_js = self.RaggedArray([
             [self.eidx[enc] for enc in encoders if enc.pop == pop]
-            for pop in self.model.populations])
+            for pop in self.model.nonlinearities])
 
         # -- and which corresponding signal does it encode
         self.enc_signals_js = self.RaggedArray([
             [self.sidx[enc.sig]
                 for enc in encoders if enc.pop == pop]
-            for pop in self.model.populations])
+            for pop in self.model.nonlinearities])
 
     def alloc_decoders(self):
         decoders = self.model.decoders
-        self.dec_weights = self.RaggedArray([dec.weights.flatten() for dec in decoders])
+        self.dec_weights = self.RaggedArray(
+            [dec.weights.flatten() for dec in decoders])
         self.dec_Ms = [dec.weights.shape[0] for dec in decoders]
         self.dec_Ns = [dec.weights.shape[1] for dec in decoders]
 
@@ -470,12 +527,6 @@ class Simulator(object):
             Y=self.sigs,
             )
 
-    def do_custom_transforms(self):
-        for ct in self.model.custom_transforms:
-            ipos = self.sidx[ct.insig]
-            opos = self.sidx[ct.outsig]
-            self.sigs[opos] = ct.func(self.sigs[ipos])
-
     def do_encoders(self):
         ragged_gather_gemv(
             Ms=self.enc_Ms,
@@ -486,20 +537,31 @@ class Simulator(object):
             X=self.sigs,
             X_js=self.enc_signals_js,
             beta=1.0,
-            Y_in=self.pop_jbias,
-            Y=self.pop_ic,
+            Y_in=self.pop_bias,
+            Y=self.pop_J,
             )
 
     def do_populations(self):
+        lif_start = self.pop_lif_start
+        lif_end = self.pop_lif_end
+        dt = self.model.dt
+
         lif_step(
-            J=self.pop_ic.buf,
-            voltage=self.pop_voltage.buf,
-            refractory_time=self.pop_rt.buf,
-            spiked=self.pop_output.buf,
-            dt=self.model.dt,
-            tau_rc=0.02,
-            tau_ref=0.002,
-            upsample=1)
+            dt=dt,
+            J=self.pop_lif_J.buf[lif_start:lif_end],
+            voltage=self.pop_lif_voltage,
+            refractory_time=self.pop_lif_reftime,
+            spiked=self.pop_output.buf[lif_start:lif_end],
+            tau_ref=self.pop_lif_rep.tau_ref,
+            tau_rc=self.pop_lif_rep.tau_rc,
+            upsample=self.pop_lif_rep.upsample
+            )
+
+        for ii in self.pop_direct_idxs:
+            nl = self.nonlinearities[ii]
+            popidx = self.pidx[nl]
+            self.pop_output[popidx][...] = nl.fn(self.pop_J[popidx])
+
 
     def do_decoders(self):
         ragged_gather_gemv(
@@ -512,7 +574,9 @@ class Simulator(object):
             X_js=self.dec_pops_js,
             beta=0.0,
             Y=self.sigs_ic,
+            use_raw_fn=False
             )
+
 
     def do_probes(self):
         for period in self.sig_probes_output:
@@ -548,14 +612,13 @@ class Simulator(object):
         self.do_decoders()          # decode into sigs_ic
         self.do_filters()           # make sigs_t's contribution to t + 1
         self.do_transforms()        # add sigs_ic's contribution to t + 1
-        self.do_custom_transforms() # complete calculation of sigs of t + 1
         self.do_probes()
 
     def step(self):
         self.do_all()
         self.sim_step += 1
 
-    def run_steps(self, N):
+    def run_steps(self, N, verbose=False):
         for i in xrange(N):
             self.step()
 
