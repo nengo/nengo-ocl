@@ -140,8 +140,11 @@ class Array(cl.array.Array):
         assert self.data.size >= self.size * self.dtype.itemsize
         #print self.structure, hostbuf.size
         cl.enqueue_copy(queue, hostbuf, self.data)
-        rval = np.ndarray(buffer=hostbuf, strides=self.strides,
+        try:
+            rval = np.ndarray(buffer=hostbuf, strides=self.strides,
                           offset=self.offset, shape=self.shape, dtype=self.dtype)
+        except:
+            import pdb; pdb.set_trace()
         return rval
 
 

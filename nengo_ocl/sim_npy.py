@@ -5,7 +5,7 @@ from collections import defaultdict
 import math
 import numpy as np
 
-from simulator import lif_step
+from nengo.nonlinear import LIF, LIFRate
 
 
 class RaggedArray(object):
@@ -181,7 +181,10 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
 def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
         outsig_fn, insig_fn,
         ):
-    tidx = dict((tf, i) for (i, tf) in enumerate(transforms))
+    # -- this is a function that is used to construct the
+    #    so-called transforms and filters, which map from signals to signals.
+
+    tidx = idxs(transforms))
     tf_by_outsig = defaultdict(list)
     for tf in transforms:
         tf_by_outsig[outsig_fn(tf)].append(tf)
@@ -254,18 +257,43 @@ def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
     return locals()
 
 
+def idxs(seq):
+    return dict((s, i) for (i, s) in enumerate(seq))
+
+
+def islif(obj):
+    return isinstance(obj, LIF)
+
+
+def islifrate(obj):
+    return isinstance(obj, LIFRate)
+
+
 class Simulator(object):
     def __init__(self, model, n_prealloc_probes=1000):
         self.model = model
-        self.sidx = dict((s, i) for (i, s) in enumerate(model.signals))
-        self.pidx = dict((p, i) for (i, p) in enumerate(model.populations))
-        self.eidx = dict((s, i) for (i, s) in enumerate(model.encoders))
-        self.didx = dict((p, i) for (i, p) in enumerate(model.decoders))
+        self.lifs = []
+        self.lifrates = []
+        self.populations = []
+        for nl in self.model.nonlinearities:
+            if islif(nl):
+                self.lifs.append(nl)
+            elif islifrate(nl):
+                self.lifrates.append(nl)
+            else:
+                self.populations.append(nl)
+
+
+        self.sidx = idxs(model.signals)
+        self.eidx = idxs(model.encoders)
+        self.didx = idxs(model.decoders)
+
+        self.idxs_lif = idxs(self.lifs)
+        self.idxs_lifrates = idxs(self.lifrates)
+        self.idxs_pops = idxs(self.populations)
+
         self.n_prealloc_probes = n_prealloc_probes
         self.sim_step = 0
-
-        if not all(s.n == 1 for s in self.model.signals):
-            raise NotImplementedError()
 
     def RaggedArray(self, *args, **kwargs):
         return RaggedArray(*args, **kwargs)
@@ -276,8 +304,6 @@ class Simulator(object):
         self.sigs = self.RaggedArray([[getattr(s, 'value', 0.0)]
             for s in self.model.signals])
 
-        # -- not necessary in ocl if signals fit into shared memory
-        #    shared memory can be used as the copy in that case.
         self._sigs_copy = self.RaggedArray([[getattr(s, 'value', 0.0)]
             for s in self.model.signals])
 
@@ -307,17 +333,25 @@ class Simulator(object):
             self.sig_probes_X_js[period] = self.RaggedArray(
                 [[self.sidx[sp.sig]] for sp in sp_dt])
 
+    def alloc_lifs(self):
+        def zeros():
+            return self.RaggedArray([np.zeros_like(p.bias) for p in self.lifs])
+
+        # -- lif-specific stuff
+        self.lif_J = zeros()
+        self.lif_voltage = zeros()
+        self.lif_rt = zeros()
+        self.lif_output = zeros()
+        self.lif_jbias = self.RaggedArray([p.bias for p in self.lifs])
+
+    def alloc_lif_rates(self):
+        raise NotImplementedError()
+
     def alloc_populations(self):
         def zeros():
-            return self.RaggedArray(
-                [[0.0] * p.n for p in self.model.populations])
-        # -- lif-specific stuff
-        self.pop_ic = zeros()
-        self.pop_voltage = zeros()
-        self.pop_rt = zeros()
+            return self.RaggedArray([np.zeros_like(p.bias) for p in self.lifs])
+        self.pop_J = zeros()
         self.pop_output = zeros()
-        self.pop_jbias = self.RaggedArray(
-                [p.bias for p in self.model.populations])
 
     def alloc_transforms(self):
         stuff = alloc_transform_helper(
