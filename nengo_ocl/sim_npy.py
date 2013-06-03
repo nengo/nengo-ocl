@@ -100,7 +100,7 @@ def raw_ragged_gather_gemv(BB,
         for ii in xrange(n_dot_products):
             x_i = X_js_data[X_js_starts[bb] + ii]
             a_i = A_js_data[A_js_starts[bb] + ii]
-            N_i = Ns[ii]
+            N_i = Ns[a_i]
             x_offset = X_starts[x_i]
             a_offset = A_starts[a_i]
             for mm in xrange(M):
@@ -574,7 +574,6 @@ class Simulator(object):
             X_js=self.dec_pops_js,
             beta=0.0,
             Y=self.sigs_ic,
-            use_raw_fn=False
             )
 
 

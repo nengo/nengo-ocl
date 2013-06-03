@@ -486,7 +486,7 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
                 {
                     int x_ji = X_js_data[ii];
                     int a_ji = A_js_data[ii];
-                    int N_i = Ns[ii];
+                    int N_i = Ns[a_ji];
                     int x_offset = X_starts[x_ji];
                     int a_offset = A_starts[a_ji];
 
