@@ -239,6 +239,7 @@ def lif_step(dt, J, voltage, refractory_time, spiked, tau_ref, tau_rc,
     voltage[:] = v * (1 - spiked)
     refractory_time[:] = new_refractory_time
 
+
 def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
         outsig_fn, insig_fn,
         ):
@@ -398,23 +399,26 @@ class Simulator(object):
             else:
                 direct_idxs.append(i)
 
-        # sorting in the constructor was supposed to ensure this:
-        assert lif_idxs == range(lif_idxs[0], lif_idxs[0] + len(lif_idxs))
-        if lif_idxs and (pops[lif_idxs[0]] != pops[lif_idxs[-1]]):
-            raise NotImplementedError('Non-homogeneous lif population')
-
-        self.pop_lif_rep = pops[lif_idxs[0]]
-        self.pop_lif_J = self.pop_J[lif_idxs]
-        self.pop_lif_output = self.pop_output[lif_idxs]
-        self.pop_lif_start = self.pop_lif_J.starts[0]
-        lif_len = sum(self.pop_lif_J.lens)
-        self.pop_lif_end = self.pop_lif_start + lif_len
-        self.pop_lif_voltage = self.RaggedArray(
-            [np.zeros(pops[idx].n_neurons) for idx in lif_idxs])
-        self.pop_lif_reftime = self.RaggedArray(
-            [np.zeros(pops[idx].n_neurons) for idx in lif_idxs])
-
+        self.pop_lif_idxs = lif_idxs
         self.pop_direct_idxs = direct_idxs
+
+        if lif_idxs:
+            # sorting in the constructor was supposed to ensure this:
+            assert lif_idxs == range(lif_idxs[0], lif_idxs[0] + len(lif_idxs))
+            if lif_idxs and (pops[lif_idxs[0]] != pops[lif_idxs[-1]]):
+                raise NotImplementedError('Non-homogeneous lif population')
+
+            self.pop_lif_rep = pops[lif_idxs[0]]
+            self.pop_lif_J = self.pop_J[lif_idxs]
+            self.pop_lif_output = self.pop_output[lif_idxs]
+            self.pop_lif_start = self.pop_lif_J.starts[0]
+            lif_len = sum(self.pop_lif_J.lens)
+            self.pop_lif_end = self.pop_lif_start + lif_len
+            self.pop_lif_voltage = self.RaggedArray(
+                [np.zeros(pops[idx].n_neurons) for idx in lif_idxs])
+            self.pop_lif_reftime = self.RaggedArray(
+                [np.zeros(pops[idx].n_neurons) for idx in lif_idxs])
+
         self.pop_direct_ins = self.RaggedArray(
             [np.zeros(pops[di].n_in) for di in direct_idxs])
         self.pop_direct_outs = self.RaggedArray(
@@ -560,20 +564,20 @@ class Simulator(object):
             )
 
     def do_populations(self):
-        lif_start = self.pop_lif_start
-        lif_end = self.pop_lif_end
         dt = self.model.dt
-
-        lif_step(
-            dt=dt,
-            J=self.pop_lif_J.buf[lif_start:lif_end],
-            voltage=self.pop_lif_voltage.buf,
-            refractory_time=self.pop_lif_reftime.buf,
-            spiked=self.pop_output.buf[lif_start:lif_end],
-            tau_ref=self.pop_lif_rep.tau_ref,
-            tau_rc=self.pop_lif_rep.tau_rc,
-            upsample=self.pop_lif_rep.upsample
-            )
+        if self.pop_lif_idxs:
+            lif_start = self.pop_lif_start
+            lif_end = self.pop_lif_end
+            lif_step(
+                dt=dt,
+                J=self.pop_lif_J.buf[lif_start:lif_end],
+                voltage=self.pop_lif_voltage.buf,
+                refractory_time=self.pop_lif_reftime.buf,
+                spiked=self.pop_output.buf[lif_start:lif_end],
+                tau_ref=self.pop_lif_rep.tau_ref,
+                tau_rc=self.pop_lif_rep.tau_rc,
+                upsample=self.pop_lif_rep.upsample
+                )
 
         for ii in self.pop_direct_idxs:
             nl = self.nonlinearities[ii]
@@ -655,6 +659,7 @@ class Simulator(object):
         probe_idx = sps_dt.index(probe)
         all_rows = self.sig_probes_output[period].buf.reshape(
                 (-1, self.sig_probes_buflen[period]))
+        assert all_rows.dtype == self.sig_probes_output[period].buf.dtype
         start = self.sig_probes_output[period].starts[probe_idx]
         olen = self.sig_probes_output[period].lens[probe_idx]
         start = start % self.sig_probes_buflen[period]

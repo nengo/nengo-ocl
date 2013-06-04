@@ -1,4 +1,4 @@
-import time
+#import time
 import os
 import numpy as np
 import pyopencl as cl
@@ -6,7 +6,7 @@ import pyopencl as cl
 import sim_npy
 #from ocl.array import Array
 from ocl.array import to_device
-from ocl.plan import Plan, Prog
+from ocl.plan import Prog
 #from ocl.array import empty
 from ocl.gemv_batched import plan_ragged_gather_gemv
 from ocl.lif import plan_lif
@@ -27,15 +27,10 @@ class RaggedArray(object):
             lens.append(len(l))
             buf.extend(l)
 
-        self.cl_starts = to_device(queue, np.asarray(starts).astype('int32'))
-        self.cl_lens = to_device(queue, np.asarray(lens).astype('int32'))
-        buf = np.asarray(buf)
-        if 'int' in str(buf.dtype):
-            buf = buf.astype('int32')
-        if buf.dtype == np.dtype('float64'):
-            buf = buf.astype('float32')
-        self.cl_buf = to_device(queue, buf)
         self.queue = queue
+        self.starts = starts
+        self.lens = lens
+        self.buf = buf
 
     @property
     def starts(self):
@@ -63,8 +58,12 @@ class RaggedArray(object):
 
     @buf.setter
     def buf(self, buf):
-        self.cl_buf = to_device(self.queue,
-                                   np.asarray(buf).astype('int32'))
+        buf = np.asarray(buf)
+        if 'int' in str(buf.dtype):
+            buf = buf.astype('int32')
+        if buf.dtype == np.dtype('float64'):
+            buf = buf.astype('float32')
+        self.cl_buf = to_device(self.queue, buf)
         self.queue.flush()
 
     def shallow_copy(self):
@@ -156,7 +155,7 @@ class Simulator(sim_npy.Simulator):
         into *add* them into sigs
         """
         # ADD linear combinations of signals to some signals
-        return plan_ragged_gather_gemv(
+        return [plan_ragged_gather_gemv(
             self.queue,
             Ms=self.tf_Ms,
             Ns=self.tf_Ns,
@@ -168,13 +167,13 @@ class Simulator(sim_npy.Simulator):
             beta=1.0,
             Y=self.sigs,
             tag='transforms',
-            )
+            )]
 
     def plan_copy_sigs(self):
-        return plan_copy(self.queue,
+        return [plan_copy(self.queue,
                          self.sigs.cl_buf,
                          self._sigs_copy.cl_buf,
-                         tag='copy_sigs')
+                         tag='copy_sigs')]
 
     def plan_filters(self):
         """
@@ -182,7 +181,7 @@ class Simulator(sim_npy.Simulator):
         and write them back to `sigs`
         """
         # ADD linear combinations of signals to some signals
-        return plan_ragged_gather_gemv(
+        return [plan_ragged_gather_gemv(
             self.queue,
             Ms=self.f_Ms,
             Ns=self.f_Ns,
@@ -194,10 +193,10 @@ class Simulator(sim_npy.Simulator):
             beta=0.0,
             Y=self.sigs,
             tag='filters'
-            )
+            )]
 
     def plan_encoders(self):
-        return plan_ragged_gather_gemv(
+        return [plan_ragged_gather_gemv(
             self.queue,
             Ms=self.enc_Ms,
             Ns=self.enc_Ns,
@@ -210,13 +209,16 @@ class Simulator(sim_npy.Simulator):
             Y_in=self.pop_bias,
             Y=self.pop_J,
             tag='encoders'
-            )
+            )]
 
     def plan_pop_lifs(self):
+        if not self.pop_lif_idxs:
+            return []
+
         lif_start = self.pop_lif_start
         lif_end = self.pop_lif_end
 
-        return plan_lif(
+        return [plan_lif(
             queue=self.queue,
             V=self.pop_lif_voltage.cl_buf,
             RT=self.pop_lif_reftime.cl_buf,
@@ -229,50 +231,56 @@ class Simulator(sim_npy.Simulator):
             tau_rc=self.pop_lif_rep.tau_rc,
             upsample=self.pop_lif_rep.upsample,
             V_threshold=1.0,
-            )
+            )]
 
-    def plan_pop_directs(self):
-        self.pop_direct_copy_Ms = [1]
-        self.pop_direct_copy_Ns = [1]
-        self.pop_direct_copy_A = self.RaggedArray([[1]])
-        self.pop_direct_copy_A_js = self.RaggedArray(
-            [[0]] * len(self.pop_direct_idxs))
-        self.pop_direct_copy_X_js = self.RaggedArray(
-            [[di] for di in self.pop_direct_idxs])
-
-        self.pop_direct_copy_in = plan_ragged_gather_gemv(
-            self.queue,
-            Ms=self.pop_direct_copy_Ms,
-            Ns=self.pop_direct_copy_Ns,
-            alpha=1.0,
-            A=self.pop_direct_copy_A,
-            A_js=self.pop_direct_copy_A_js,
-            X=self.pop_J,
-            X_js=self.pop_direct_copy_X_js,
-            beta=0.0,
-            Y=self.pop_direct_ins,
-            tag='pop_direct_copy_in')
-
-        self.pop_direct_outs_js = self.RaggedArray(
-            [[ii] for ii, di in enumerate(self.pop_direct_idxs)])
-        self.pop_direct_output = self.pop_output[self.pop_direct_idxs]
-
-        self.pop_direct_copy_out = plan_ragged_gather_gemv(
-            self.queue,
-            Ms=self.pop_direct_copy_Ms,
-            Ns=self.pop_direct_copy_Ns,
-            alpha=1.0,
-            A=self.pop_direct_copy_A,
-            A_js=self.pop_direct_copy_A_js,
-            X=self.pop_direct_outs,
-            X_js=self.pop_direct_outs_js,
-            beta=0.0,
-            Y=self.pop_direct_output,
-            tag='pop_direct_copy_out')
-
-    def do_pop_directs(self):
+    def plan_pop_directs_pre(self):
         if self.pop_direct_idxs:
-            self.pop_direct_copy_in()
+            self.pop_direct_copy_Ms = [1]
+            self.pop_direct_copy_Ns = [1]
+            self.pop_direct_copy_A = self.RaggedArray([[1]])
+            self.pop_direct_copy_A_js = self.RaggedArray(
+                [[0]] * len(self.pop_direct_idxs))
+            self.pop_direct_copy_X_js = self.RaggedArray(
+                [[di] for di in self.pop_direct_idxs])
+
+            return [plan_ragged_gather_gemv(
+                self.queue,
+                Ms=self.pop_direct_copy_Ms,
+                Ns=self.pop_direct_copy_Ns,
+                alpha=1.0,
+                A=self.pop_direct_copy_A,
+                A_js=self.pop_direct_copy_A_js,
+                X=self.pop_J,
+                X_js=self.pop_direct_copy_X_js,
+                beta=0.0,
+                Y=self.pop_direct_ins,
+                tag='pop_direct_copy_in')]
+        else:
+            return []
+
+    def plan_pop_directs_post(self):
+        if self.pop_direct_idxs:
+            self.pop_direct_outs_js = self.RaggedArray(
+                [[ii] for ii, di in enumerate(self.pop_direct_idxs)])
+            self.pop_direct_output = self.pop_output[self.pop_direct_idxs]
+
+            return [plan_ragged_gather_gemv(
+                self.queue,
+                Ms=self.pop_direct_copy_Ms,
+                Ns=self.pop_direct_copy_Ns,
+                alpha=1.0,
+                A=self.pop_direct_copy_A,
+                A_js=self.pop_direct_copy_A_js,
+                X=self.pop_direct_outs,
+                X_js=self.pop_direct_outs_js,
+                beta=0.0,
+                Y=self.pop_direct_output,
+                tag='pop_direct_copy_out')]
+        else:
+            return []
+
+    def enqueue_pop_directs(self):
+        if self.pop_direct_idxs:
             self.pop_direct_ins_npy.buf[:] = self.pop_direct_ins.buf
 
             for ii, di in enumerate(self.pop_direct_idxs):
@@ -283,11 +291,9 @@ class Simulator(sim_npy.Simulator):
                             self.pop_direct_outs.cl_buf.data,
                             self.pop_direct_outs_npy.buf,
                            )
-                           # self.pop_direct_outs_npy.buf)
-            self.pop_direct_copy_out.enqueue()
 
     def plan_decoders(self):
-        return plan_ragged_gather_gemv(
+        return [plan_ragged_gather_gemv(
             self.queue,
             Ms=self.dec_Ms,
             Ns=self.dec_Ns,
@@ -299,7 +305,7 @@ class Simulator(sim_npy.Simulator):
             beta=0.0,
             Y=self.sigs_ic,
             tag='decoders',
-            )
+            )]
 
     def plan_probes(self):
         plans = {}
@@ -333,36 +339,43 @@ class Simulator(sim_npy.Simulator):
 
     def plan_all(self):
         # see sim_npy for rationale of this ordering
-        self.tick_plans = [
-            self.plan_encoders(),
-            self.plan_pop_lifs(),
-            self.plan_decoders(),
-            self.plan_copy_sigs(),
-            self.plan_filters(),
-            self.plan_transforms(),
-        ]
-        self.plan_pop_directs()
+        self.plans_pre_direct = (self.plan_encoders()
+                                 + self.plan_pop_lifs()
+                                 + self.plan_pop_directs_pre()
+                                )
+
+        self.plans_post_direct = (self.plan_pop_directs_post()
+                                  + self.plan_decoders()
+                                  + self.plan_copy_sigs()
+                                  + self.plan_filters()
+                                  + self.plan_transforms()
+                                 )
         self.probe_plans = self.plan_probes()
         self._iter = self.run_iter()
         assert 0 == self._iter.send(None)
 
     def run_iter(self):
-        tick_plans = Prog(self.tick_plans)
+        pre_direct = Prog(self.plans_pre_direct)
+        post_direct = Prog(self.plans_post_direct)
         by_period = dict((k, Prog(v))
                          for (k, v) in self.probe_plans.items())
         while True:
+            self.queue.flush()
             N = yield self.sim_step
             while N:
-                # -- encoders, decoders, filters, transforms
-                tick_plans.enqueue()
-
-                # -- direct mode stuff
-                self.do_pop_directs()
+                pre_direct.enqueue()
+                self.enqueue_pop_directs()
+                post_direct.enqueue()
 
                 # -- probes
                 for period in by_period:
                     if self.sim_step % period == 0:
                         by_period[period].enqueue()
+                self.queue.flush()
+                #print 'sigs      ', self.sigs.buf
+                #print 'pop output', self.pop_output.buf
+                #print 'probe buf ', self.sig_probes_output[1].buf[:10]
+                #print ''
                 N -= 1
                 self.sim_step += 1
 
