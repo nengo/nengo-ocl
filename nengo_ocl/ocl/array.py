@@ -48,6 +48,8 @@ class Array(cl.array.Array):
                     data=self.data,
                     strides=strides,
                     offset=offset)
+        elif isinstance(item, slice):
+            return self.__getitem__((item,))
         elif isinstance(item, (int, np.integer)):
             if len(self.shape) == 0:
                 raise IndexError()
@@ -140,6 +142,7 @@ class Array(cl.array.Array):
         assert self.data.size >= self.size * self.dtype.itemsize
         #print self.structure, hostbuf.size
         cl.enqueue_copy(queue, hostbuf, self.data)
+        queue.flush()
         try:
             rval = np.ndarray(buffer=hostbuf, strides=self.strides,
                           offset=self.offset, shape=self.shape, dtype=self.dtype)

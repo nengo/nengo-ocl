@@ -1,19 +1,26 @@
-import math
 from mako.template import Template
 import pyopencl as cl
 from plan import Plan
 
 def plan_lif(queue, V, RT, J, OV, ORT, OS,
              dt, tau_rc, tau_ref, V_threshold, upsample):
-    tau_rc_inv = 1.0 / tau_rc
+    L, = V.shape
 
-    upsample_dt = dt / upsample
-    upsample_dt_inv = 1.0 / upsample_dt
+    config = {
+        'tau_ref': tau_ref,
+        'tau_rc_inv': 1.0 / tau_rc,
+        'V_threshold': V_threshold,
+        'upsample': upsample,
+        'upsample_dt': dt / upsample,
+        'upsample_dt_inv': upsample / dt,
+    }
+    for vname in 'V', 'RT', 'J', 'OV', 'ORT', 'OS':
+        v = locals()[vname]
+        config[vname + 'type'] = v.ocldtype
+        config[vname + 'offset'] = 'gid+%s' % int(v.offset // v.dtype.itemsize)
+        assert v.shape == (L,)
+        assert v.strides == (v.dtype.itemsize,)
 
-    Jtype = J.ocldtype
-    Vtype = V.ocldtype
-    RTtype = RT.ocldtype
-    OStype = OS.ocldtype
 
     text = """
         __kernel void foo(
@@ -26,9 +33,9 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS,
                      )
         {
             const int gid = get_global_id(0);
-            ${Vtype} v = voltage[gid];
-            ${RTtype} rt = refractory_time[gid];
-            ${Jtype} j = J[gid];
+            ${Vtype} v = voltage[${Voffset}];
+            ${RTtype} rt = refractory_time[${RToffset}];
+            ${Jtype} j = J[${Joffset}];
             char spiked = 0;
             ${Vtype} dV, overshoot;
             ${RTtype} post_ref, spiketime;
@@ -49,13 +56,13 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS,
             v = (v > ${V_threshold}) ? 0.0f: v;
           % endfor
 
-            out_voltage[gid] = v;
-            out_refractory_time[gid] = rt;
-            out_spiked[gid] = spiked ? 1.0f : 0.0f;
+            out_voltage[${OVoffset}] = v;
+            out_refractory_time[${ORToffset}] = rt;
+            out_spiked[${OSoffset}] = spiked ? 1.0f : 0.0f;
         }
         """
 
-    text = Template(text, output_encoding='ascii').render(**locals())
+    text = Template(text, output_encoding='ascii').render(**config)
     build_options = [
             '-cl-fast-relaxed-math',
             '-cl-mad-enable',
@@ -66,8 +73,5 @@ def plan_lif(queue, V, RT, J, OV, ORT, OS,
     fn.set_args(J.data, V.data, RT.data, OV.data, ORT.data,
                 OS.data)
 
-    # XXX ASSERT ALL CONTIGUOUS WITH IDENTICAL LAYOUT
-    # TODO: Solve by compiling kernel using elemwise.py
-    L, = V.shape
     return Plan(queue, fn, (L,), None, name='lif')
 

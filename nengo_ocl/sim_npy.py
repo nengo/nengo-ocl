@@ -61,6 +61,10 @@ class RaggedArray(object):
             return rval
 
     def __setitem__(self, item, val):
+        try:
+            item = int(item)
+        except TypeError:
+            raise NotImplementedError()
         o = self.starts[item]
         n = self.lens[item]
         if len(val) != n:
@@ -68,7 +72,10 @@ class RaggedArray(object):
         rval = self.buf[o: o + n]
         if len(rval) != n:
             raise ValueError('buf not long enough')
-        self.buf[o: o + n] = val
+        # -- N.B. this is written for re-use by sim_ocl
+        buf = self.buf
+        buf[o: o + n] = val
+        self.buf = buf
 
 
 def raw_ragged_gather_gemv(BB,
@@ -402,10 +409,20 @@ class Simulator(object):
         self.pop_lif_start = self.pop_lif_J.starts[0]
         lif_len = sum(self.pop_lif_J.lens)
         self.pop_lif_end = self.pop_lif_start + lif_len
-        self.pop_lif_voltage = np.zeros(lif_len)
-        self.pop_lif_reftime = np.zeros(lif_len)
+        self.pop_lif_voltage = self.RaggedArray(
+            [np.zeros(pops[idx].n_neurons) for idx in lif_idxs])
+        self.pop_lif_reftime = self.RaggedArray(
+            [np.zeros(pops[idx].n_neurons) for idx in lif_idxs])
 
         self.pop_direct_idxs = direct_idxs
+        self.pop_direct_ins = self.RaggedArray(
+            [np.zeros(pops[di].n_in) for di in direct_idxs])
+        self.pop_direct_outs = self.RaggedArray(
+            [np.zeros(pops[di].n_out) for di in direct_idxs])
+        self.pop_direct_ins_npy = RaggedArray(
+            [np.zeros(pops[di].n_in) for di in direct_idxs])
+        self.pop_direct_outs_npy = RaggedArray(
+            [np.zeros(pops[di].n_out) for di in direct_idxs])
 
 
     def alloc_transforms(self):
@@ -549,8 +566,8 @@ class Simulator(object):
         lif_step(
             dt=dt,
             J=self.pop_lif_J.buf[lif_start:lif_end],
-            voltage=self.pop_lif_voltage,
-            refractory_time=self.pop_lif_reftime,
+            voltage=self.pop_lif_voltage.buf,
+            refractory_time=self.pop_lif_reftime.buf,
             spiked=self.pop_output.buf[lif_start:lif_end],
             tau_ref=self.pop_lif_rep.tau_ref,
             tau_rc=self.pop_lif_rep.tau_rc,
@@ -641,6 +658,8 @@ class Simulator(object):
                 (-1, self.sig_probes_buflen[period]))
         start = self.sig_probes_output[period].starts[probe_idx]
         olen = self.sig_probes_output[period].lens[probe_idx]
-        return all_rows[:last_elem, start:start + olen]
+        start = start % self.sig_probes_buflen[period]
+        rval = all_rows[:last_elem, start:start + olen]
+        return rval
 
 

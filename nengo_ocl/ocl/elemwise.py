@@ -72,20 +72,20 @@ def plan_copy(queue, src, dst, tag=None):
         raise NotImplementedError('size', (src, dst))
     if (src.strides != dst.strides):
         raise NotImplementedError('strides', (src, dst))
-    if (src.offset != dst.offset):
-        raise NotImplementedError('offset', (src, dst))
-    if src.offset != 0:
-        raise NotImplementedError('offset', (src, dst))
     # XXX: only copy the parts of the buffer that are part of the logical Array
     # XXX: use the elemwise kernel generator above
     config = {'src_type': src.ocldtype,
-              'dst_type': dst.ocldtype}
+              'dst_type': dst.ocldtype,
+              'src_offset': int(src.offset / src.dtype.itemsize),
+              'dst_offset': int(dst.offset / src.dtype.itemsize),
+             }
     _fn = cl.Program(queue.context, """
         __kernel void fn(__global const %(src_type)s *src,
                          __global %(dst_type)s *dst
                          )
         {
-            dst[get_global_id(0)] = src[get_global_id(0)];
+            dst[get_global_id(0) + %(dst_offset)s] 
+            = src[get_global_id(0) + %(src_offset)s];
         }
         """ % config).build().fn
     _fn.set_args(src.data, dst.data)

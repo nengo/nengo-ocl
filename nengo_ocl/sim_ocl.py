@@ -27,66 +27,80 @@ class RaggedArray(object):
             lens.append(len(l))
             buf.extend(l)
 
-        self.starts = to_device(queue, np.asarray(starts).astype('int32'))
-        self.lens = to_device(queue, np.asarray(lens).astype('int32'))
+        self.cl_starts = to_device(queue, np.asarray(starts).astype('int32'))
+        self.cl_lens = to_device(queue, np.asarray(lens).astype('int32'))
         buf = np.asarray(buf)
         if 'int' in str(buf.dtype):
             buf = buf.astype('int32')
         if buf.dtype == np.dtype('float64'):
             buf = buf.astype('float32')
-        self.buf = to_device(queue, buf)
+        self.cl_buf = to_device(queue, buf)
         self.queue = queue
+
+    @property
+    def starts(self):
+        return map(int, self.cl_starts.get())
+
+    @starts.setter
+    def starts(self, starts):
+        self.cl_starts = to_device(self.queue,
+                                   np.asarray(starts).astype('int32'))
+        self.queue.flush()
+
+    @property
+    def lens(self):
+        return map(int, self.cl_lens.get())
+
+    @lens.setter
+    def lens(self, lens):
+        self.cl_lens = to_device(self.queue,
+                                   np.asarray(lens).astype('int32'))
+        self.queue.flush()
+
+    @property
+    def buf(self):
+        return self.cl_buf.get()
+
+    @buf.setter
+    def buf(self, buf):
+        self.cl_buf = to_device(self.queue,
+                                   np.asarray(buf).astype('int32'))
+        self.queue.flush()
 
     def shallow_copy(self):
         rval = self.__class__.__new__(self.__class__)
-        rval.buf = self.buf
-        rval.starts = self.starts
-        rval.lens = self.lens
+        rval.cl_starts = self.cl_starts
+        rval.cl_lens = self.cl_lens
+        rval.cl_buf = self.cl_buf
         rval.queue = self.queue
         return rval
 
-    def add_views(self, starts, lens):
-        starts = list(self.starts.get(self.queue))
-        lens = list(self.lens.get(self.queue))
-        rval = len(starts)
-        assert len(starts) == len(lens)
-        starts.extend(starts)
-        lens.extend(lens)
-        self.starts = to_device(self.queue, np.asarray(starts).astype('int32'))
-        self.lens = to_device(self.queue, np.asarray(lens).astype('int32'))
-        self.queue.flush()
-        return rval
-
     def __len__(self):
-        return self.starts.shape[0]
+        return self.cl_starts.shape[0]
 
     def __getitem__(self, item):
         #print 'OCL RaggedArray getitem horribly slow'
         # XXX only retrieve the bit we need
-        starts = self.starts.get(self.queue)
-        lens = self.lens.get(self.queue)
-        buf = self.buf.get(self.queue)
-        o = starts[item]
-        n = lens[item]
-        rval = buf[o: o + n]
-        if len(rval) != n:
-            raise ValueError('buf not long enough')
-        return rval
+        starts = self.cl_starts.get(self.queue)
+        lens = self.cl_lens.get(self.queue)
 
-    def __setitem__(self, item, val):
-        # XXX only set the bit we need
-        print 'OCL RaggedArray setitem horribly slow'
-        starts = self.starts.get(self.queue)
-        lens = self.lens.get(self.queue)
-        buf = self.buf.get(self.queue)
-        o = starts[item]
-        n = lens[item]
-        if len(val) != n:
-            raise ValueError('wrong len')
-        if len(buf[o: o + n]) != n:
-            raise ValueError('buf not long enough')
-        buf[o: o + n] = val
-        self.buf.set(buf, queue=self.queue)
+        if isinstance(item, (list, tuple)):
+            cl_starts = to_device(self.queue, starts[item].astype('int32'))
+            cl_lens = to_device(self.queue, lens[item].astype('int32'))
+            rval = self.__class__.__new__(self.__class__)
+            rval.cl_starts = cl_starts
+            rval.cl_lens = cl_lens
+            rval.cl_buf = self.cl_buf
+            rval.queue = self.queue
+            return rval
+        else:
+            buf = self.buf.get(self.queue)
+            o = starts[item]
+            n = lens[item]
+            rval = buf[o: o + n]
+            if len(rval) != n:
+                raise ValueError('buf not long enough')
+            return rval
 
 
 class Simulator(sim_npy.Simulator):
@@ -114,8 +128,8 @@ class Simulator(sim_npy.Simulator):
         dts = list(sorted(set([sp.dt for sp in signal_probes])))
         self.sig_probes_output = {}
         self.sig_probes_buflen = {}
-        self.sig_probes_Ms = self.RaggedArray([[1]])
-        self.sig_probes_Ns = self.RaggedArray([[1]])
+        self.sig_probes_Ms = [1]
+        self.sig_probes_Ns = [1]
         self.sig_probes_A = self.RaggedArray([[1.0]])
         self.sig_probes_A_js = {}
         self.sig_probes_X_js = {}
@@ -124,11 +138,12 @@ class Simulator(sim_npy.Simulator):
             period = int(dt // self.model.dt)
 
             # -- allocate storage for the probe output
-            sig_probes = self.RaggedArray([[0.0] for sp in sp_dt])
+            sig_probes = self.RaggedArray(
+                [[0.0] * sp.sig.n for sp in sp_dt])
             buflen = len(sig_probes.buf)
-            sig_probes.buf = to_device(self.queue, np.zeros(
-                    buflen * self.n_prealloc_probes,
-                    dtype=sig_probes.buf.dtype))
+            sig_probes.buf = np.zeros(
+                buflen * self.n_prealloc_probes,
+                dtype=sig_probes.buf.dtype)
             self.sig_probes_output[period] = sig_probes
             self.sig_probes_buflen[period] = buflen
             self.sig_probes_A_js[period] = self.RaggedArray([[0] for sp in sp_dt])
@@ -157,8 +172,8 @@ class Simulator(sim_npy.Simulator):
 
     def plan_copy_sigs(self):
         return plan_copy(self.queue,
-                         self.sigs.buf,
-                         self._sigs_copy.buf,
+                         self.sigs.cl_buf,
+                         self._sigs_copy.cl_buf,
                          tag='copy_sigs')
 
     def plan_filters(self):
@@ -181,25 +196,6 @@ class Simulator(sim_npy.Simulator):
             tag='filters'
             )
 
-    def plan_custom_transforms(self):
-        rval = []
-        for ct in self.model.custom_transforms:
-            # XXX Think of a better way...
-            ipos = self.sidx[ct.insig]
-            opos = self.sidx[ct.outsig]
-            text =  """ __kernel void fn(__global %s *x)
-                {
-                x[%i] = sin(x[%i]);
-                }
-                """ % (self.sigs.buf.ocldtype, opos, ipos)
-            print text
-            kern = cl.Program(self.queue.context, text).build().fn
-            kern.set_args(self.sigs.buf.data)
-            plan = Plan(
-                self.queue, kern, (1,), None, tag='custom sin transform')
-            rval.append(plan)
-        return rval
-
     def plan_encoders(self):
         return plan_ragged_gather_gemv(
             self.queue,
@@ -211,24 +207,88 @@ class Simulator(sim_npy.Simulator):
             X=self.sigs,
             X_js=self.enc_signals_js,
             beta=1.0,
-            Y_in=self.pop_jbias,
-            Y=self.pop_ic,
+            Y_in=self.pop_bias,
+            Y=self.pop_J,
             tag='encoders'
             )
 
-    def plan_populations(self):
-        return plan_lif(self.queue,
-            V=self.pop_voltage.buf,
-            RT=self.pop_rt.buf,
-            J=self.pop_ic.buf,
-            OV=self.pop_voltage.buf,
-            ORT=self.pop_rt.buf,
-            OS=self.pop_output.buf,
+    def plan_pop_lifs(self):
+        lif_start = self.pop_lif_start
+        lif_end = self.pop_lif_end
+
+        return plan_lif(
+            queue=self.queue,
+            V=self.pop_lif_voltage.cl_buf,
+            RT=self.pop_lif_reftime.cl_buf,
+            J=self.pop_lif_J.cl_buf[lif_start:lif_end],
+            OV=self.pop_lif_voltage.cl_buf,
+            ORT=self.pop_lif_reftime.cl_buf,
+            OS=self.pop_output.cl_buf[lif_start:lif_end],
             dt=self.model.dt,
-            tau_rc=0.02,
-            tau_ref=0.002,
+            tau_ref=self.pop_lif_rep.tau_ref,
+            tau_rc=self.pop_lif_rep.tau_rc,
+            upsample=self.pop_lif_rep.upsample,
             V_threshold=1.0,
-            upsample=2)
+            )
+
+    def plan_pop_directs(self):
+        self.pop_direct_copy_Ms = [1]
+        self.pop_direct_copy_Ns = [1]
+        self.pop_direct_copy_A = self.RaggedArray([[1]])
+        self.pop_direct_copy_A_js = self.RaggedArray(
+            [[0]] * len(self.pop_direct_idxs))
+        self.pop_direct_copy_X_js = self.RaggedArray(
+            [[di] for di in self.pop_direct_idxs])
+
+        self.pop_direct_copy_in = plan_ragged_gather_gemv(
+            self.queue,
+            Ms=self.pop_direct_copy_Ms,
+            Ns=self.pop_direct_copy_Ns,
+            alpha=1.0,
+            A=self.pop_direct_copy_A,
+            A_js=self.pop_direct_copy_A_js,
+            X=self.pop_J,
+            X_js=self.pop_direct_copy_X_js,
+            beta=0.0,
+            Y=self.pop_direct_ins,
+            tag='pop_direct_copy_in')
+
+        self.pop_direct_outs_js = self.RaggedArray(
+            [[ii] for ii, di in enumerate(self.pop_direct_idxs)])
+        self.pop_direct_output = self.pop_output[self.pop_direct_idxs]
+
+        self.pop_direct_copy_out = plan_ragged_gather_gemv(
+            self.queue,
+            Ms=self.pop_direct_copy_Ms,
+            Ns=self.pop_direct_copy_Ns,
+            alpha=1.0,
+            A=self.pop_direct_copy_A,
+            A_js=self.pop_direct_copy_A_js,
+            X=self.pop_direct_outs,
+            X_js=self.pop_direct_outs_js,
+            beta=0.0,
+            Y=self.pop_direct_output,
+            tag='pop_direct_copy_out')
+
+    def do_pop_directs(self):
+        if self.pop_direct_idxs:
+            self.pop_direct_copy_in()
+            self.pop_direct_ins_npy.buf[:] = self.pop_direct_ins.buf
+
+            for ii, di in enumerate(self.pop_direct_idxs):
+                nl = self.nonlinearities[di]
+                indata = self.pop_direct_ins_npy[ii]
+                self.pop_direct_outs_npy[ii][...] = nl.fn(indata)
+            print self.queue
+            print self.pop_direct_outs_npy.buf
+            print self.pop_direct_outs.cl_buf.data
+            print self.pop_direct_outs_npy
+            cl.enqueue_copy(self.queue,
+                            self.pop_direct_outs.cl_buf.data,
+                            self.pop_direct_outs_npy.buf.data,
+                           )
+                           # self.pop_direct_outs_npy.buf)
+            self.pop_direct_copy_out.enqueue()
 
     def plan_decoders(self):
         return plan_ragged_gather_gemv(
@@ -268,7 +328,7 @@ class Simulator(sim_npy.Simulator):
                 )
             advance_plan = plan_inc(
                 self.queue,
-                probe_out.starts,
+                probe_out.cl_starts,
                 amt=buflen,
                 tag='probe_inc:%i' % period,
                 )
@@ -277,130 +337,54 @@ class Simulator(sim_npy.Simulator):
 
     def plan_all(self):
         # see sim_npy for rationale of this ordering
-        tick_plans = [
+        self.tick_plans = [
             self.plan_encoders(),
-            self.plan_populations(),
+            self.plan_pop_lifs(),
             self.plan_decoders(),
             self.plan_copy_sigs(),
             self.plan_filters(),
             self.plan_transforms(),
         ]
-        self.tick_plans = tick_plans
-        tick_plans.extend(self.plan_custom_transforms())
+        self.plan_pop_directs()
         self.probe_plans = self.plan_probes()
-        periods = [1] + self.probe_plans.keys()
-        def gcd(a, b):
-            while b:
-                a, b = b, a % b
-            return a
-        def lcm(a, b):
-            return a * b // gcd(a, b)
-        period_len = reduce(lcm, periods)
-        print 'creating a command sequence for', period_len,
-        print 'iterations at once: periods =', periods
-        self.all_plans = []
-        self.all_plans_period_len = period_len
-        self.all_plans_start = []
-        self.all_plans_stop = []
-        # XXX figure out when probe pointers go off the end
-        for ii in xrange(period_len):
-            self.all_plans_start.append(len(self.all_plans))
-            self.all_plans.extend(tick_plans)
-            for period in self.probe_plans:
-                if ii % period == 0:
-                    self.all_plans.extend(self.probe_plans[period])
-            self.all_plans_stop.append(len(self.all_plans))
-        self.all_plans_prog = Prog(self.all_plans)
+        self._iter = self.run_iter()
+        assert 0 == self._iter.send(None)
+
+    def run_iter(self):
+        tick_plans = Prog(self.tick_plans)
+        by_period = dict((k, Prog(v))
+                         for (k, v) in self.probe_plans.items())
+        while True:
+            N = yield self.sim_step
+            while N:
+                # -- encoders, decoders, filters, transforms
+                tick_plans.enqueue()
+
+                # -- direct mode stuff
+                self.do_pop_directs()
+
+                # -- probes
+                for period in by_period:
+                    if self.sim_step % period == 0:
+                        by_period[period].enqueue()
+                N -= 1
+                self.sim_step += 1
 
     def step(self):
-        try:
-            self.all_plans
-        except AttributeError:
-            self.plan_all()
-        period_pos = self.sim_step % self.all_plans_period_len
-        start = self.all_plans_start[period_pos]
-        stop = self.all_plans_stop[period_pos]
-        plans = self.all_plans[start:stop]
-        for p in plans:
-            p.enqueue()
+        return self.run_steps(1)
+
+    def run_steps(self, N, verbose=False):
+        rval = self._iter.send(N)
         self.queue.finish()
-        self.sim_step += 1
+        return rval
 
-    def run_steps(self, N):
-        try:
-            self.all_plans
-        except AttributeError:
-            self.plan_all()
-        plen = self.all_plans_period_len
-        period_pos = self.sim_step % plen
-        if period_pos:
-            steps_left = min(self.all_plans_period_len - period_pos, N)
-            period_goal = period_pos + steps_left
-            start = self.all_plans_start[period_pos]
-            stop = self.all_plans_stop[period_goal - 1]
-            plans = self.all_plans[start:stop]
-            if self.profiling:
-                for p in plans:
-                    p(profiling=True)
-            else:
-                for p in plans:
-                    p.enqueue()
-            N -= steps_left
-            self.sim_step += steps_left
-        t0 = time.time()
-        full_cycles = N // plen
+        # -- TODO: refresh this code...
         if self.profiling:
-            for ii in xrange(full_cycles):
-                for p in self.all_plans:
-                    p(profiling=True)
-            #for nn in xrange(N):
-            #    for p in self.tick_plans:
-            #        p(self.profiling)
-            #for p in self.tick_plans:
-            #    print p.ctime / p.n_calls, p
+            times = [(p.ctime, p) for p in set(self.all_plans)]
+            for (ctime, p) in reversed(sorted(times)):
+                n_calls = max(1, p.n_calls)
+                print ctime, p.n_calls, (ctime / n_calls), p.atime, p.btime, p
         else:
-            self.all_plans_prog.enqueue_n_times(full_cycles)
-
-        N -= full_cycles * plen
-        self.sim_step += full_cycles * plen
-        t1 = time.time()
-        print "A", (t1 - t0)
-        if N:
-            return self.run_steps(N)
-        else:
-
-            if self.profiling:
-                times = [(p.ctime, p) for p in set(self.all_plans)]
-                for (ctime, p) in reversed(sorted(times)):
-                    n_calls = max(1, p.n_calls)
-                    print ctime, p.n_calls, (ctime / n_calls), p.atime, p.btime, p
-            else:
-                self.queue.finish()
-
-    def signal(self, sig):
-        probes = [sp for sp in self.model.signal_probes if sp.sig == sig]
-        if len(probes) == 0:
-            raise KeyError()
-        elif len(probes) > 1:
-            raise KeyError()
-        else:
-            return self.signal_probe_output(probes[0])
-
-    def signal_probe_output(self, probe):
-        period = int(probe.dt // self.model.dt)
-        last_elem = int(np.ceil(self.sim_step / float(period)))
-
-        # -- figure out which signal it is among the ones with the same dt
-        sps_dt = [sp for sp in self.model.signal_probes if sp.dt == probe.dt]
-        probe_idx = sps_dt.index(probe)
-        all_rows = self.sig_probes_output[period].buf.get()
-        starts = self.sig_probes_output[period].starts.get()
-        lens = self.sig_probes_output[period].lens.get()
-
-        all_rows = all_rows.reshape((-1, self.sig_probes_buflen[period]))
-        start = starts[probe_idx] % self.sig_probes_buflen[period]
-        olen = lens[probe_idx]
-        return all_rows[:last_elem, start:start + olen]
-
+            self.queue.finish()
 
 

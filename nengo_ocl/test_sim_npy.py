@@ -1,11 +1,13 @@
+from nengo_ocl import sim_npy
+import nengo.test.test_old_api
 
-from sim_npy import Simulator
-import nengo.test.test_simulator as nengo_tsim
+class UseSimNpy(object):
+    def Simulator(self, *args, **kwargs):
+        rval = sim_npy.Simulator(*args, **kwargs)
+        rval.alloc_all()
+        return rval
 
-def test_signal_indexing_1():
-    nengo_tsim.test_signal_indexing_1(sim_cls=Simulator)
 
-
-def test_simple_direct_mode():
-    nengo_tsim.test_simple_direct_mode(sim_cls=Simulator)
+class TestOldAPI(UseSimNpy, nengo.test.test_old_api.TestOldAPI):
+    show = False
 
