@@ -419,10 +419,11 @@ class Simulator(object):
             [np.zeros(pops[di].n_in) for di in direct_idxs])
         self.pop_direct_outs = self.RaggedArray(
             [np.zeros(pops[di].n_out) for di in direct_idxs])
+        dtype = self.pop_direct_ins.buf.dtype
         self.pop_direct_ins_npy = RaggedArray(
-            [np.zeros(pops[di].n_in) for di in direct_idxs])
+            [np.zeros(pops[di].n_in, dtype=dtype) for di in direct_idxs])
         self.pop_direct_outs_npy = RaggedArray(
-            [np.zeros(pops[di].n_out) for di in direct_idxs])
+            [np.zeros(pops[di].n_out, dtype=dtype) for di in direct_idxs])
 
 
     def alloc_transforms(self):
@@ -579,7 +580,6 @@ class Simulator(object):
             popidx = self.pidx[nl]
             self.pop_output[popidx][...] = nl.fn(self.pop_J[popidx])
 
-
     def do_decoders(self):
         ragged_gather_gemv(
             Ms=self.dec_Ms,
@@ -592,7 +592,6 @@ class Simulator(object):
             beta=0.0,
             Y=self.sigs_ic,
             )
-
 
     def do_probes(self):
         for period in self.sig_probes_output:

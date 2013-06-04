@@ -279,13 +279,9 @@ class Simulator(sim_npy.Simulator):
                 nl = self.nonlinearities[di]
                 indata = self.pop_direct_ins_npy[ii]
                 self.pop_direct_outs_npy[ii][...] = nl.fn(indata)
-            print self.queue
-            print self.pop_direct_outs_npy.buf
-            print self.pop_direct_outs.cl_buf.data
-            print self.pop_direct_outs_npy
             cl.enqueue_copy(self.queue,
                             self.pop_direct_outs.cl_buf.data,
-                            self.pop_direct_outs_npy.buf.data,
+                            self.pop_direct_outs_npy.buf,
                            )
                            # self.pop_direct_outs_npy.buf)
             self.pop_direct_copy_out.enqueue()

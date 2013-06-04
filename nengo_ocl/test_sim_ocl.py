@@ -15,5 +15,5 @@ class UseSimOcl(object):
 
 
 class TestOldAPI(UseSimOcl, nengo.test.test_old_api.TestOldAPI):
-    show = True
+    show = False
 
