@@ -119,7 +119,7 @@ def raw_ragged_gather_gemv(BB,
 
 def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
                        beta, Y, Y_in=None,
-                       use_raw_fn=True,
+                       use_raw_fn=False,
                       ):
     """
     """
@@ -348,17 +348,22 @@ class Simulator(object):
         return RaggedArray(*args, **kwargs)
 
     def alloc_signals(self):
-        self.sigs_ic = self.RaggedArray([[0.0] for s in self.model.signals])
+        self.signals_tmp = self.RaggedArray(
+            [np.zeros(s.size) for s in self.model.signals])
+        self.signals = self.RaggedArray(
+            [np.zeros(s.size) for s in self.model.signals])
+        self.signals_copy = self.RaggedArray(
+            [np.zeros(s.size) for s in self.model.signals])
 
-        self.sigs = self.RaggedArray([[getattr(s, 'value', 0.0)]
-            for s in self.model.signals])
+        for ii, sig in enumerate(self.model.signals):
+            if hasattr(sig, 'value'):
+                self.signals[ii][...] = sig.value
+                self.signals_tmp[ii][...] = sig.value
+                self.signals_copy[ii][...] = sig.value
 
-        self._sigs_copy = self.RaggedArray([[getattr(s, 'value', 0.0)]
-            for s in self.model.signals])
-
-    def alloc_signal_probes(self):
-        signal_probes = self.model.signal_probes
-        dts = list(sorted(set([sp.dt for sp in signal_probes])))
+    def alloc_probes(self):
+        probes = self.model.probes
+        dts = list(sorted(set([probe.dt for probe in probes])))
         self.sig_probes_output = {}
         self.sig_probes_buflen = {}
         self.sig_probes_Ms = self.RaggedArray([[1]])
@@ -367,7 +372,7 @@ class Simulator(object):
         self.sig_probes_A_js = {}
         self.sig_probes_X_js = {}
         for dt in dts:
-            sp_dt = [sp for sp in signal_probes if sp.dt == dt]
+            sp_dt = [probe for probe in probes if probe.dt == dt]
             period = int(dt // self.model.dt)
 
             # -- allocate storage for the probe output
@@ -378,22 +383,23 @@ class Simulator(object):
                     dtype=sig_probes.buf.dtype)
             self.sig_probes_output[period] = sig_probes
             self.sig_probes_buflen[period] = buflen
-            self.sig_probes_A_js[period] = self.RaggedArray([[0] for sp in sp_dt])
+            self.sig_probes_A_js[period] = self.RaggedArray(
+                [[0] for sp in sp_dt])
             self.sig_probes_X_js[period] = self.RaggedArray(
                 [[self.sidx[sp.sig]] for sp in sp_dt])
 
     def alloc_populations(self):
-        pops = self.nonlinearities
-        self.pop_J = self.RaggedArray(
-            [np.zeros(p.n_in) for p in pops])
-        self.pop_bias = self.RaggedArray(
-            [getattr(p, 'bias', np.zeros(p.n_in)) for p in pops])
-        self.pop_output = self.RaggedArray(
-            [np.zeros(p.n_out) for p in pops])
+        nls = self.nonlinearities
+        pop_J_idxs = [self.sidx[nl.input_signal] for nl in nls]
+        pop_bias_idxs = [self.sidx[nl.bias_signal] for nl in nls]
+        pop_output_idxs = [self.sidx[nl.output_signal] for nl in nls]
+        self.pop_J = self.signals[pop_J_idxs]
+        self.pop_bias = self.signals[pop_bias_idxs]
+        self.pop_output = self.signals_tmp[pop_output_idxs]
 
         lif_idxs = []
         direct_idxs = []
-        for i, p in enumerate(pops):
+        for i, p in enumerate(nls):
             if islif(p):
                 lif_idxs.append(i)
             else:
@@ -405,36 +411,35 @@ class Simulator(object):
         if lif_idxs:
             # sorting in the constructor was supposed to ensure this:
             assert lif_idxs == range(lif_idxs[0], lif_idxs[0] + len(lif_idxs))
-            if lif_idxs and (pops[lif_idxs[0]] != pops[lif_idxs[-1]]):
+            if lif_idxs and (nls[lif_idxs[0]] != nls[lif_idxs[-1]]):
                 raise NotImplementedError('Non-homogeneous lif population')
 
-            self.pop_lif_rep = pops[lif_idxs[0]]
+            self.pop_lif_rep = nls[lif_idxs[0]]
             self.pop_lif_J = self.pop_J[lif_idxs]
             self.pop_lif_output = self.pop_output[lif_idxs]
             self.pop_lif_start = self.pop_lif_J.starts[0]
             lif_len = sum(self.pop_lif_J.lens)
             self.pop_lif_end = self.pop_lif_start + lif_len
             self.pop_lif_voltage = self.RaggedArray(
-                [np.zeros(pops[idx].n_neurons) for idx in lif_idxs])
+                [np.zeros(nls[idx].n_neurons) for idx in lif_idxs])
             self.pop_lif_reftime = self.RaggedArray(
-                [np.zeros(pops[idx].n_neurons) for idx in lif_idxs])
+                [np.zeros(nls[idx].n_neurons) for idx in lif_idxs])
 
-        self.pop_direct_ins = self.RaggedArray(
-            [np.zeros(pops[di].n_in) for di in direct_idxs])
-        self.pop_direct_outs = self.RaggedArray(
-            [np.zeros(pops[di].n_out) for di in direct_idxs])
-        dtype = self.pop_direct_ins.buf.dtype
-        self.pop_direct_ins_npy = RaggedArray(
-            [np.zeros(pops[di].n_in, dtype=dtype) for di in direct_idxs])
-        self.pop_direct_outs_npy = RaggedArray(
-            [np.zeros(pops[di].n_out, dtype=dtype) for di in direct_idxs])
-
+        if direct_idxs:
+            self.pop_direct_ins = self.pop_J[direct_idxs]
+            self.pop_direct_outs = self.pop_output[direct_idxs]
+            dtype = self.pop_direct_ins.buf.dtype
+            # N.B. This uses numpy-based RaggedArray specifically.
+            self.pop_direct_ins_npy = RaggedArray(
+                [np.zeros(nls[di].n_in, dtype=dtype) for di in direct_idxs])
+            self.pop_direct_outs_npy = RaggedArray(
+                [np.zeros(nls[di].n_out, dtype=dtype) for di in direct_idxs])
 
     def alloc_transforms(self):
         stuff = alloc_transform_helper(
                 self.model.signals,
                 self.model.transforms,
-                self.sigs_ic,
+                self.signals_tmp,
                 self.sidx,
                 self.RaggedArray,
                 (lambda f: f.outsig),
@@ -452,7 +457,7 @@ class Simulator(object):
         stuff = alloc_transform_helper(
                 self.model.signals,
                 self.model.filters,
-                self._sigs_copy,
+                self.signals_copy,
                 self.sidx,
                 self.RaggedArray,
                 (lambda f: f.newsig),
@@ -499,13 +504,13 @@ class Simulator(object):
 
         # -- and which corresponding population does it decode
         self.dec_pops_js = self.RaggedArray([
-            [self.pidx[dec.pop]
+            [self.sidx[dec.pop.output_signal]
                 for dec in decoders if dec.sig == sig]
             for sig in self.model.signals])
 
     def alloc_all(self):
         self.alloc_signals()
-        self.alloc_signal_probes()
+        self.alloc_probes()
         self.alloc_populations()
         self.alloc_transforms()
         self.alloc_filters()
@@ -527,7 +532,7 @@ class Simulator(object):
             X=self.tf_signals,
             X_js=self.tf_signals_js,
             beta=1.0,
-            Y=self.sigs,
+            Y=self.signals,
             )
 
     def do_filters(self):
@@ -536,7 +541,7 @@ class Simulator(object):
         and write them back to `sigs`
         """
         # ADD linear combinations of signals to some signals
-        self._sigs_copy.buf[:] = self.sigs.buf
+        self.signals_copy.buf[:] = self.signals.buf
         ragged_gather_gemv(
             Ms=self.f_Ms,
             Ns=self.f_Ns,
@@ -546,7 +551,7 @@ class Simulator(object):
             X=self.f_signals,
             X_js=self.f_signals_js,
             beta=0.0,
-            Y=self.sigs,
+            Y=self.signals,
             )
 
     def do_encoders(self):
@@ -556,7 +561,7 @@ class Simulator(object):
             alpha=1.0,
             A=self.enc_weights,
             A_js=self.enc_weights_js,
-            X=self.sigs,
+            X=self.signals,
             X_js=self.enc_signals_js,
             beta=1.0,
             Y_in=self.pop_bias,
@@ -582,9 +587,11 @@ class Simulator(object):
         for ii in self.pop_direct_idxs:
             nl = self.nonlinearities[ii]
             popidx = self.pidx[nl]
+            print 'do_populations: pop_J', self.pop_J[popidx]
             self.pop_output[popidx][...] = nl.fn(self.pop_J[popidx])
 
     def do_decoders(self):
+        print 'do_decoders: pop_output.buf', self.pop_output.buf
         ragged_gather_gemv(
             Ms=self.dec_Ms,
             Ns=self.dec_Ns,
@@ -594,8 +601,9 @@ class Simulator(object):
             X=self.pop_output,
             X_js=self.dec_pops_js,
             beta=0.0,
-            Y=self.sigs_ic,
+            Y=self.signals_tmp,
             )
+        print 'sig tmp', self.signals_tmp.buf
 
     def do_probes(self):
         for period in self.sig_probes_output:
@@ -616,7 +624,7 @@ class Simulator(object):
                         alpha=1.0,
                         A=self.sig_probes_A,
                         A_js=A_js,
-                        X=self.sigs,
+                        X=self.signals,
                         X_js=X_js,
                         beta=0.0,
                         Y=probe_out,
@@ -642,7 +650,7 @@ class Simulator(object):
             self.step()
 
     def signal(self, sig):
-        probes = [sp for sp in self.model.signal_probes if sp.sig == sig]
+        probes = [sp for sp in self.model.probes if sp.sig == sig]
         if len(probes) == 0:
             raise KeyError()
         elif len(probes) > 1:
@@ -650,12 +658,12 @@ class Simulator(object):
         else:
             return self.signal_probe_output(probes[0])
 
-    def signal_probe_output(self, probe):
+    def probe_data(self, probe):
         period = int(probe.dt // self.model.dt)
         last_elem = int(math.ceil(self.sim_step / float(period)))
 
         # -- figure out which signal it is among the ones with the same dt
-        sps_dt = [sp for sp in self.model.signal_probes if sp.dt == probe.dt]
+        sps_dt = [sp for sp in self.model.probes if sp.dt == probe.dt]
         probe_idx = sps_dt.index(probe)
         all_rows = self.sig_probes_output[period].buf.reshape(
                 (-1, self.sig_probes_buflen[period]))
