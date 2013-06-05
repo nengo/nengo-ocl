@@ -2,45 +2,101 @@
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
 from collections import defaultdict
+import StringIO
 import math
 import numpy as np
 
 from nengo.nonlinear import LIF, LIFRate
+
+def isview(obj):
+    return obj.base is not obj
+def shape0(obj):
+    try:
+        return obj.shape[0]
+    except IndexError:
+        return 1
+def shape1(obj):
+    try:
+        return obj.shape[1]
+    except IndexError:
+        return 1
 
 
 class RaggedArray(object):
     # a linear buffer that is partitioned into
     # sections of various lengths.
     # 
-    def __init__(self, listoflists):
+    @property
+    def dtype(self):
+        return self.buf.dtype
 
+    def __init__(self, listofarrays, names=None):
         starts = []
-        lens = []
+        shape0s = []
+        shape1s = []
+        ldas = []
         buf = []
 
-        for l in listoflists:
+        for l in listofarrays:
+            obj = np.asarray(l)
             starts.append(len(buf))
-            lens.append(len(l))
-            buf.extend(l)
+            shape0s.append(shape0(obj))
+            shape1s.append(shape1(obj))
+            if obj.ndim == 0:
+                ldas.append(0)
+            elif obj.ndim == 1:
+                ldas.append(obj.shape[0])
+            elif obj.ndim == 2:
+                # -- N.B. the original indexing was
+                #    based on ROW-MAJOR storage, and
+                #    this simulator uses COL-MAJOR storage
+                ldas.append(obj.shape[0])
+            else:
+                raise NotImplementedError()
+            buf.extend(obj.ravel('F'))
 
         self.starts = starts
-        self.lens = lens
+        self.shape0s = shape0s
+        self.shape1s = shape1s
+        self.ldas = ldas
         self.buf = np.asarray(buf)
+        if names is None:
+            self.names = [''] * len(self)
+        else:
+            assert len(names) == len(ldas)
+            self.names = names
+
+    def __str__(self):
+        sio = StringIO.StringIO()
+        namelen = max(len(n) for n in self.names)
+        fmt = '%%%is' % namelen
+        for ii, nn in enumerate(self.names):
+            print >> sio, (fmt % nn), self[ii]
+        return sio.getvalue()
 
     def shallow_copy(self):
         rval = self.__class__.__new__(self.__class__)
         rval.starts = self.starts
-        rval.lens = self.lens
+        rval.shape0s = self.shape0s
+        rval.shape1s = self.shape1s
+        rval.ldas = self.ldas
         rval.buf = self.buf
+        rval.names = self.names
         return rval
 
-    def add_views(self, starts, lens):
+    def add_views(self, starts, shape0s, shape1s, ldas, names=None):
         #assert start >= 0
         #assert start + length <= len(self.buf)
         # -- creates copies, same semantics
         #    as OCL version
         self.starts = self.starts + starts
-        self.lens = self.lens + lens
+        self.shape0s = self.shape0s + shape0s
+        self.shape1s = self.shape1s + shape1s
+        self.ldas = self.ldas + ldas
+        if names:
+            self.names = self.names + names
+        else:
+            self.names = self.names + [''] * len(starts)
 
     def __len__(self):
         return len(self.starts)
@@ -49,33 +105,81 @@ class RaggedArray(object):
         if isinstance(item, (list, tuple)):
             rval = self.__class__.__new__(self.__class__)
             rval.starts = [self.starts[i] for i in item]
-            rval.lens = [self.lens[i] for i in item]
+            rval.shape0s = [self.shape0s[i] for i in item]
+            rval.shape1s = [self.shape1s[i] for i in item]
+            rval.ldas = [self.ldas[i] for i in item]
             rval.buf = self.buf
+            rval.names = [self.names[i] for i in item]
             return rval
         else:
-            o = self.starts[item]
-            n = self.lens[item]
-            rval = self.buf[o: o + n]
-            if len(rval) != n:
-                raise ValueError('buf not long enough')
-            return rval
+            itemsize = self.dtype.itemsize
+            byteoffset = itemsize * self.starts[item]
+            bytestrides = (itemsize, itemsize * self.ldas[item])
+            shape = self.shape0s[item], self.shape1s[item]
+            if shape[0] * shape[1] == 0:
+                return []
+            try:
+                view = np.ndarray(
+                    shape=shape,
+                    dtype=self.dtype,
+                    buffer=self.buf.data,
+                    offset=byteoffset,
+                    strides=bytestrides)
+            except:
+                print self.names[item]
+                print shape
+                print self.dtype
+                print self.buf.size
+                print byteoffset
+                print bytestrides
+                raise
+            return view
+
+    def view1d(self, idxs):
+        start = idxs[0]
+        if idxs != range(start, start + len(idxs)):
+            raise NotImplementedError('non-contiguous indexes')
+        total_len = 0
+        start_offset = self.starts[start]
+        stop_offset = (self.starts[idxs[-1]]
+            + self.shape0s[idxs[-1]] * self.shape1s[idxs[-1]])
+        for ii in idxs:
+            if self.ldas[ii] != self.shape0s[ii]:
+                raise NotImplementedError('non-contiguous element',
+                        (ii, self.ldas[ii], self.shape0s[ii],
+                            self.shape1s[ii]))
+            if ii != idxs[-1]:
+                if self.starts[ii + 1] != (self.starts[ii] +
+                        self.shape0s[ii] * self.shape1s[ii]):
+                    raise NotImplementedError('gap between elements', ii)
+        itemsize = self.dtype.itemsize
+        byteoffset = itemsize * start_offset
+        shape = (stop_offset - start_offset), 1
+        bytestrides = (itemsize, itemsize * shape[0])
+        try:
+            view = np.ndarray(
+                shape=shape,
+                dtype=self.dtype,
+                buffer=self.buf.data,
+                offset=byteoffset,
+                strides=bytestrides)
+        except:
+            print shape
+            print self.dtype
+            print self.buf.size
+            print byteoffset
+            print bytestrides
+
+            raise
+        return view
+
 
     def __setitem__(self, item, val):
         try:
             item = int(item)
         except TypeError:
             raise NotImplementedError()
-        o = self.starts[item]
-        n = self.lens[item]
-        if len(val) != n:
-            raise ValueError('wrong len')
-        rval = self.buf[o: o + n]
-        if len(rval) != n:
-            raise ValueError('buf not long enough')
-        # -- N.B. this is written for re-use by sim_ocl
-        buf = self.buf
-        buf[o: o + n] = val
-        self.buf = buf
+        self[item][...] = val
 
 
 def raw_ragged_gather_gemv(BB,
@@ -123,6 +227,8 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
                       ):
     """
     """
+    del Ms
+    del Ns
     try:
         float(alpha)
         alpha = [alpha] * len(Y)
@@ -176,20 +282,16 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
 
             x_js_i = X_js[i] # -- ragged getitem
             A_js_i = A_js[i] # -- ragged getitem
-
+            assert len(x_js_i) == len(A_js_i)
             for xi, ai in zip(x_js_i, A_js_i):
-                x_ij = X[xi] # -- ragged getitem
-                M_i = Ms[ai]
-                N_i = Ns[ai]
-                assert N_i == len(x_ij)
-                A_ij = A[ai].reshape(N_i, M_i) # -- ragged getitem
-                #print xi, x_ij, A_ij
+                x_ij = X[xi]  # -- ragged getitem
+                A_ij = A[ai]  # -- ragged getitem
                 try:
-                    y_i += alpha_i * np.dot(x_ij, A_ij.reshape(N_i, M_i))
+                    y_i += alpha_i * np.dot(A_ij, x_ij)
                 except:
                     print i, xi, ai, A_ij, x_ij
+                    print y_i.shape, x_ij.shape, A_ij.shape
                     raise
-
             Y[i] = y_i
 
 
@@ -217,7 +319,7 @@ def lif_step(dt, J, voltage, refractory_time, spiked, tau_ref, tau_rc,
 
     # determine which neurons spike
     # if v > 1 set spiked = 1, else 0
-    spiked[:] = (v > 1) * 1.0
+    spiked[...] = (v > 1) * 1.0
 
     old = np.seterr(all='ignore')
     try:
@@ -240,85 +342,6 @@ def lif_step(dt, J, voltage, refractory_time, spiked, tau_ref, tau_rc,
     refractory_time[:] = new_refractory_time
 
 
-def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
-        outsig_fn, insig_fn,
-        ):
-    # -- this is a function that is used to construct the
-    #    so-called transforms and filters, which map from signals to signals.
-
-    tidx = idxs(transforms)
-    tf_by_outsig = defaultdict(list)
-    for tf in transforms:
-        tf_by_outsig[outsig_fn(tf)].append(tf)
-
-    # N.B. the optimization below may not be valid
-    # when alpha is not a scalar multiplier
-    tf_weights = RaggedArray(
-        [[tf.alpha] for tf in transforms])
-    tf_Ns = [1] * len(transforms)
-    tf_Ms = [1] * len(transforms)
-
-    tf_sigs = sigs.shallow_copy()
-    del sigs
-
-    # -- which transform(s) does each signal use
-    tf_weights_js = [[tidx[tf] for tf in tf_by_outsig[sig]]
-        for sig in signals]
-
-    # -- which corresponding(s) signal is transformed
-    tf_signals_js = [[sidx[insig_fn(tf)] for tf in tf_by_outsig[sig]]
-        for sig in signals]
-
-    # -- Optimization:
-    #    If any output signal is the sum of 
-    #    consecutive weights with consecutive signals
-    #    then turn that into *one* dot product
-    #    of a new longer weight vector with a new
-    #    longer signal vector.
-    #    TODO: still do something like this for a 
-    #    *part* of the wjs/sjs if possible
-    #    TODO: sort the sjs or wjs to canonicalize things
-    if 0:
-        wstarts = []
-        wlens = []
-        sstarts = []
-        slens = []
-        for ii, (wjs, sjs) in enumerate(
-                zip(tf_weights_js, tf_signals_js)):
-            assert len(wjs) == len(sjs)
-            K = len(wjs)
-            if len(wjs) <= 1:
-                continue
-            if wjs != range(wjs[0], wjs[0] + len(wjs)):
-                continue
-            if sjs != range(sjs[0], sjs[0] + len(sjs)):
-                continue
-            # -- precondition satisfied
-            # XXX length should be the sum of the lenghts
-            #     of the tf_weights[i] for i in wjs
-            wstarts.append(int(tf_weights.starts[wjs[0]]))
-            wlens.append(K)
-            new_w_j = len(tf_weights_js) + len(wstarts) - 1
-            tf_Ns.append(K)
-            tf_Ms.append(1)
-            sstarts.append(int(tf_sigs.starts[sjs[0]]))
-            slens.append(K)
-            new_s_j = len(tf_signals_js) + len(sstarts) - 1
-            tf_weights_js[ii] = [new_w_j]
-            tf_signals_js[ii] = [new_s_j]
-
-        tf_weights.add_views(wstarts, wlens)
-        tf_sigs.add_views(sstarts, slens)
-
-    if 0:
-        for ii, (wjs, sjs) in enumerate(
-                zip(tf_weights_js, tf_signals_js)):
-            if wjs:
-                print wjs, sjs
-
-    return locals()
-
-
 def idxs(seq, offset):
     rval = dict((s, i + offset) for (i, s) in enumerate(seq))
     return rval, offset + len(rval)
@@ -335,6 +358,8 @@ def islifrate(obj):
 class Simulator(object):
     def __init__(self, model, n_prealloc_probes=1000):
         self.model = model
+        self._one = model.signal(n=1, value=1.0)
+        self._one.name = 'Simulator.one'
         self.nonlinearities = sorted(self.model.nonlinearities)
 
         self.bias_signals = [nl.bias_signal for nl in self.nonlinearities]
@@ -355,13 +380,18 @@ class Simulator(object):
                 if sig not in all_signals_set]
         self.all_signals.extend(self.vector_signals)
 
+        self.all_signals_set = set(self.all_signals)
+
+        assert len(self.all_signals_set) == len(self.all_signals)
+
         self.all_signal_idxs, offset = idxs(self.all_signals, 0)
         assert offset == len(model.signals)
 
-        # -- append a second version of vector_signals
+        # -- append duplicate vector_signals
         #    which are necessary for transforms
         self.tmp_vector_idxs, offset = idxs(self.vector_signals, offset)
         self.all_signals.extend(self.vector_signals)
+
 
         self.n_prealloc_probes = n_prealloc_probes
         self.sim_step = 0
@@ -370,39 +400,91 @@ class Simulator(object):
         return RaggedArray(*args, **kwargs)
 
     def alloc_signals(self):
+        zeros = np.zeros
         self.all_data_A = self.RaggedArray(
-            [np.zeros(s.size) + getattr(s, 'value', 0)
-                for s in self.all_signals])
+            [zeros(s.shape) + getattr(s, 'value', zeros(s.shape))
+                for s in self.all_signals],
+            names=[getattr(s, 'name', '') for s in self.all_signals])
         self.all_data_B = self.RaggedArray(
-            [np.zeros(s.size) + getattr(s, 'value', 0)
-                for s in self.all_signals])
+            [zeros(s.shape) + getattr(s, 'value', zeros(s.shape))
+                for s in self.all_signals],
+            names=[getattr(s, 'name', '') for s in self.all_signals])
+
+        # -- by default all of the signals are
+        #    column vector "views" of themselves
+        starts = []
+        shape0s = []
+        shape1s = []
+        ldas = []
+        names = []
+        orig_len = len(self.all_signals)
+        base_starts = self.all_data_A.starts
+
+        # -- add signalviews that arise in filters, transforms,
+        #    encoders, and decoders.
+        def _add_view(obj, sidx):
+            if not isview(obj):
+                return
+            idx = sidx[obj.base]
+            starts.append(base_starts[idx] + obj.offset)
+            shape0s.append(shape0(obj))
+            shape1s.append(shape1(obj))
+            if obj.ndim == 0:
+                ldas.append(0)
+            elif obj.ndim == 1:
+                ldas.append(obj.shape[0])
+            elif obj.ndim == 2:
+                # -- N.B. the original indexing was
+                #    based on ROW-MAJOR storage, and
+                #    this simulator uses COL-MAJOR storage
+                ldas.append(obj.elemstrides[0])
+            else:
+                raise NotImplementedError()
+            names.append(getattr(obj, 'name', ''))
+
+            rval = len(names) - 1 + orig_len
+            sidx[obj] = rval
+            return rval
+
+        def add_view(obj):
+            _add_view(obj, self.all_signal_idxs)
+            if obj.base in self.tmp_vector_idxs:
+                _add_view(obj, self.tmp_vector_idxs)
+
+        for filt in self.model.filters:
+            add_view(filt.alpha_signal)
+            add_view(filt.oldsig)
+            add_view(filt.newsig)
+
+        for tf in self.model.transforms:
+            add_view(tf.alpha_signal)
+            add_view(tf.insig)
+            add_view(tf.outsig)
+
+        for enc in self.model.encoders:
+            #add_view(tf.weights) # TODO for learning
+            add_view(enc.sig)
+            add_view(enc.pop.input_signal)
+
+        for dec in self.model.decoders:
+            #add_view(tf.weights) # TODO for learning
+            add_view(dec.sig)
+            add_view(dec.pop.input_signal)
+
+        self.all_data_A.add_views(starts, shape0s, shape1s, ldas, names)
+        self.all_data_B.add_views(starts, shape0s, shape1s, ldas, names)
 
     def alloc_probes(self):
         probes = self.model.probes
         dts = list(sorted(set([probe.dt for probe in probes])))
-        self.sig_probes_output = {}
-        self.sig_probes_buflen = {}
-        self.sig_probes_Ms = self.RaggedArray([[1]])
-        self.sig_probes_Ns = self.RaggedArray([[1]])
-        self.sig_probes_A = self.RaggedArray([[1.0]])
-        self.sig_probes_A_js = {}
-        self.sig_probes_X_js = {}
+        self.probes_by_period = {}
+        self.probe_output = {}
         for dt in dts:
             sp_dt = [probe for probe in probes if probe.dt == dt]
             period = int(dt // self.model.dt)
-
-            # -- allocate storage for the probe output
-            sig_probes = self.RaggedArray([[0.0] for sp in sp_dt])
-            buflen = len(sig_probes.buf)
-            sig_probes.buf = np.zeros(
-                    buflen * self.n_prealloc_probes,
-                    dtype=sig_probes.buf.dtype)
-            self.sig_probes_output[period] = sig_probes
-            self.sig_probes_buflen[period] = buflen
-            self.sig_probes_A_js[period] = self.RaggedArray(
-                [[0] for sp in sp_dt])
-            self.sig_probes_X_js[period] = self.RaggedArray(
-                [[self.all_signal_idxs[sp.sig]] for sp in sp_dt])
+            self.probes_by_period[period] = sp_dt
+        for probe in probes:
+            self.probe_output[probe] = []
 
     def alloc_populations(self):
         nls = self.nonlinearities
@@ -410,6 +492,7 @@ class Simulator(object):
         pop_J_idxs = [sidx[nl.input_signal] for nl in nls]
         pop_bias_idxs = [sidx[nl.bias_signal] for nl in nls]
         pop_output_idxs = [sidx[nl.output_signal] for nl in nls]
+
         self.pop_bias = self.all_data_A[pop_bias_idxs]
         self.pop_J = self.all_data_B[pop_J_idxs]
         self.pop_output = self.all_data_B[pop_output_idxs]
@@ -427,18 +510,18 @@ class Simulator(object):
         self.pop_direct_idxs = direct_idxs
 
         if lif_idxs:
-            raise NotImplementedError()
             # sorting in the constructor was supposed to ensure this:
             assert lif_idxs == range(lif_idxs[0], lif_idxs[0] + len(lif_idxs))
-            if lif_idxs and (nls[lif_idxs[0]] != nls[lif_idxs[-1]]):
+
+            tau_rcs = set([nls[li].tau_rc for li in lif_idxs])
+            tau_refs = set([nls[li].tau_ref for li in lif_idxs])
+            if len(tau_rcs) > 1 or len(tau_refs) > 1:
                 raise NotImplementedError('Non-homogeneous lif population')
 
             self.pop_lif_rep = nls[lif_idxs[0]]
-            self.pop_lif_J = self.pop_J[lif_idxs]
-            self.pop_lif_output = self.pop_output[lif_idxs]
-            self.pop_lif_start = self.pop_lif_J.starts[0]
-            lif_len = sum(self.pop_lif_J.lens)
-            self.pop_lif_end = self.pop_lif_start + lif_len
+            #self.pop_lif_J = self.pop_J.view1d(lif_idxs)
+            #self.pop_lif_output = self.pop_output.view1d(lif_idxs)
+
             self.pop_lif_voltage = self.RaggedArray(
                 [np.zeros(nls[idx].n_neurons) for idx in lif_idxs])
             self.pop_lif_reftime = self.RaggedArray(
@@ -456,108 +539,97 @@ class Simulator(object):
 
     def alloc_transforms(self):
         sidx = self.all_signal_idxs
+        tmpidx = self.tmp_vector_idxs
         transforms = self.model.transforms
         tidx, _ = idxs(transforms, 0)
         tf_by_outsig = defaultdict(list)
         for tf in transforms:
             tf_by_outsig[tf.outsig].append(tf)
 
-        # N.B. the optimization below may not be valid
-        # when alpha is not a scalar multiplier
-        self.tf_Ns = [1] * len(transforms)
-        self.tf_Ms = [1] * len(transforms)
+        A_js = []
+        X_js = []
+        for sig in self.vector_signals:
+            A_js_i = []
+            X_js_i = []
+            for tf in tf_by_outsig[sig]:
+                if tf.alpha.size == 1:
+                    A_js_i.append(tmpidx[tf.insig])
+                    X_js_i.append(sidx[tf.alpha_signal])
+                else:
+                    A_js_i.append(sidx[tf.alpha_signal])
+                    X_js_i.append(tmpidx[tf.insig])
+            A_js.append(A_js_i)
+            X_js.append(X_js_i)
 
-        # -- which transform(s) does each signal use
-        self.tf_weights = RaggedArray(
-            [[float(tf.alpha)] for tf in transforms])
-        self.tf_weights_js = self.RaggedArray(
-                [[tidx[tf] for tf in tf_by_outsig[sig]]
-                 for sig in self.vector_signals])
+        self.tf_A_js = self.RaggedArray(A_js)
+        self.tf_X_js = self.RaggedArray(X_js)
 
-        # -- which corresponding(s) signal is transformed
-        tmp_idxs = self.tmp_vector_idxs
-        self.tf_signals = self.all_data_B
-        self.tf_signals_js = self.RaggedArray(
-                [[tmp_idxs[tf.insig] for tf in tf_by_outsig[sig]]
-                 for sig in self.vector_signals])
-
-        dst_signal_idxs = [self.all_signal_idxs[v] for v in self.vector_signals]
-        self.tf_dest = self.all_data_B[dst_signal_idxs]
+        dst_signal_idxs = [sidx[v] for v in self.vector_signals]
+        self.tf_Y = self.all_data_B[dst_signal_idxs]
 
     def alloc_filters(self):
         sidx = self.all_signal_idxs
         filters = self.model.filters
-        fidx, _ = idxs(filters, 0)
         f_by_newsig = defaultdict(list)
         for f in filters:
             f_by_newsig[f.newsig].append(f)
 
-        # N.B. the optimization below may not be valid
-        # when alpha is not a scalar multiplier
-        self.f_Ns = [1] * len(filters)
-        self.f_Ms = [1] * len(filters)
+        A_js = []
+        X_js = []
+        for sig in self.vector_signals:
+            A_js_i = []
+            X_js_i = []
+            for f in f_by_newsig[sig]:
+                if f.alpha.size == 1:
+                    A_js_i.append(sidx[f.oldsig])
+                    X_js_i.append(sidx[f.alpha_signal])
+                else:
+                    A_js_i.append(sidx[f.alpha_signal])
+                    X_js_i.append(sidx[f.oldsig])
+            A_js.append(A_js_i)
+            X_js.append(X_js_i)
 
-        # -- which transform(s) does each signal use
-        self.f_weights = RaggedArray(
-            [[float(f.alpha)] for f in filters])
-        self.f_weights_js = self.RaggedArray(
-                [[fidx[f] for f in f_by_newsig[sig]]
-                 for sig in self.vector_signals])
-
-        # -- which corresponding(s) signal is transformed
-        self.f_signals = self.all_data_A
-        self.f_signals_js = self.RaggedArray(
-                [[sidx[f.oldsig] for f in f_by_newsig[sig]]
-                 for sig in self.vector_signals])
+        self.f_A_js = self.RaggedArray(A_js)
+        self.f_X_js = self.RaggedArray(X_js)
 
         dst_signal_idxs = [sidx[v] for v in self.vector_signals]
-        self.f_dest = self.all_data_B[dst_signal_idxs]
+        self.f_Y = self.all_data_B[dst_signal_idxs]
 
     def alloc_encoders(self):
         encoders = self.model.encoders
-        # TODO: consider C vs. Fortran order
-        eidx, _ = idxs(self.model.encoders, 0)
-
-        self.enc_Ms = [enc.weights.shape[0] for enc in encoders]
-        self.enc_Ns = [enc.weights.shape[1] for enc in encoders]
+        sidx = self.all_signal_idxs
 
         # -- which encoder(s) does each population use
-        self.enc_weights = self.RaggedArray(
-            [enc.weights.flatten() for enc in encoders])
-        self.enc_weights_js = self.RaggedArray([
-            [eidx[enc] for enc in encoders if enc.pop == pop]
+        self.enc_A_js = self.RaggedArray([
+            [sidx[enc.weights_signal] for enc in encoders if enc.pop == pop]
             for pop in self.model.nonlinearities])
 
         # -- and which corresponding signal does it encode
-        self.enc_signals = self.all_data_A
-        self.enc_signals_js = self.RaggedArray([
-            [self.all_signal_idxs[enc.sig]
-                for enc in encoders if enc.pop == pop]
+        self.enc_X_js = self.RaggedArray([
+            [sidx[enc.sig] for enc in encoders if enc.pop == pop]
             for pop in self.model.nonlinearities])
+
+        Yidxs = [sidx[pop.input_signal] for pop in self.model.nonlinearities]
+        self.enc_Y = self.all_data_B[Yidxs]
 
     def alloc_decoders(self):
         decoders = self.model.decoders
-        didx, _ = idxs(self.model.decoders, 0)
-        self.dec_Ms = [dec.weights.shape[0] for dec in decoders]
-        self.dec_Ns = [dec.weights.shape[1] for dec in decoders]
+        sidx = self.all_signal_idxs
 
         # -- which decoder(s) does each signal use
-        self.dec_weights = self.RaggedArray(
-            [dec.weights.flatten() for dec in decoders])
-        self.dec_weights_js = self.RaggedArray([
-            [didx[dec] for dec in decoders if dec.sig == sig]
+        self.dec_A_js = self.RaggedArray([
+            [sidx[dec.weights_signal] for dec in decoders if dec.sig == sig]
             for sig in self.vector_signals])
 
         # -- and which corresponding population does it decode
-        self.dec_pops = self.all_data_B
-        self.dec_pops_js = self.RaggedArray([
-            [self.all_signal_idxs[dec.pop.output_signal]
+        self.dec_X_js = self.RaggedArray([
+            [sidx[dec.pop.output_signal]
                 for dec in decoders if dec.sig == sig]
             for sig in self.vector_signals])
 
         dst_idxs = [self.tmp_vector_idxs[sig]
             for sig in self.vector_signals]
-        self.dec_dst = self.all_data_B[dst_idxs]
+        self.dec_Y = self.all_data_B[dst_idxs]
 
     def alloc_all(self):
         self.alloc_signals()
@@ -575,15 +647,15 @@ class Simulator(object):
         """
         # ADD linear combinations of signals to some signals
         ragged_gather_gemv(
-            Ms=self.tf_Ms,
-            Ns=self.tf_Ns,
+            Ms=self.all_data_A.shape0s,
+            Ns=self.all_data_A.shape1s,
             alpha=1.0,
-            A=self.tf_weights,
-            A_js=self.tf_weights_js,
-            X=self.tf_signals,
-            X_js=self.tf_signals_js,
+            A=self.all_data_B,
+            A_js=self.tf_A_js,
+            X=self.all_data_B,
+            X_js=self.tf_X_js,
             beta=1.0,
-            Y=self.tf_dest,
+            Y=self.tf_Y,
             )
 
     def do_filters(self):
@@ -593,43 +665,40 @@ class Simulator(object):
         """
         # ADD linear combinations of signals to some signals
         ragged_gather_gemv(
-            Ms=self.f_Ms,
-            Ns=self.f_Ns,
+            Ms=self.all_data_A.shape0s,
+            Ns=self.all_data_A.shape1s,
             alpha=1.0,
-            A=self.f_weights,
-            A_js=self.f_weights_js,
-            X=self.f_signals,
-            X_js=self.f_signals_js,
+            A=self.all_data_A,
+            A_js=self.f_A_js,
+            X=self.all_data_A,
+            X_js=self.f_X_js,
             beta=0.0,
-            Y=self.f_dest,
+            Y=self.f_Y,
             )
 
     def do_encoders(self):
         ragged_gather_gemv(
-            Ms=self.enc_Ms,
-            Ns=self.enc_Ns,
+            Ms=self.all_data_A.shape0s,
+            Ns=self.all_data_A.shape1s,
             alpha=1.0,
-            A=self.enc_weights,
-            A_js=self.enc_weights_js,
-            X=self.enc_signals,
-            X_js=self.enc_signals_js,
-            beta=1.0,
-            Y_in=self.pop_bias,
-            Y=self.pop_J,
+            A=self.all_data_A, A_js=self.enc_A_js,
+            X=self.all_data_A, X_js=self.enc_X_js,
+            beta=1.0, Y_in=self.pop_bias,
+            Y=self.enc_Y,
             )
 
     def do_populations(self):
         dt = self.model.dt
 
         if self.pop_lif_idxs:
-            lif_start = self.pop_lif_start
-            lif_end = self.pop_lif_end
+            J = self.pop_J.view1d(self.pop_lif_idxs)
+            out = self.pop_output.view1d(self.pop_lif_idxs)
             lif_step(
                 dt=dt,
-                J=self.pop_lif_J.buf[lif_start:lif_end],
+                J=J.T,
                 voltage=self.pop_lif_voltage.buf,
                 refractory_time=self.pop_lif_reftime.buf,
-                spiked=self.pop_output.buf[lif_start:lif_end],
+                spiked=out.T,
                 tau_ref=self.pop_lif_rep.tau_ref,
                 tau_rc=self.pop_lif_rep.tau_rc,
                 upsample=self.pop_lif_rep.upsample
@@ -638,60 +707,50 @@ class Simulator(object):
         for ii in self.pop_direct_idxs:
             nl = self.nonlinearities[ii]
             popidx = self.pidx[nl]
-            print 'do_populations: pop_J', self.pop_J[popidx]
             self.pop_output[popidx][...] = nl.fn(self.pop_J[popidx])
 
     def do_decoders(self):
-        print 'do_decoders: pop_output.buf', self.pop_output.buf
         ragged_gather_gemv(
-            Ms=self.dec_Ms,
-            Ns=self.dec_Ns,
+            Ms=self.all_data_A.shape0s,
+            Ns=self.all_data_A.shape1s,
             alpha=1.0,
-            A=self.dec_weights,
-            A_js=self.dec_weights_js,
-            X=self.dec_pops,
-            X_js=self.dec_pops_js,
+            A=self.all_data_B,
+            A_js=self.dec_A_js,
+            X=self.all_data_B,
+            X_js=self.dec_X_js,
             beta=0.0,
-            Y=self.dec_dst,
+            Y=self.dec_Y,
             )
-        print 'sig tmp', self.dec_dst.buf
 
     def do_probes(self):
-        for period in self.sig_probes_output:
+        for period in self.probes_by_period:
             if 0 == self.sim_step % period:
-                probe_out = self.sig_probes_output[period]
-                buflen = self.sig_probes_buflen[period]
-                A_js = self.sig_probes_A_js[period]
-                X_js = self.sig_probes_X_js[period]
-
-                bufidx = int(self.sim_step // period)
-                orig_buffer = probe_out.buf
-                this_buffer = probe_out.buf[bufidx * buflen:]
-                try:
-                    probe_out.buf = this_buffer
-                    ragged_gather_gemv(
-                        Ms=self.sig_probes_Ms,
-                        Ns=self.sig_probes_Ns,
-                        alpha=1.0,
-                        A=self.sig_probes_A,
-                        A_js=A_js,
-                        X=self.all_data_B,
-                        X_js=X_js,
-                        beta=0.0,
-                        Y=probe_out,
-                        )
-                finally:
-                    probe_out.buf = orig_buffer
+                for probe in self.probes_by_period[period]:
+                    val = self.all_signal_idxs[probe.sig]
+                    self.probe_output[probe].append(
+                        self.all_data_B[val].copy())
 
     def do_all(self):
-        # -- step 1: sigs store all signal values of step t (sigs_t)
+        #print '-' * 10 + 'A' * 10 + '-' * 10
+        #print self.all_data_A
+        #print '-' * 20
         self.do_encoders()          # encode sigs_t into pops
+        #print self.pop_J
         self.do_populations()       # pop dynamics
+        #print self.pop_J
         self.do_decoders()          # decode into sigs_ic
+        #print self.pop_J
         self.do_filters()           # make sigs_t's contribution to t + 1
+        #print self.pop_J
         self.do_transforms()        # add sigs_ic's contribution to t + 1
+        #print self.pop_J
         self.do_probes()
+        #print self.pop_J
         self.all_data_A.buf[:] = self.all_data_B.buf
+
+        #print '-' * 10 + 'B' * 10 + '-' * 10
+        #print self.all_data_A
+        #print '-' * 20
 
     def step(self):
         self.do_all()
@@ -711,19 +770,5 @@ class Simulator(object):
             return self.signal_probe_output(probes[0])
 
     def probe_data(self, probe):
-        period = int(probe.dt // self.model.dt)
-        last_elem = int(math.ceil(self.sim_step / float(period)))
-
-        # -- figure out which signal it is among the ones with the same dt
-        sps_dt = [sp for sp in self.model.probes if sp.dt == probe.dt]
-        probe_idx = sps_dt.index(probe)
-        all_rows = self.sig_probes_output[period].buf.reshape(
-                (-1, self.sig_probes_buflen[period]))
-        assert all_rows.dtype == self.sig_probes_output[period].buf.dtype
-        start = self.sig_probes_output[period].starts[probe_idx]
-        olen = self.sig_probes_output[period].lens[probe_idx]
-        start = start % self.sig_probes_buflen[period]
-        rval = all_rows[:last_elem, start:start + olen]
-        return rval
-
+        return np.asarray(self.probe_output[probe])
 

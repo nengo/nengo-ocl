@@ -397,3 +397,19 @@ class Simulator(sim_npy.Simulator):
             self.queue.finish()
 
 
+    def probe_data(self, probe):
+        period = int(probe.dt // self.model.dt)
+        last_elem = int(math.ceil(self.sim_step / float(period)))
+
+        # -- figure out which signal it is among the ones with the same dt
+        sps_dt = [sp for sp in self.model.probes if sp.dt == probe.dt]
+        probe_idx = sps_dt.index(probe)
+        all_rows = self.sig_probes_output[period].buf.reshape(
+                (-1, self.sig_probes_buflen[period]))
+        assert all_rows.dtype == self.sig_probes_output[period].buf.dtype
+        start = self.sig_probes_output[period].starts[probe_idx]
+        olen = self.sig_probes_output[period].lens[probe_idx]
+        start = start % self.sig_probes_buflen[period]
+        rval = all_rows[:last_elem, start:start + olen]
+        return rval
+
