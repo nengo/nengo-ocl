@@ -319,8 +319,9 @@ def alloc_transform_helper(signals, transforms, sigs, sidx, RaggedArray,
     return locals()
 
 
-def idxs(seq):
-    return dict((s, i) for (i, s) in enumerate(seq))
+def idxs(seq, offset):
+    rval = dict((s, i + offset) for (i, s) in enumerate(seq))
+    return rval, offset + len(rval)
 
 
 def islif(obj):
@@ -336,10 +337,31 @@ class Simulator(object):
         self.model = model
         self.nonlinearities = sorted(self.model.nonlinearities)
 
-        self.sidx = idxs(model.signals)
-        self.pidx = idxs(self.nonlinearities)
-        self.eidx = idxs(model.encoders)
-        self.didx = idxs(model.decoders)
+        self.bias_signals = [nl.bias_signal for nl in self.nonlinearities]
+        bias_signals_set = set(self.bias_signals)
+
+        self.input_signals = [nl.input_signal for nl in self.nonlinearities]
+
+        self.output_signals = [nl.output_signal for nl in self.nonlinearities]
+
+        self.const_signals = [sig for sig in model.signals
+                if hasattr(sig, 'value') and not sig in bias_signals_set]
+
+        self.all_signals = self.bias_signals + self.const_signals
+        self.all_signals.extend(self.input_signals)
+        self.all_signals.extend(self.output_signals)
+        all_signals_set = set(self.all_signals)
+        self.vector_signals = [sig for sig in model.signals
+                if sig not in all_signals_set]
+        self.all_signals.extend(self.vector_signals)
+
+        self.all_signal_idxs, offset = idxs(self.all_signals, 0)
+        assert offset == len(model.signals)
+
+        # -- append a second version of vector_signals
+        #    which are necessary for transforms
+        self.tmp_vector_idxs, offset = idxs(self.vector_signals, offset)
+        self.all_signals.extend(self.vector_signals)
 
         self.n_prealloc_probes = n_prealloc_probes
         self.sim_step = 0
@@ -348,18 +370,12 @@ class Simulator(object):
         return RaggedArray(*args, **kwargs)
 
     def alloc_signals(self):
-        self.signals_tmp = self.RaggedArray(
-            [np.zeros(s.size) for s in self.model.signals])
-        self.signals = self.RaggedArray(
-            [np.zeros(s.size) for s in self.model.signals])
-        self.signals_copy = self.RaggedArray(
-            [np.zeros(s.size) for s in self.model.signals])
-
-        for ii, sig in enumerate(self.model.signals):
-            if hasattr(sig, 'value'):
-                self.signals[ii][...] = sig.value
-                self.signals_tmp[ii][...] = sig.value
-                self.signals_copy[ii][...] = sig.value
+        self.all_data_A = self.RaggedArray(
+            [np.zeros(s.size) + getattr(s, 'value', 0)
+                for s in self.all_signals])
+        self.all_data_B = self.RaggedArray(
+            [np.zeros(s.size) + getattr(s, 'value', 0)
+                for s in self.all_signals])
 
     def alloc_probes(self):
         probes = self.model.probes
@@ -386,16 +402,18 @@ class Simulator(object):
             self.sig_probes_A_js[period] = self.RaggedArray(
                 [[0] for sp in sp_dt])
             self.sig_probes_X_js[period] = self.RaggedArray(
-                [[self.sidx[sp.sig]] for sp in sp_dt])
+                [[self.all_signal_idxs[sp.sig]] for sp in sp_dt])
 
     def alloc_populations(self):
         nls = self.nonlinearities
-        pop_J_idxs = [self.sidx[nl.input_signal] for nl in nls]
-        pop_bias_idxs = [self.sidx[nl.bias_signal] for nl in nls]
-        pop_output_idxs = [self.sidx[nl.output_signal] for nl in nls]
-        self.pop_J = self.signals[pop_J_idxs]
-        self.pop_bias = self.signals[pop_bias_idxs]
-        self.pop_output = self.signals_tmp[pop_output_idxs]
+        sidx = self.all_signal_idxs
+        pop_J_idxs = [sidx[nl.input_signal] for nl in nls]
+        pop_bias_idxs = [sidx[nl.bias_signal] for nl in nls]
+        pop_output_idxs = [sidx[nl.output_signal] for nl in nls]
+        self.pop_bias = self.all_data_A[pop_bias_idxs]
+        self.pop_J = self.all_data_B[pop_J_idxs]
+        self.pop_output = self.all_data_B[pop_output_idxs]
+        self.pidx, _ = idxs(self.nonlinearities, 0)
 
         lif_idxs = []
         direct_idxs = []
@@ -409,6 +427,7 @@ class Simulator(object):
         self.pop_direct_idxs = direct_idxs
 
         if lif_idxs:
+            raise NotImplementedError()
             # sorting in the constructor was supposed to ensure this:
             assert lif_idxs == range(lif_idxs[0], lif_idxs[0] + len(lif_idxs))
             if lif_idxs and (nls[lif_idxs[0]] != nls[lif_idxs[-1]]):
@@ -436,77 +455,109 @@ class Simulator(object):
                 [np.zeros(nls[di].n_out, dtype=dtype) for di in direct_idxs])
 
     def alloc_transforms(self):
-        stuff = alloc_transform_helper(
-                self.model.signals,
-                self.model.transforms,
-                self.signals_tmp,
-                self.sidx,
-                self.RaggedArray,
-                (lambda f: f.outsig),
-                (lambda f: f.insig),
-                )
+        sidx = self.all_signal_idxs
+        transforms = self.model.transforms
+        tidx, _ = idxs(transforms, 0)
+        tf_by_outsig = defaultdict(list)
+        for tf in transforms:
+            tf_by_outsig[tf.outsig].append(tf)
 
-        self.tf_weights_js = self.RaggedArray(stuff['tf_weights_js'])
-        self.tf_signals_js = self.RaggedArray(stuff['tf_signals_js'])
-        self.tf_weights = stuff['tf_weights']
-        self.tf_signals = stuff['tf_sigs']
-        self.tf_Ns = stuff['tf_Ns']
-        self.tf_Ms = stuff['tf_Ms']
+        # N.B. the optimization below may not be valid
+        # when alpha is not a scalar multiplier
+        self.tf_Ns = [1] * len(transforms)
+        self.tf_Ms = [1] * len(transforms)
+
+        # -- which transform(s) does each signal use
+        self.tf_weights = RaggedArray(
+            [[float(tf.alpha)] for tf in transforms])
+        self.tf_weights_js = self.RaggedArray(
+                [[tidx[tf] for tf in tf_by_outsig[sig]]
+                 for sig in self.vector_signals])
+
+        # -- which corresponding(s) signal is transformed
+        tmp_idxs = self.tmp_vector_idxs
+        self.tf_signals = self.all_data_B
+        self.tf_signals_js = self.RaggedArray(
+                [[tmp_idxs[tf.insig] for tf in tf_by_outsig[sig]]
+                 for sig in self.vector_signals])
+
+        dst_signal_idxs = [self.all_signal_idxs[v] for v in self.vector_signals]
+        self.tf_dest = self.all_data_B[dst_signal_idxs]
 
     def alloc_filters(self):
-        stuff = alloc_transform_helper(
-                self.model.signals,
-                self.model.filters,
-                self.signals_copy,
-                self.sidx,
-                self.RaggedArray,
-                (lambda f: f.newsig),
-                (lambda f: f.oldsig),
-                )
+        sidx = self.all_signal_idxs
+        filters = self.model.filters
+        fidx, _ = idxs(filters, 0)
+        f_by_newsig = defaultdict(list)
+        for f in filters:
+            f_by_newsig[f.newsig].append(f)
 
-        self.f_signals = stuff['tf_sigs']
-        self.f_weights = stuff['tf_weights']
-        self.f_weights_js = self.RaggedArray(stuff['tf_weights_js'])
-        self.f_signals_js = self.RaggedArray(stuff['tf_signals_js'])
-        self.f_Ns = stuff['tf_Ns']
-        self.f_Ms = stuff['tf_Ms']
+        # N.B. the optimization below may not be valid
+        # when alpha is not a scalar multiplier
+        self.f_Ns = [1] * len(filters)
+        self.f_Ms = [1] * len(filters)
+
+        # -- which transform(s) does each signal use
+        self.f_weights = RaggedArray(
+            [[float(f.alpha)] for f in filters])
+        self.f_weights_js = self.RaggedArray(
+                [[fidx[f] for f in f_by_newsig[sig]]
+                 for sig in self.vector_signals])
+
+        # -- which corresponding(s) signal is transformed
+        self.f_signals = self.all_data_A
+        self.f_signals_js = self.RaggedArray(
+                [[sidx[f.oldsig] for f in f_by_newsig[sig]]
+                 for sig in self.vector_signals])
+
+        dst_signal_idxs = [sidx[v] for v in self.vector_signals]
+        self.f_dest = self.all_data_B[dst_signal_idxs]
 
     def alloc_encoders(self):
         encoders = self.model.encoders
-        self.enc_weights = self.RaggedArray(
-            [enc.weights.flatten() for enc in encoders])
+        # TODO: consider C vs. Fortran order
+        eidx, _ = idxs(self.model.encoders, 0)
 
         self.enc_Ms = [enc.weights.shape[0] for enc in encoders]
         self.enc_Ns = [enc.weights.shape[1] for enc in encoders]
 
         # -- which encoder(s) does each population use
+        self.enc_weights = self.RaggedArray(
+            [enc.weights.flatten() for enc in encoders])
         self.enc_weights_js = self.RaggedArray([
-            [self.eidx[enc] for enc in encoders if enc.pop == pop]
+            [eidx[enc] for enc in encoders if enc.pop == pop]
             for pop in self.model.nonlinearities])
 
         # -- and which corresponding signal does it encode
+        self.enc_signals = self.all_data_A
         self.enc_signals_js = self.RaggedArray([
-            [self.sidx[enc.sig]
+            [self.all_signal_idxs[enc.sig]
                 for enc in encoders if enc.pop == pop]
             for pop in self.model.nonlinearities])
 
     def alloc_decoders(self):
         decoders = self.model.decoders
-        self.dec_weights = self.RaggedArray(
-            [dec.weights.flatten() for dec in decoders])
+        didx, _ = idxs(self.model.decoders, 0)
         self.dec_Ms = [dec.weights.shape[0] for dec in decoders]
         self.dec_Ns = [dec.weights.shape[1] for dec in decoders]
 
         # -- which decoder(s) does each signal use
+        self.dec_weights = self.RaggedArray(
+            [dec.weights.flatten() for dec in decoders])
         self.dec_weights_js = self.RaggedArray([
-            [self.didx[dec] for dec in decoders if dec.sig == sig]
-            for sig in self.model.signals])
+            [didx[dec] for dec in decoders if dec.sig == sig]
+            for sig in self.vector_signals])
 
         # -- and which corresponding population does it decode
+        self.dec_pops = self.all_data_B
         self.dec_pops_js = self.RaggedArray([
-            [self.sidx[dec.pop.output_signal]
+            [self.all_signal_idxs[dec.pop.output_signal]
                 for dec in decoders if dec.sig == sig]
-            for sig in self.model.signals])
+            for sig in self.vector_signals])
+
+        dst_idxs = [self.tmp_vector_idxs[sig]
+            for sig in self.vector_signals]
+        self.dec_dst = self.all_data_B[dst_idxs]
 
     def alloc_all(self):
         self.alloc_signals()
@@ -532,7 +583,7 @@ class Simulator(object):
             X=self.tf_signals,
             X_js=self.tf_signals_js,
             beta=1.0,
-            Y=self.signals,
+            Y=self.tf_dest,
             )
 
     def do_filters(self):
@@ -541,7 +592,6 @@ class Simulator(object):
         and write them back to `sigs`
         """
         # ADD linear combinations of signals to some signals
-        self.signals_copy.buf[:] = self.signals.buf
         ragged_gather_gemv(
             Ms=self.f_Ms,
             Ns=self.f_Ns,
@@ -551,7 +601,7 @@ class Simulator(object):
             X=self.f_signals,
             X_js=self.f_signals_js,
             beta=0.0,
-            Y=self.signals,
+            Y=self.f_dest,
             )
 
     def do_encoders(self):
@@ -561,7 +611,7 @@ class Simulator(object):
             alpha=1.0,
             A=self.enc_weights,
             A_js=self.enc_weights_js,
-            X=self.signals,
+            X=self.enc_signals,
             X_js=self.enc_signals_js,
             beta=1.0,
             Y_in=self.pop_bias,
@@ -570,6 +620,7 @@ class Simulator(object):
 
     def do_populations(self):
         dt = self.model.dt
+
         if self.pop_lif_idxs:
             lif_start = self.pop_lif_start
             lif_end = self.pop_lif_end
@@ -598,12 +649,12 @@ class Simulator(object):
             alpha=1.0,
             A=self.dec_weights,
             A_js=self.dec_weights_js,
-            X=self.pop_output,
+            X=self.dec_pops,
             X_js=self.dec_pops_js,
             beta=0.0,
-            Y=self.signals_tmp,
+            Y=self.dec_dst,
             )
-        print 'sig tmp', self.signals_tmp.buf
+        print 'sig tmp', self.dec_dst.buf
 
     def do_probes(self):
         for period in self.sig_probes_output:
@@ -624,7 +675,7 @@ class Simulator(object):
                         alpha=1.0,
                         A=self.sig_probes_A,
                         A_js=A_js,
-                        X=self.signals,
+                        X=self.all_data_B,
                         X_js=X_js,
                         beta=0.0,
                         Y=probe_out,
@@ -640,6 +691,7 @@ class Simulator(object):
         self.do_filters()           # make sigs_t's contribution to t + 1
         self.do_transforms()        # add sigs_ic's contribution to t + 1
         self.do_probes()
+        self.all_data_A.buf[:] = self.all_data_B.buf
 
     def step(self):
         self.do_all()
