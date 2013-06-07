@@ -39,3 +39,33 @@ def test_basic():
     result2 = Y.buf.get()
     assert np.allclose(result1, result2)
 
+
+def test_reduction_speed():
+    queue = cl.CommandQueue(
+        ctx,
+        properties=cl.command_queue_properties.PROFILING_ENABLE)
+
+    L = 512  # -- length of each vector
+    N = 1000 # -- number of vectors
+
+    Arows = [1] * N
+    Acols = [L] * N
+    A = CLRA(queue, [np.random.randn(L) for i in range(N)])
+    X = CLRA(queue, [np.random.randn(L) for i in range(N)])
+
+    X_js = CLRA(queue, [[i] for i in range(N) + range(N)])
+    A_js = CLRA(queue, [[i] for i in range(N) + list(reversed(range(N)))])
+
+    Y = CLRA(queue, [[1.0] for i in range(2 * N)])
+
+    plan = plan_ragged_gather_gemv(queue, Arows, Acols,
+                                   1.0, A, A_js, X, X_js,
+                                   0.0, Y)
+    for i in range(10):
+        plan(profiling=True)
+
+    print 'n_calls         ', plan.n_calls
+    print 'queued -> submit', plan.atime
+    print 'submit -> start ', plan.btime
+    print 'start -> end    ', plan.ctime
+
