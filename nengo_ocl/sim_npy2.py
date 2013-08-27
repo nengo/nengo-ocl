@@ -6,17 +6,19 @@ try:
     from collections import OrderedDict
 except ImportError:
     from ordereddict import OrderedDict
+import itertools
 import StringIO
-import math
+
 import numpy as np
 
-from nengo.nonlinear import LIF, LIFRate
+from nengo.objects import Signal
+from nengo.objects import LIF, LIFRate, Direct
 
 from sim_npy import ragged_gather_gemv
 from sim_npy import RaggedArray
 
 def isview(obj):
-    return obj.base is not obj
+    return obj.base is not None and obj.base is not obj
 
 
 def shape0(obj):
@@ -140,7 +142,37 @@ class Simulator(object):
                 for ss in sigseq],
             names=[getattr(ss, 'name', '') for ss in sigseq])
 
+    @staticmethod
+    def orig_relevant_signals(model):
+        for enc in model.encoders:
+            yield (enc.weights_signal)
+            yield (enc.sig)
+            yield (enc.pop.input_signal)
+
+        for nl in model.nonlinearities:
+            yield nl.bias_signal
+            yield nl.input_signal
+            yield nl.output_signal
+
+        for dec in model.decoders:
+            yield (dec.weights_signal)
+            yield (dec.sig)
+            yield (dec.pop.input_signal)
+
+        for filt in model.filters:
+            yield (filt.alpha_signal)
+            yield (filt.oldsig)
+            yield (filt.newsig)
+
+        for tf in model.transforms:
+            yield (tf.alpha_signal)
+            yield (tf.insig)
+            yield (tf.outsig)
+
+
     def signals_iter(self):
+        model = self.model
+
         for nl in model.nonlinearities:
             yield nl.bias_signal
             yield nl.input_signal
@@ -174,6 +206,9 @@ class Simulator(object):
             yield (dec.pop.input_signal)
             yield self.dec_outputs[dec]
 
+        for sig in self.outbufs:
+            yield self.outbufs[sig]
+
 
     def __init__(self, model, n_prealloc_probes=1000, dtype='float32'):
         self.model = model
@@ -187,15 +222,17 @@ class Simulator(object):
         self.lif_voltage = {}
         self.lif_reftime = {}
         self.dec_outputs = {}
-        self.filter_outputs = {}
-        self.transform_outputs = {}
+        self.filter_outputs = {}    # -- values also in outbufs
+        self.transform_outputs = {} # -- values also in outbufs
         self.outbufs = {}
 
         # create at least one buffer for every signal
-        bases = stable_unique(baseof(sig) for sig in model_signals(model))
+        bases = stable_unique(baseof(sig) for sig in
+                    self.orig_relevant_signals(model))
 
         def add_base_like(sig, suffix=''):
-            a = Signal(sig.shape, name=sig.name + suffix)
+            N, = sig.shape
+            a = Signal(N, name=sig.name + suffix)
             bases.append(a)
             return a
 
@@ -215,7 +252,7 @@ class Simulator(object):
                 self.lif_voltage[nl] = add_base_like(nl.output_signal)
                 self.lif_reftime[nl] = add_signal(nl.output_signal)
             elif isinstance(nl, LIFRate):
-                yield 
+                pass 
             else:
                 raise NotImplementedError()
 
@@ -229,66 +266,31 @@ class Simulator(object):
         #    There are cases where more can be done in-place, but we'll
         #    just do the general case for now.
         filt_and_tf_outputs = (
-            [filt.output_signal for filt in model.filters]
-            + [tf.output_signal for tf in model.transforms])
+            [filt.newsig for filt in model.filters]
+            + [tf.outsig for tf in model.transforms])
         for sig in stable_unique(filt_and_tf_outputs):
             self.outbufs[sig] = add_base_like(sig)
 
         for filt in self.model.filters:
-            self.filter_outputs[filt] = self.outbufs[filt.output_signal]
+            self.filter_outputs[filt] = self.outbufs[filt.newsig]
         for tf in self.model.transforms:
-            self.transform_outputs[tf] = add_base_like(tf.output_signal)
+            self.transform_outputs[tf] = add_base_like(tf.outsig)
 
 
 
         # -- Choose a layout order for the constants.
         bases = sorted(bases, key=lambda bb: bb.size)
-        sidx = dict((bb, ii) for ii, bb in enumerate(bases))
 
+        self.bases[:] = bases
         self.all_data = self.alloc_signal_data(self.bases)
-
-
-    def alloc_signals(self):
-
-
-        # -- add to each ragged array all of the views that we'll need
-        #    in addition to the base buffers.
-        builder_const = ViewBuilder(self.bases_const, self.all_data_const)
-        builder_dynam = ViewBuilder(self.bases_dynam, self.all_data_A)
-
-        def add_view(sig):
-            if isconst(sig):
-                builder_const.append_view(sig)
-            else:
-                builder_dynam.append_view(sig)
-
-        for filt in self.model.filters:
-            add_view(filt.alpha_signal)
-            add_view(filt.oldsig)
-            add_view(filt.newsig)
-
-        for tf in self.model.transforms:
-            add_view(tf.alpha_signal)
-            add_view(tf.insig)
-            add_view(tf.outsig)
-
-        for enc in self.model.encoders:
-            add_view(enc.weights_signal)
-            add_view(enc.sig)
-            add_view(enc.pop.input_signal)
-
-        for dec in self.model.decoders:
-            add_view(dec.weights_signal)
-            add_view(dec.sig)
-            add_view(dec.pop.input_signal)
-
-        builder_const.add_views_to(self.all_data_const)
-        builder_dynam.add_views_to(self.all_data_A)
-        builder_dynam.add_views_to(self.all_data_B)
+        self.builder = ViewBuilder(self.bases, self.all_data)
+        for sig in self.signals_iter():
+            self.builder.append_view(sig)
+        self.builder.add_views_to(self.all_data)
 
 
     def alloc_all(self):
-        self.alloc_signals()
+        pass
 
     def do_transforms(self):
         """
@@ -327,21 +329,42 @@ class Simulator(object):
             )
 
     def do_encoders(self):
+        encoders = self.model.encoders
+        sidx = self.builder.sidx
+
+        # -- which encoder(s) does each population use
+        self.enc_A_js = self.RaggedArray([
+            [sidx[enc.weights_signal] for enc in encoders if enc.pop == pop]
+            for pop in self.model.nonlinearities])
+
+        # -- and which corresponding signal(s) does it encode
+        self.enc_X_js = self.RaggedArray([
+            [sidx[enc.sig] for enc in encoders if enc.pop == pop]
+            for pop in self.model.nonlinearities])
+
+        enc_bias_idxs = [sidx[pop.bias_signal]
+                for pop in self.model.nonlinearities]
+        enc_out_idxs = [sidx[pop.input_signal]
+                for pop in self.model.nonlinearities]
+        self.enc_Y_in = self.all_data[enc_bias_idxs]
+        self.enc_Y = self.all_data[enc_out_idxs]
+
         ragged_gather_gemv(
-            Ms=self.all_data_A.shape0s,
-            Ns=self.all_data_A.shape1s,
+            Ms=self.all_data.shape0s,
+            Ns=self.all_data.shape1s,
             alpha=1.0,
-            A=self.all_data_A, A_js=self.enc_A_js,
-            X=self.all_data_A, X_js=self.enc_X_js,
-            beta=1.0, Y_in=self.pop_bias,
+            A=self.all_data, A_js=self.enc_A_js,
+            X=self.all_data, X_js=self.enc_X_js,
+            beta=1.0,
+            Y_in=self.enc_Y_in,
             Y=self.enc_Y,
             )
 
     def do_populations(self):
         dt = self.model.dt
         nls = sorted(self.model.nonlinearities, key=type)
-        for nl_type, nl_pops in itertools.groupby(nls, type):
-            print 'TODO', nl_type, nl_pops
+        for nl_type, nl_group in itertools.groupby(nls, type):
+            print 'TODO', nl_type, list(nl_group)
 
     def do_decoders(self):
         ragged_gather_gemv(
