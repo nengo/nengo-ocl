@@ -27,7 +27,8 @@ setup(
     long_description="",
     requires=[
         "numpy (>=1.5.0)",
+        "nengo",
         "pyopencl",
-        "nose",
     ],
+    test_suite='nengo_ocl.test',
 )
