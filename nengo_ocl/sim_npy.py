@@ -358,16 +358,13 @@ def islifrate(obj):
 class Simulator(object):
     def __init__(self, model, n_prealloc_probes=1000):
         self.model = model
-        self._one = model.signal(n=1, value=1.0)
-        self._one.name = 'Simulator.one'
         self.nonlinearities = sorted(self.model.nonlinearities)
 
         self.bias_signals = [nl.bias_signal for nl in self.nonlinearities]
-        bias_signals_set = set(self.bias_signals)
-
         self.input_signals = [nl.input_signal for nl in self.nonlinearities]
-
         self.output_signals = [nl.output_signal for nl in self.nonlinearities]
+
+        bias_signals_set = set(self.bias_signals)
 
         self.const_signals = [sig for sig in model.signals
                 if hasattr(sig, 'value') and not sig in bias_signals_set]
@@ -391,7 +388,6 @@ class Simulator(object):
         #    which are necessary for transforms
         self.tmp_vector_idxs, offset = idxs(self.vector_signals, offset)
         self.all_signals.extend(self.vector_signals)
-
 
         self.n_prealloc_probes = n_prealloc_probes
         self.sim_step = 0

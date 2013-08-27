@@ -1,21 +1,23 @@
+"""
+Black-box testing of the sim_npy Simulator.
+
+TestCase classes are added automatically from
+nengo.tests.helpers.simulator_test_cases, but
+you can still run individual test files like this:
+
+    nosetests -sv test/test_sim_npy.py:TestSimulator.test_simple_direct_mode
+
+"""
+
 import pyopencl as cl
-
 from nengo.tests.helpers import simulator_test_cases
+from nengo_ocl import sim_npy
 
-from nengo_ocl import sim_ocl
-
-# TODO:
-# If PYOPENCL_CTX is not set, loop over all available devices
-ctx = cl.create_some_context()
-
-# -- Black-box testing:
-#    Run each of the nengo simulator TestCase objects
-#    using sim_ocl.Simulator.
 for TestCase in simulator_test_cases:
     class MyTestCase(TestCase):
         simulator_test_case_ignore = True
         def Simulator(self, model):
-            rval = sim_ocl.Simulator(ctx, model)
+            rval = sim_npy.Simulator(model)
             rval.alloc_all()
             rval.plan_all()
             return rval
