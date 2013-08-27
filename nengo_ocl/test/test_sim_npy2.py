@@ -9,7 +9,14 @@ you can still run individual test files like this:
 
 """
 
-from nengo.tests.helpers import simulator_suite
+try:
+    # For Python <=2.6
+    import unittest2 as unittest
+except ImportError:
+    import unittest
+
+import nengo.tests.helpers
+
 from nengo_ocl import sim_npy2
 
 def simulator_allocator(model):
@@ -18,5 +25,18 @@ def simulator_allocator(model):
     rval.plan_all()
     return rval
 
-globals().update(simulator_suite(simulator_allocator))
+load_tests = nengo.tests.helpers.load_nengo_tests(simulator_allocator)
 
+for foo in load_tests(None, None, None):
+    class MyCLS(foo.__class__):
+        def Simulator(self, model):
+            return simulator_allocator(model)
+    globals()[foo.__class__.__name__] = MyCLS
+    MyCLS.__name__ = foo.__class__.__name__
+    del MyCLS
+    del foo
+del load_tests
+
+
+if __name__ == "__main__":
+    unittest.main()
