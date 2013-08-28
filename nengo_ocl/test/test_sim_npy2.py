@@ -27,16 +27,7 @@ def simulator_allocator(model):
 
 load_tests = nengo.tests.helpers.load_nengo_tests(simulator_allocator)
 
-for foo in load_tests(None, None, None):
-    class MyCLS(foo.__class__):
-        def Simulator(self, model):
-            return simulator_allocator(model)
-    globals()[foo.__class__.__name__] = MyCLS
-    MyCLS.__name__ = foo.__class__.__name__
-    del MyCLS
-    del foo
-del load_tests
-
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(
+        testLoader=nengo.tests.helpers.NengoTestLoader(simulator_allocator))
