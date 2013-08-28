@@ -228,7 +228,6 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
     """
     """
     del Ms
-    del Ns
     try:
         float(alpha)
         alpha = [alpha] * len(Y)
@@ -253,7 +252,7 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
             A.starts,
             A.buf,
             A_js.starts,
-            A_js.lens,
+            A_js.shape0s,
             A_js.buf,
             X.starts,
             X.buf,
@@ -263,7 +262,7 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
             Y_in.starts,
             Y_in.buf,
             Y.starts,
-            Y.lens,
+            Y.shape0s,
             Y.buf)
     else:
         # -- less-close to the OpenCL impl
