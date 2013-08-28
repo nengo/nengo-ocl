@@ -6,7 +6,7 @@ import StringIO
 import math
 import numpy as np
 
-from nengo.nonlinear import LIF, LIFRate
+from nengo.objects import LIF, LIFRate
 
 def isview(obj):
     return obj.base is not obj
