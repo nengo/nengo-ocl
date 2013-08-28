@@ -8,6 +8,7 @@ except ImportError:
     from ordereddict import OrderedDict
 import itertools
 import StringIO
+import time
 
 import numpy as np
 
@@ -16,6 +17,8 @@ from nengo.objects import LIF, LIFRate, Direct
 
 from sim_npy import ragged_gather_gemv
 from sim_npy import RaggedArray
+
+foo = [0]
 
 def isview(obj):
     return obj.base is not None and obj.base is not obj
@@ -46,20 +49,6 @@ def islif(obj):
 
 def islifrate(obj):
     return isinstance(obj, LIFRate)
-
-
-def isconst(sig):
-    # XXX has-value should not equate to is-constant
-    #     there should be a way to provide initial values
-    return hasattr(baseof(sig), 'value')
-
-
-def baseof(sig):
-    while sig.base is not sig:
-        if sig.base is None:
-            return sig
-        sig = sig.base
-    return sig
 
 
 def ivalueof(sig):
@@ -136,10 +125,12 @@ class Simulator(object):
 
 
     def alloc_signal_data(self, sigseq):
-        return self.RaggedArray(
+        rval = self.RaggedArray(
             [np.zeros(ss.shape) + getattr(ss, 'value', np.zeros(ss.shape))
                 for ss in sigseq],
             names=[getattr(ss, 'name', '') for ss in sigseq])
+        return rval
+
 
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
                  Y_in_sig_fn=None):
@@ -201,16 +192,27 @@ class Simulator(object):
             X_js.append(X_js_i)
 
 
-        return ragged_gather_gemv(
-            Ms=self.all_data.shape0s,
-            Ns=self.all_data.shape1s,
-            alpha=alpha,
-            A=self.all_data, A_js=A_js,
-            X=self.all_data, X_js=X_js,
-            beta=beta,
-            Y=self.all_data[Y_idxs],
-            Y_in=self.all_data[Y_in_idxs],
-            )
+        A_js = RaggedArray(A_js)
+        X_js = RaggedArray(X_js)
+        Y = self.all_data[Y_idxs]
+        Y_in = self.all_data[Y_in_idxs]
+
+        def rval():
+            t0 = time.time()
+            ragged_gather_gemv(
+                Ms=self.all_data.shape0s,
+                Ns=self.all_data.shape1s,
+                alpha=alpha,
+                A=self.all_data, A_js=A_js,
+                X=self.all_data, X_js=X_js,
+                beta=beta,
+                Y=Y,
+                Y_in=Y_in,
+                )
+            foo[0] += time.time() - t0
+            #print foo
+
+        return rval
 
 
     @staticmethod
@@ -301,10 +303,10 @@ class Simulator(object):
 
 
         # create at least one buffer for every signal
-        bases = stable_unique(baseof(sig) for sig in
+        bases = stable_unique(sig.base for sig in
                     self.orig_relevant_signals(model))
 
-        def add_base_like(sig, suffix=''):
+        def add_base_like(sig, suffix):
             N, = sig.shape
             a = Signal(N, name=sig.name + suffix)
             bases.append(a)
@@ -320,20 +322,39 @@ class Simulator(object):
             if isinstance(nl, Direct):
                 pass
             elif isinstance(nl, LIF):
-                self.lif_voltage[nl] = add_base_like(nl.output_signal)
-                self.lif_reftime[nl] = add_base_like(nl.output_signal)
+                self.lif_voltage[nl] = add_base_like(nl.output_signal, '.voltage')
+                self.lif_reftime[nl] = add_base_like(nl.output_signal, '.reftime')
             elif isinstance(nl, LIFRate):
                 pass 
             else:
                 raise NotImplementedError()
 
         #    decoder outputs -> also generally needs copy
+        #    N.B. technically many decoders can decode the same signal
+        #         this is defined to mean that we add together the several
+        #         decoder outputs as if it were a large sparsely connected decoder
         decoder_outputs_set = set(dec.sig for dec in model.decoders)
-        self.decoder_outputs = [sig
+        print model.decoders
+
+        if 1:
+            # -- sanity check
+            #    Ensure that all decoder outputs are actually used, but more
+            #    importantly that all transform inputs are decoder outputs.
+            #    If you think you want to use a transform on something that
+            #    isn't a decoder output, then you actually want a filter.
+            #    A filter draws data from the original buffers. A transform
+            #    draws from the decoder output buffers, and that's all the
+            #    cases.
+            transform_inputs_set = set(tf.insig for tf in model.transforms)
+            assert decoder_outputs_set == transform_inputs_set, (
+                decoder_outputs_set, transform_inputs_set)
+
+
+        self.decoder_outputs = stable_unique([sig
                            for sig in self.orig_relevant_signals(self.model)
-                           if sig in decoder_outputs_set]
+                           if sig in decoder_outputs_set])
         for sig in self.decoder_outputs:
-            self.dec_outputs[sig] = add_base_like(sig)
+            self.dec_outputs[sig] = add_base_like(sig, '.dec_output')
 
         #    generally, filters and transforms are meant to
         #    write into a fresh "output buffer"
@@ -344,18 +365,17 @@ class Simulator(object):
             [filt.newsig for filt in model.filters]
             + [tf.outsig for tf in model.transforms])
         for sig in stable_unique(filt_and_tf_outputs):
-            self.outbufs[sig] = add_base_like(sig)
+            self.outbufs[sig] = add_base_like(sig, '.outbuf')
 
         for filt in self.model.filters:
             self.filter_outputs[filt] = self.outbufs[filt.newsig]
         for tf in self.model.transforms:
-            self.transform_outputs[tf] = add_base_like(tf.outsig)
+            self.transform_outputs[tf] = self.outbufs[tf.outsig]
 
 
 
         # -- Choose a layout order for the constants.
-        bases = sorted(bases, key=lambda bb: bb.size)
-
+        bases = stable_unique(sorted(bases, key=lambda bb: bb.size))
         self.bases[:] = bases
         self.all_data = self.alloc_signal_data(self.bases)
         self.builder = ViewBuilder(self.bases, self.all_data)
@@ -364,10 +384,11 @@ class Simulator(object):
         self.builder.add_views_to(self.all_data)
 
 
+
     def alloc_all(self):
         pass
 
-    def do_transforms(self):
+    def plan_transforms(self):
         """
         Combine the elements of input accumulator buffer (sigs_ic)
         into *add* them into sigs
@@ -377,13 +398,13 @@ class Simulator(object):
             1.0,
             lambda sig: [tf.alpha_signal
                          for tf in transforms if tf.outsig == sig],
-            lambda sig: [tf.insig
+            lambda sig: [self.dec_outputs[tf.insig]
                          for tf in transforms if tf.outsig == sig],
             1.0,
             lambda sig: self.outbufs[sig],
             )
 
-    def do_filters(self):
+    def plan_filters(self):
         """
         Recombine the elements of previous signal buffer (sigs)
         and write them back to `sigs`
@@ -400,42 +421,100 @@ class Simulator(object):
             lambda sig: self.outbufs[sig],
             )
 
-    def do_encoders(self):
+    def __getitem__(self, item):
+        """
+        Return internally shaped signals, which are always 2d
+        """
+        return self.all_data[self.builder.sidx[item]]
+
+    @property
+    def signals(self):
+        """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)
+        """
+        class Cls(object):
+            def __iter__(_):
+                return iter(stable_unique(self.signals_iter()))
+
+            def __getitem__(_, item):
+                raw = self.all_data[self.builder.sidx[item]]
+                assert raw.ndim == 2
+                if item.ndim == 0:
+                    return raw[0, 0]
+                elif item.ndim == 1:
+                    return raw.ravel()
+                elif item.ndim == 2:
+                    return raw
+                else:
+                    raise NotImplementedError()
+
+            def __setitem__(_, item, val):
+                raw = self.all_data[self.builder.sidx[item]]
+                assert raw.ndim == 2
+                incoming = np.asarray(val)
+                if item.ndim == 0:
+                    assert incoming.size == 1
+                    self.all_data[self.builder.sidx[item]][:] = incoming
+                elif item.ndim == 1:
+                    assert (item.size,) == incoming.shape
+                    self.all_data[self.builder.sidx[item]][:] = incoming[:, None]
+                elif item.ndim == 2:
+                    assert item.shape == incoming.shape
+                    self.all_data[self.builder.sidx[item]][:] = incoming
+                else:
+                    raise NotImplementedError()
+        return Cls()
+
+    def plan_encoders(self):
         encoders = self.model.encoders
 
-        return self.sig_gemv(
-            self.model.nonlinearities,
-            1.0,
-            lambda pop: [enc.weights_signal
-                         for enc in encoders if enc.pop == pop],
-            lambda pop: [enc.sig
-                         for enc in encoders if enc.pop == pop],
-            1.0,
-            lambda pop: pop.input_signal,
-            lambda pop: pop.bias_signal,
-            )
+        def fn():
+            rval = self.sig_gemv(
+                self.model.nonlinearities,
+                1.0,
+                lambda pop: [enc.weights_signal
+                             for enc in encoders if enc.pop == pop],
+                lambda pop: [enc.sig
+                             for enc in encoders if enc.pop == pop],
+                1.0,
+                lambda pop: pop.input_signal,
+                lambda pop: pop.bias_signal,
+                )
+            #print 'encoder', self.model.nonlinearities
+            rval()
+            #for enc in self.model.encoders:
+            #    print self[enc.sig]
+            #    print self[enc.weights_signal]
+            #    print self[enc.pop.input_signal]
+            #    if not np.all(self[enc.sig] == 0):
+            #        assert not np.all(self[enc.pop.input_signal] == 0)
+            #for pop in self.model.nonlinearities:
+                #print self[pop.input_signal].ravel()
+          
+        return fn
 
-    def do_populations(self):
-        dt = self.model.dt
-        sidx = self.builder.sidx
-        nls = sorted(self.model.nonlinearities, key=type)
-        for nl_type, nl_group in itertools.groupby(nls, type):
-            if nl_type == Direct:
-                for nl in nl_group:
-                    J = self.all_data[sidx[nl.input_signal]]
-                    output = nl.fn(J)
-                    self.all_data[sidx[nl.output_signal]][:] = output
-            elif nl_type == LIF:
-                for nl in nl_group:
-                    J = self.all_data[sidx[nl.input_signal]]
-                    voltage = self.all_data[sidx[self.lif_voltage[nl]]]
-                    reftime = self.all_data[sidx[self.lif_reftime[nl]]]
-                    output = self.all_data[sidx[nl.output_signal]]
-                    nl.step_math0(dt, J, voltage, reftime, output,)
-            else:
-                raise NotImplementedError(nl_type)
+    def plan_populations(self):
+        def fn():
+            dt = self.model.dt
+            sidx = self.builder.sidx
+            nls = sorted(self.model.nonlinearities, key=type)
+            for nl_type, nl_group in itertools.groupby(nls, type):
+                if nl_type == Direct:
+                    for nl in nl_group:
+                        J = self.all_data[sidx[nl.input_signal]]
+                        output = nl.fn(J)
+                        self.all_data[sidx[nl.output_signal]][:] = output
+                elif nl_type == LIF:
+                    for nl in nl_group:
+                        J = self.all_data[sidx[nl.input_signal]]
+                        voltage = self.all_data[sidx[self.lif_voltage[nl]]]
+                        reftime = self.all_data[sidx[self.lif_reftime[nl]]]
+                        output = self.all_data[sidx[nl.output_signal]]
+                        nl.step_math0(dt, J, voltage, reftime, output,)
+                else:
+                    raise NotImplementedError(nl_type)
+        return fn
 
-    def do_decoders(self):
+    def plan_decoders(self):
         decoders = self.model.decoders
 
         return self.sig_gemv(
@@ -446,21 +525,23 @@ class Simulator(object):
             lambda sig: [dec.pop.output_signal
                          for dec in decoders if dec.sig == sig],
             0.0,
-            lambda sig: sig,
+            lambda sig: self.dec_outputs[sig],
             )
 
-    def do_probes(self):
-        probes = self.model.probes
-        sidx = self.builder.sidx
-        for probe in probes:
-            period = int(probe.dt // self.model.dt)
-            if self.sim_step % period == 0:
-                self.probe_output[probe].append(
-                    self.all_data[sidx[probe.sig]].copy()
-                    )
+    def plan_probes(self):
+        def fn():
+            probes = self.model.probes
+            sidx = self.builder.sidx
+            for probe in probes:
+                period = int(probe.dt // self.model.dt)
+                if self.sim_step % period == 0:
+                    self.probe_output[probe].append(
+                        self.all_data[sidx[probe.sig]].copy()
+                        )
+        return fn
 
 
-    def do_back_copy(self):
+    def plan_back_copy(self):
         return self.sig_gemv(
             self.outbufs.keys(),
             1.0,
@@ -471,30 +552,19 @@ class Simulator(object):
             )
 
     def do_all(self):
-        #print '-' * 10 + 'A' * 10 + '-' * 10
-        #print self.all_data_A
-        #print '-' * 20
-        self.do_encoders()
-        #print self.pop_J
-        self.do_populations()
-        #print self.pop_J
-        self.do_decoders()
-        #print self.pop_J
-        self.do_filters()
-        #print self.pop_J
-        self.do_transforms()
-        #print self.pop_J
-        self.do_back_copy()
-        #print self.pop_J
-        self.do_probes()
-        #print self.pop_J
-
-        #print '-' * 10 + 'B' * 10 + '-' * 10
-        #print self.all_data_A
-        #print '-' * 20
+        for fn in self._plan:
+            fn()
 
     def plan_all(self):
-        pass
+        self._plan = [
+            self.plan_encoders(),
+            self.plan_populations(),
+            self.plan_decoders(),
+            self.plan_filters(),
+            self.plan_transforms(),
+            self.plan_back_copy(),
+            self.plan_probes(),
+        ]
 
     def step(self):
         self.do_all()
