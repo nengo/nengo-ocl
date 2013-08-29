@@ -5,10 +5,11 @@ from mako.template import Template
 from array import to_device
 
 
-def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
-                       beta, Y, Y_in=None, tag=None):
+def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
+                            beta, Y, Y_in=None, tag=None):
     """
     """
+
     # TODO: if alpha or beta is a float
     #       then render it into the kernel text.
     try:
@@ -31,7 +32,7 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
 
     # XXX check for e.g. all Ns being the same thing
     #     especially all Ns == 1
-    cl_Ns = to_device(queue, np.asarray(Ns, 'int32'))
+    # cl_Ns = to_device(queue, np.asarray(Ns, 'int32'))
 
     # XXX check that all the ints are ints not longs
     textconf = {
@@ -44,12 +45,13 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
 
     text = """
         __kernel void fn(
-            __global int *Ns,
             __global ${type_alpha} * alphas,
             __global int *A_starts,
+            __global int *A_shape1s,
+            __global int *A_ldas,
             __global ${type_A} *A_data,
             __global int *A_js_starts,
-            __global int *A_js_lens,
+            __global int *A_js_shape0s,
             __global int *A_js_data,
             __global int *X_starts,
             __global ${type_X} *X_data,
@@ -59,33 +61,35 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
             __global int *Y_in_starts,
             __global ${type_Y} *Y_in_data,
             __global int *Y_starts,
-            __global int *Y_lens,
+            __global int *Y_shape0s,
             __global ${type_Y} *Y_data)
         {
             const int mm = get_global_id(0);
             const int bb = get_global_id(1);
-            const int M = Y_lens[bb];
+            const int M = Y_shape0s[bb];
             if (mm < M)
             {
                 const ${type_alpha} alpha = alphas[bb];
                 const ${type_beta} beta = betas[bb];
 
-                int n_dot_products = A_js_lens[bb];
-                int y_offset = Y_starts[bb];
-                int y_in_offset = Y_in_starts[bb];
-
-                X_js_data += X_js_starts[bb];
-                A_js_data += A_js_starts[bb];
+                const int y_offset = Y_starts[bb];
+                const int y_in_offset = Y_in_starts[bb];
 
                 Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm];
+
+                % if A_js :
+                const int n_dot_products = A_js_shape0s[bb];
+                X_js_data += X_js_starts[bb];
+                A_js_data += A_js_starts[bb];
 
                 for (int ii = 0; ii < n_dot_products; ++ii)
                 {
                     int x_ji = X_js_data[ii];
                     int a_ji = A_js_data[ii];
-                    int N_i = Ns[a_ji];
+                    int N_i = A_shape1s[a_ji];
                     int x_offset = X_starts[x_ji];
                     int a_offset = A_starts[a_ji];
+                    int lda_i = A_ldas[a_ji];
 
                     // compute the matrix-vector product
                     // dot(X[x_ji], A[a_ji])
@@ -93,36 +97,42 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
                     for (int nn = 0; nn < N_i; ++nn)
                     {
                         y_sum += X_data[x_offset + nn]
-                        * A_data[a_offset + nn * M + mm];
+                            * A_data[a_offset + nn * lda_i + mm];
                     }
                     Y_data[y_offset + mm] += alpha * y_sum;
                 }
+                % endif
             }
         }
     """
 
     text = Template(text, output_encoding='ascii').render(**textconf)
-    gsize = (int(max(Ms)), int(len(Y)),)
+
+    ### TODO: use the maximum of A.shape0s that is actually used in this op
+    gsize = (int(max(A.shape0s)), int(len(Y)),)
     lsize = None
     _fn = cl.Program(queue.context, text).build().fn
-    full_args = (cl_Ns,
-                 cl_alpha,
+    dummy = A.cl_buf
+    full_args = (cl_alpha,
                  A.cl_starts,
+                 A.cl_shape1s,
+                 A.cl_ldas,
                  A.cl_buf,
-                 A_js.cl_starts,
-                 A_js.cl_lens,
-                 A_js.cl_buf,
+                 A_js.cl_starts if A_js is not None else dummy,
+                 A_js.cl_shape0s if A_js is not None else dummy,
+                 A_js.cl_buf if A_js is not None else dummy,
                  X.cl_starts,
                  X.cl_buf,
-                 X_js.cl_starts,
-                 X_js.cl_buf,
+                 X_js.cl_starts if X_js is not None else dummy,
+                 X_js.cl_buf if X_js is not None else dummy,
                  cl_beta,
                  Y_in.cl_starts,
                  Y_in.cl_buf,
                  Y.cl_starts,
-                 Y.cl_lens,
+                 Y.cl_shape0s,
                  Y.cl_buf,
                 )
+
     #print [str(arr.dtype)[0] for arr in full_args]
     _fn.set_args(*[arr.data for arr in full_args])
     rval = Plan(queue, _fn, gsize, lsize,
@@ -132,6 +142,5 @@ def plan_ragged_gather_gemv(queue, Ms, Ns, alpha, A, A_js, X, X_js,
     # prevent garbage-collection
     rval.alpha = cl_alpha
     rval.beta = cl_beta
-    rval.Ns = cl_Ns
     return rval
 

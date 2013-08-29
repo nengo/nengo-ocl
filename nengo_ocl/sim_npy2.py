@@ -125,13 +125,6 @@ class Simulator(object):
     def RaggedArray(self, *args, **kwargs):
         return RaggedArray(*args, **kwargs)
 
-    def alloc_signal_data(self, sigseq):
-        rval = self.RaggedArray(
-            [np.zeros(ss.shape) + getattr(ss, 'value', np.zeros(ss.shape))
-                for ss in sigseq],
-            names=[getattr(ss, 'name', '') for ss in sigseq])
-        return rval
-
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
                  Y_in_sig_fn=None,
                  verbose=0
@@ -200,8 +193,8 @@ class Simulator(object):
             print 'print A', A_js
             print 'print X', X_js
 
-        A_js = RaggedArray(A_js)
-        X_js = RaggedArray(X_js)
+        A_js = self.RaggedArray(A_js)
+        X_js = self.RaggedArray(X_js)
         Y = self.all_data[Y_idxs]
         Y_in = self.all_data[Y_in_idxs]
 
@@ -437,7 +430,14 @@ class Simulator(object):
         # -- Choose a layout order for the constants.
         bases = stable_unique(sorted(bases, key=lambda bb: bb.size))
         self.bases[:] = bases
-        self.all_data = self.alloc_signal_data(self.bases)
+
+        ### N.B. we're allocating on the host in the constructor. The OCL
+        ### version transfers to the device in its constructor.
+        self.all_data = RaggedArray(
+            [np.zeros(ss.shape) + getattr(ss, 'value', np.zeros(ss.shape))
+                for ss in self.bases],
+            names=[getattr(ss, 'name', '') for ss in self.bases])
+
         builder = ViewBuilder(self.bases, self.all_data)
         for sig in stable_unique(self.signals_iter()):
             builder.append_view(sig)
