@@ -4,6 +4,8 @@ numpy Simulator in the style of the OpenCL one, to get design right.
 import itertools
 import logging
 
+from tricky_imports import OrderedDict
+
 logger = logging.getLogger(__name__)
 info = logger.info
 warn = logger.warn
@@ -123,14 +125,12 @@ class Simulator(object):
     def RaggedArray(self, *args, **kwargs):
         return RaggedArray(*args, **kwargs)
 
-
     def alloc_signal_data(self, sigseq):
         rval = self.RaggedArray(
             [np.zeros(ss.shape) + getattr(ss, 'value', np.zeros(ss.shape))
                 for ss in sigseq],
             names=[getattr(ss, 'name', '') for ss in sigseq])
         return rval
-
 
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
                  Y_in_sig_fn=None,
@@ -202,20 +202,19 @@ class Simulator(object):
         Y = self.all_data[Y_idxs]
         Y_in = self.all_data[Y_in_idxs]
 
-        def rval():
-            ragged_gather_gemv(
-                Ms=self.all_data.shape0s,
-                Ns=self.all_data.shape1s,
-                alpha=alpha,
-                A=self.all_data, A_js=A_js,
-                X=self.all_data, X_js=X_js,
-                beta=beta,
-                Y=Y,
-                Y_in=Y_in,
-                )
-            if verbose:
-                print Y
-        return rval
+        return self.plan_ragged_gather_gemv(
+            Ms=self.all_data.shape0s,
+            Ns=self.all_data.shape1s,
+            alpha=alpha,
+            A=self.all_data, A_js=A_js,
+            X=self.all_data, X_js=X_js,
+            beta=beta,
+            Y=Y,
+            Y_in=Y_in,
+            )
+
+    def plan_ragged_gather_gemv(self, *args, **kwargs):
+        return (lambda: ragged_gather_gemv(*args, **kwargs))
 
     @staticmethod
     def orig_relevant_signals(model):
@@ -311,7 +310,7 @@ class Simulator(object):
         #    loop, because we need their old values at the end.
         self.filtered_bases_set = set(filt.oldsig.base for filt in model.filters)
 
-        self.saved_for_filtering = {}
+        self.saved_for_filtering = OrderedDict()
         def save_for_filtering(sig):
             try:
                 return self.saved_for_filtering[sig]
