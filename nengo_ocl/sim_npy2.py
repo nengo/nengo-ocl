@@ -303,10 +303,23 @@ class Simulator(object):
 
         self.probe_output = dict((probe, []) for probe in model.probes)
 
-
         # create at least one buffer for every signal
         bases = stable_unique(sig.base for sig in
                     self.orig_relevant_signals(model))
+
+        # -- the following bases cannot be modified during the simulator
+        #    loop, because we need their old values at the end.
+        self.filtered_bases_set = set(filt.oldsig.base for filt in model.filters)
+
+        self.saved_for_filtering = {}
+        def save_for_filtering(sig):
+            try:
+                return self.saved_for_filtering[sig]
+            except KeyError:
+                newbase = add_base_like(sig, 'saved')
+                self.saved_for_filtering[sig] = newbase
+                return newbase
+
 
         def add_base_like(sig, suffix):
             N, = sig.shape
@@ -325,14 +338,22 @@ class Simulator(object):
         #    reset bias -> input current can be done in-place
         #    encoders -> input current can be done in-place
         #    nl outputs -> generally needs buffer
+        for enc in model.encoders:
+            if enc.pop.input_signal.base in self.filtered_bases_set:
+                save_for_filtering(enc.pop.input_signal)
+
         for nl in model.nonlinearities:
+            if nl.output_signal.base in self.filtered_bases_set:
+                save_for_filtering(nl.output_signal)
 
             # -- also some neuron models need a few extra buffers
             if isinstance(nl, Direct):
                 pass
             elif isinstance(nl, LIF):
-                self.lif_voltage[nl] = add_base_like(nl.output_signal, '.voltage')
-                self.lif_reftime[nl] = add_base_like(nl.output_signal, '.reftime')
+                self.lif_voltage[nl] = add_base_like(nl.output_signal,
+                                                     '.voltage')
+                self.lif_reftime[nl] = add_base_like(nl.output_signal,
+                                                     '.reftime')
             elif isinstance(nl, LIFRate):
                 pass 
             else:
@@ -540,16 +561,29 @@ class Simulator(object):
         and write them back to `sigs`
         """
         filters = self.model.filters
+        saved = self.saved_for_filtering
         return self.sig_gemv(
             self.outbufs.keys(),
             1.0,
-            lambda sig: [tf.alpha_signal
-                         for tf in filters if tf.newsig == sig],
-            lambda sig: [tf.oldsig
-                         for tf in filters if tf.newsig == sig],
+            lambda sig: [filt.alpha_signal
+                         for filt in filters if filt.newsig == sig],
+            lambda sig: [saved.get(filt.oldsig, filt.oldsig)
+                         for filt in filters if filt.newsig == sig],
             0.0,
             lambda sig: self.outbufs[sig],
             verbose=verbose
+            )
+
+    def plan_save_for_filters(self):
+        saved = self.saved_for_filtering
+        return self.sig_gemv(
+            saved,
+            1.0,
+            lambda item: [self.model.one],
+            lambda item: [item],
+            0.0,
+            lambda item: saved[item],
+            verbose=0,
             )
 
     def plan_back_copy(self):
@@ -564,7 +598,8 @@ class Simulator(object):
         # -- by_base: map original base -> (view of base, outbuf for view)
         by_base = dict((sig_or_view.base, [])
                        for sig_or_view in self.outbufs.keys())
-        for sig_or_view in self.outbufs.keys():
+
+        for sig_or_view in self.outbufs:
             by_base[sig_or_view.base].append(
                 (sig_or_view, self.outbufs[sig_or_view]))
 
@@ -598,11 +633,11 @@ class Simulator(object):
                 if self.sim_step % period == 0:
                     self.probe_output[probe].append(
                         self.signals[probe.sig].copy())
-                        #self.all_data[sidx[probe.sig]].copy())
         return fn
 
     def plan_all(self):
         self._plan = [
+            self.plan_save_for_filters(),
             self.plan_encoders(),
             self.plan_populations(),
             self.plan_decoders(),
