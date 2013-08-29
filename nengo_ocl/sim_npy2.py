@@ -186,7 +186,6 @@ class Simulator(object):
                                          ))
                     A_js_i.append(aidx)
                     X_js_i.append(xidx)
-
             A_js.append(A_js_i)
             X_js.append(X_js_i)
 
@@ -194,7 +193,6 @@ class Simulator(object):
             print 'in sig_vemv'
             print 'print A', A_js
             print 'print X', X_js
-
 
         A_js = RaggedArray(A_js)
         X_js = RaggedArray(X_js)
@@ -332,17 +330,22 @@ class Simulator(object):
 
         for dec in model.decoders:
             if isview(dec.sig):
+                # -- I'm hoping that this is actually not something
+                #    that you ever really need to do.
+                #    Transforms and Filters can update into views.
                 raise NotImplementedError('decoding to view')
-
-        for tf in model.transforms:
-            if isview(tf.insig):
-                raise NotImplementedError('transforming from view')
 
         #    decoder outputs -> also generally needs copy
         #    N.B. technically many decoders can decode the same signal
         #         this is defined to mean that we add together the several
         #         decoder outputs as if it were a large sparsely connected decoder
         decoder_outputs_set = set(dec.sig for dec in model.decoders)
+        self.decoder_outputs = stable_unique([sig
+             for sig in self.orig_relevant_signals(self.model)
+             if sig in decoder_outputs_set])
+
+        for sig in self.decoder_outputs:
+            self.dec_outputs[sig] = add_base_like(sig, '.dec_output')
 
         if 1:
             # -- sanity check
@@ -353,22 +356,30 @@ class Simulator(object):
             #    A filter draws data from the original buffers. A transform
             #    draws from the decoder output buffers, and that's all the
             #    cases.
-            transform_inputs_set = set(tf.insig for tf in model.transforms)
-            assert decoder_outputs_set == transform_inputs_set, (
-                decoder_outputs_set, transform_inputs_set)
-
-        self.decoder_outputs = stable_unique([sig
-                           for sig in self.orig_relevant_signals(self.model)
-                           if sig in decoder_outputs_set])
-
-        for sig in self.decoder_outputs:
-            self.dec_outputs[sig] = add_base_like(sig, '.dec_output')
+            pop_outputs_set = set(
+                nl.output_signal for nl in model.nonlinearities)
+            transform_inputs_set = set(
+                tf.insig.base for tf in model.transforms)
+            valid_transformable_things = pop_outputs_set
+            valid_transformable_things.update(decoder_outputs_set)
+            if not transform_inputs_set.issubset(valid_transformable_things):
+                print "Model error: Transform inputs != valid transformable"
+                print "Decoder outputs:         ", decoder_outputs_set
+                print "Population outputs:      ", pop_outputs_set
+                print "Transform inputs (bases):", transform_inputs_set
+                assert decoder_outputs_set == transform_inputs_set
+            del transform_inputs_set
+            del valid_transformable_things
+            del pop_outputs_set
 
         #    generally, filters and transforms are meant to
         #    write into a fresh "output buffer"
         #    which is then copied back over top of the old values
         #    There are cases where more can be done in-place, but we'll
         #    just do the general case for now.
+        #
+        #    -- N.B. that each of view of some common base gets its own
+        #       allocated space in outbufs
         filt_and_tf_outputs = (
             [filt.newsig for filt in model.filters]
             + [tf.outsig for tf in model.transforms])
@@ -379,8 +390,6 @@ class Simulator(object):
             self.filter_outputs[filt] = self.outbufs[filt.newsig]
         for tf in self.model.transforms:
             self.transform_outputs[tf] = self.outbufs[tf.outsig]
-
-
 
         # -- Choose a layout order for the constants.
         bases = stable_unique(sorted(bases, key=lambda bb: bb.size))
@@ -498,7 +507,7 @@ class Simulator(object):
             1.0,
             lambda sig: [tf.alpha_signal
                          for tf in transforms if tf.outsig == sig],
-            lambda sig: [self.dec_outputs[tf.insig]
+            lambda sig: [self.dec_outputs.get(tf.insig, tf.insig)
                          for tf in transforms if tf.outsig == sig],
             1.0,
             lambda sig: self.outbufs[sig],
@@ -527,6 +536,10 @@ class Simulator(object):
         # -- here we may have to serialize a little bit so that
         #    updates to views are copied back incrementally into
         #    any original signals
+
+        # XXX This function should be more sophisticated, if sets
+        #     of views are shown to be non-overlapping, then they
+        #     can be updated at the same time.
 
         # -- by_base: map original base -> (view of base, outbuf for view)
         by_base = dict((sig_or_view.base, [])
