@@ -1,13 +1,7 @@
 """
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
-from collections import defaultdict
-try:
-    from collections import OrderedDict
-except ImportError:
-    from ordereddict import OrderedDict
 import itertools
-import StringIO
 import sys
 import time
 
@@ -19,10 +13,9 @@ from nengo.objects import LIF, LIFRate, Direct
 from sim_npy import ragged_gather_gemv
 from sim_npy import RaggedArray
 
-foo = [0]
-
 def info(msg):
     print >> sys.stderr, "INFO: %s" % msg
+
 
 def isview(obj):
     return obj.base is not None and obj.base is not obj
@@ -209,13 +202,6 @@ class Simulator(object):
         Y_in = self.all_data[Y_in_idxs]
 
         def rval():
-            if verbose:
-                #assert A_js[0] == [33]
-                #assert X_js[0] == [32]
-                #print self.all_data[33]
-                #print self.all_data[32]
-                pass
-            t0 = time.time()
             ragged_gather_gemv(
                 Ms=self.all_data.shape0s,
                 Ns=self.all_data.shape1s,
@@ -228,11 +214,7 @@ class Simulator(object):
                 )
             if verbose:
                 print Y
-            foo[0] += time.time() - t0
-            #print foo
-
         return rval
-
 
     @staticmethod
     def orig_relevant_signals(model):
@@ -301,7 +283,6 @@ class Simulator(object):
 
         for sig in self.outbufs:
             yield self.outbufs[sig]
-
 
     def __init__(self, model, n_prealloc_probes=1000, dtype='float32'):
         self.model = model
@@ -410,45 +391,8 @@ class Simulator(object):
             self.builder.append_view(sig)
         self.builder.add_views_to(self.all_data)
 
-
-
     def alloc_all(self):
         pass
-
-    def plan_transforms(self, verbose=0):
-        """
-        Combine the elements of input accumulator buffer (sigs_ic)
-        into *add* them into sigs
-        """
-        transforms = self.model.transforms
-        return self.sig_gemv(self.outbufs.keys(),
-            1.0,
-            lambda sig: [tf.alpha_signal
-                         for tf in transforms if tf.outsig == sig],
-            lambda sig: [self.dec_outputs[tf.insig]
-                         for tf in transforms if tf.outsig == sig],
-            1.0,
-            lambda sig: self.outbufs[sig],
-            verbose=verbose
-            )
-
-    def plan_filters(self, verbose=0):
-        """
-        Recombine the elements of previous signal buffer (sigs)
-        and write them back to `sigs`
-        """
-        filters = self.model.filters
-        return self.sig_gemv(
-            self.outbufs.keys(),
-            1.0,
-            lambda sig: [tf.alpha_signal
-                         for tf in filters if tf.newsig == sig],
-            lambda sig: [tf.oldsig
-                         for tf in filters if tf.newsig == sig],
-            0.0,
-            lambda sig: self.outbufs[sig],
-            verbose=verbose
-            )
 
     def __getitem__(self, item):
         """
@@ -544,18 +488,40 @@ class Simulator(object):
             lambda sig: self.dec_outputs[sig],
             )
 
-    def plan_probes(self):
-        def fn():
-            probes = self.model.probes
-            sidx = self.builder.sidx
-            for probe in probes:
-                period = int(probe.dt // self.model.dt)
-                if self.sim_step % period == 0:
-                    self.probe_output[probe].append(
-                        self.all_data[sidx[probe.sig]].copy()
-                        )
-        return fn
+    def plan_transforms(self, verbose=0):
+        """
+        Combine the elements of input accumulator buffer (sigs_ic)
+        into *add* them into sigs
+        """
+        transforms = self.model.transforms
+        return self.sig_gemv(self.outbufs.keys(),
+            1.0,
+            lambda sig: [tf.alpha_signal
+                         for tf in transforms if tf.outsig == sig],
+            lambda sig: [self.dec_outputs[tf.insig]
+                         for tf in transforms if tf.outsig == sig],
+            1.0,
+            lambda sig: self.outbufs[sig],
+            verbose=verbose
+            )
 
+    def plan_filters(self, verbose=0):
+        """
+        Recombine the elements of previous signal buffer (sigs)
+        and write them back to `sigs`
+        """
+        filters = self.model.filters
+        return self.sig_gemv(
+            self.outbufs.keys(),
+            1.0,
+            lambda sig: [tf.alpha_signal
+                         for tf in filters if tf.newsig == sig],
+            lambda sig: [tf.oldsig
+                         for tf in filters if tf.newsig == sig],
+            0.0,
+            lambda sig: self.outbufs[sig],
+            verbose=verbose
+            )
 
     def plan_back_copy(self):
         # -- here we may have to serialize a little bit so that
@@ -590,9 +556,16 @@ class Simulator(object):
         info('back_copy required %i passes' % len(copy_fns))
         return copy_fns
 
-    def do_all(self):
-        for fn in self._plan:
-            fn()
+    def plan_probes(self):
+        def fn():
+            probes = self.model.probes
+            sidx = self.builder.sidx
+            for probe in probes:
+                period = int(probe.dt // self.model.dt)
+                if self.sim_step % period == 0:
+                    self.probe_output[probe].append(
+                        self.all_data[sidx[probe.sig]].copy())
+        return fn
 
     def plan_all(self):
         self._plan = [
@@ -606,13 +579,15 @@ class Simulator(object):
         self._plan.append(self.plan_probes())
 
     def step(self):
-        self.do_all()
+        for fn in self._plan:
+            fn()
         self.sim_step += 1
 
     def run_steps(self, N, verbose=False):
         for i in xrange(N):
             self.step()
 
+    # XXX there is both .signals and .signal and they are pretty different
     def signal(self, sig):
         probes = [sp for sp in self.model.probes if sp.sig == sig]
         if len(probes) == 0:
