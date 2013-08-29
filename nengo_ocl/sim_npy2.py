@@ -559,12 +559,13 @@ class Simulator(object):
     def plan_probes(self):
         def fn():
             probes = self.model.probes
-            sidx = self.builder.sidx
+            #sidx = self.builder.sidx
             for probe in probes:
                 period = int(probe.dt // self.model.dt)
                 if self.sim_step % period == 0:
                     self.probe_output[probe].append(
-                        self.all_data[sidx[probe.sig]].copy())
+                        self.signals[probe.sig].copy())
+                        #self.all_data[sidx[probe.sig]].copy())
         return fn
 
     def plan_all(self):
