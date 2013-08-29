@@ -8,6 +8,7 @@ except ImportError:
     from ordereddict import OrderedDict
 import itertools
 import StringIO
+import sys
 import time
 
 import numpy as np
@@ -19,6 +20,9 @@ from sim_npy import ragged_gather_gemv
 from sim_npy import RaggedArray
 
 foo = [0]
+
+def info(msg):
+    print >> sys.stderr, "INFO: %s" % msg
 
 def isview(obj):
     return obj.base is not None and obj.base is not obj
@@ -133,7 +137,9 @@ class Simulator(object):
 
 
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
-                 Y_in_sig_fn=None):
+                 Y_in_sig_fn=None,
+                 verbose=0
+                ):
         sidx = self.builder.sidx
         Y_sigs = [Y_sig_fn(item) for item in seq]
         if Y_in_sig_fn is None:
@@ -191,6 +197,11 @@ class Simulator(object):
             A_js.append(A_js_i)
             X_js.append(X_js_i)
 
+        if verbose:
+            print 'in sig_vemv'
+            print 'print A', A_js
+            print 'print X', X_js
+
 
         A_js = RaggedArray(A_js)
         X_js = RaggedArray(X_js)
@@ -198,6 +209,12 @@ class Simulator(object):
         Y_in = self.all_data[Y_in_idxs]
 
         def rval():
+            if verbose:
+                #assert A_js[0] == [33]
+                #assert X_js[0] == [32]
+                #print self.all_data[33]
+                #print self.all_data[32]
+                pass
             t0 = time.time()
             ragged_gather_gemv(
                 Ms=self.all_data.shape0s,
@@ -209,6 +226,8 @@ class Simulator(object):
                 Y=Y,
                 Y_in=Y_in,
                 )
+            if verbose:
+                print Y
             foo[0] += time.time() - t0
             #print foo
 
@@ -329,12 +348,20 @@ class Simulator(object):
             else:
                 raise NotImplementedError()
 
+
+        for dec in model.decoders:
+            if isview(dec.sig):
+                raise NotImplementedError('decoding to view')
+
+        for tf in model.transforms:
+            if isview(tf.insig):
+                raise NotImplementedError('transforming from view')
+
         #    decoder outputs -> also generally needs copy
         #    N.B. technically many decoders can decode the same signal
         #         this is defined to mean that we add together the several
         #         decoder outputs as if it were a large sparsely connected decoder
         decoder_outputs_set = set(dec.sig for dec in model.decoders)
-        print model.decoders
 
         if 1:
             # -- sanity check
@@ -349,10 +376,10 @@ class Simulator(object):
             assert decoder_outputs_set == transform_inputs_set, (
                 decoder_outputs_set, transform_inputs_set)
 
-
         self.decoder_outputs = stable_unique([sig
                            for sig in self.orig_relevant_signals(self.model)
                            if sig in decoder_outputs_set])
+
         for sig in self.decoder_outputs:
             self.dec_outputs[sig] = add_base_like(sig, '.dec_output')
 
@@ -388,7 +415,7 @@ class Simulator(object):
     def alloc_all(self):
         pass
 
-    def plan_transforms(self):
+    def plan_transforms(self, verbose=0):
         """
         Combine the elements of input accumulator buffer (sigs_ic)
         into *add* them into sigs
@@ -402,9 +429,10 @@ class Simulator(object):
                          for tf in transforms if tf.outsig == sig],
             1.0,
             lambda sig: self.outbufs[sig],
+            verbose=verbose
             )
 
-    def plan_filters(self):
+    def plan_filters(self, verbose=0):
         """
         Recombine the elements of previous signal buffer (sigs)
         and write them back to `sigs`
@@ -419,6 +447,7 @@ class Simulator(object):
                          for tf in filters if tf.newsig == sig],
             0.0,
             lambda sig: self.outbufs[sig],
+            verbose=verbose
             )
 
     def __getitem__(self, item):
@@ -467,30 +496,17 @@ class Simulator(object):
     def plan_encoders(self):
         encoders = self.model.encoders
 
-        def fn():
-            rval = self.sig_gemv(
-                self.model.nonlinearities,
-                1.0,
-                lambda pop: [enc.weights_signal
-                             for enc in encoders if enc.pop == pop],
-                lambda pop: [enc.sig
-                             for enc in encoders if enc.pop == pop],
-                1.0,
-                lambda pop: pop.input_signal,
-                lambda pop: pop.bias_signal,
-                )
-            #print 'encoder', self.model.nonlinearities
-            rval()
-            #for enc in self.model.encoders:
-            #    print self[enc.sig]
-            #    print self[enc.weights_signal]
-            #    print self[enc.pop.input_signal]
-            #    if not np.all(self[enc.sig] == 0):
-            #        assert not np.all(self[enc.pop.input_signal] == 0)
-            #for pop in self.model.nonlinearities:
-                #print self[pop.input_signal].ravel()
-          
-        return fn
+        return self.sig_gemv(
+            self.model.nonlinearities,
+            1.0,
+            lambda pop: [enc.weights_signal
+                         for enc in encoders if enc.pop == pop],
+            lambda pop: [enc.sig
+                         for enc in encoders if enc.pop == pop],
+            1.0,
+            lambda pop: pop.input_signal,
+            lambda pop: pop.bias_signal,
+            )
 
     def plan_populations(self):
         def fn():
@@ -542,14 +558,37 @@ class Simulator(object):
 
 
     def plan_back_copy(self):
-        return self.sig_gemv(
-            self.outbufs.keys(),
-            1.0,
-            lambda sig: [self.model.one],
-            lambda sig: [self.outbufs[sig]],
-            0.0,
-            lambda sig: sig,
-            )
+        # -- here we may have to serialize a little bit so that
+        #    updates to views are copied back incrementally into
+        #    any original signals
+
+        # -- by_base: map original base -> (view of base, outbuf for view)
+        by_base = dict((sig_or_view.base, [])
+                       for sig_or_view in self.outbufs.keys())
+        for sig_or_view in self.outbufs.keys():
+            by_base[sig_or_view.base].append(
+                (sig_or_view, self.outbufs[sig_or_view]))
+
+        copy_fns = []
+        beta = 0.0
+        while by_base:
+            bases = by_base.keys()
+            copy_fns.append(
+                self.sig_gemv(
+                    bases,
+                    1.0,
+                    lambda base: [self.model.one],
+                    lambda base: [by_base[base][-1][1]],
+                    beta,
+                    lambda base: by_base[base][-1][0],
+                    verbose=0,
+                    ))
+            for base in by_base:
+                by_base[base].pop()
+            by_base = dict((k, v) for k, v in by_base.items() if v)
+            beta = 1.0
+        info('back_copy required %i passes' % len(copy_fns))
+        return copy_fns
 
     def do_all(self):
         for fn in self._plan:
@@ -562,9 +601,9 @@ class Simulator(object):
             self.plan_decoders(),
             self.plan_filters(),
             self.plan_transforms(),
-            self.plan_back_copy(),
-            self.plan_probes(),
         ]
+        self._plan.extend(self.plan_back_copy())
+        self._plan.append(self.plan_probes())
 
     def step(self):
         self.do_all()
