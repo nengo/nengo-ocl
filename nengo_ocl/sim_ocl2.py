@@ -2,10 +2,10 @@ import os
 import pyopencl as cl
 
 import sim_npy2
-from sim_ocl import RaggedArray
+import sim_ocl
 
 from ocl.gemv_batched import plan_ragged_gather_gemv
-#from ocl.lif import plan_lif
+from ocl.lif import plan_lif
 #from ocl.elemwise import plan_copy, plan_inc
 
 class Simulator(sim_npy2.Simulator):
@@ -26,12 +26,16 @@ class Simulator(sim_npy2.Simulator):
                                     model,
                                     n_prealloc_probes=n_prealloc_probes)
 
-    def RaggedArray(self, listoflists):
-        return RaggedArray(self.queue, listoflists)
+        # -- replace the numpy-allocated RaggedArray with OpenCL one
+        self.all_data = sim_ocl.RaggedArray(self.queue, self.all_data)
+
 
     def plan_ragged_gather_gemv(self, *args, **kwargs):
         return plan_ragged_gather_gemv(
             self.queue, *args, **kwargs)
+
+    def plan_lif(self, *args, **kwargs):
+        return plan_lif(self.queue, *args, **kwargs)
 
 
 

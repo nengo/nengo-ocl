@@ -15,8 +15,12 @@ import nengo.tests.helpers
 
 from nengo_ocl import sim_ocl2
 
-def simulator_allocator(model):
-    rval = sim_ocl2.Simulator(model)
+import pyopencl as cl
+
+ctx = cl.create_some_context()
+
+def simulator_allocator(*args, **kwargs):
+    rval = sim_ocl2.Simulator(ctx, *args, **kwargs)
     rval.plan_all()
     return rval
 

@@ -136,7 +136,7 @@ class Simulator(object):
                  Y_in_sig_fn=None,
                  verbose=0
                 ):
-        sidx = self.builder.sidx
+        sidx = self.sidx
         Y_sigs = [Y_sig_fn(item) for item in seq]
         if Y_in_sig_fn is None:
             Y_in_sigs = Y_sigs
@@ -435,19 +435,17 @@ class Simulator(object):
         bases = stable_unique(sorted(bases, key=lambda bb: bb.size))
         self.bases[:] = bases
         self.all_data = self.alloc_signal_data(self.bases)
-        self.builder = ViewBuilder(self.bases, self.all_data)
+        builder = ViewBuilder(self.bases, self.all_data)
         for sig in stable_unique(self.signals_iter()):
-            self.builder.append_view(sig)
-        self.builder.add_views_to(self.all_data)
-
-    def alloc_all(self):
-        pass
+            builder.append_view(sig)
+        builder.add_views_to(self.all_data)
+        self.sidx = builder.sidx
 
     def __getitem__(self, item):
         """
         Return internally shaped signals, which are always 2d
         """
-        return self.all_data[self.builder.sidx[item]]
+        return self.all_data[self.sidx[item]]
 
     @property
     def signals(self):
@@ -458,7 +456,7 @@ class Simulator(object):
                 return iter(stable_unique(self.signals_iter()))
 
             def __getitem__(_, item):
-                raw = self.all_data[self.builder.sidx[item]]
+                raw = self.all_data[self.sidx[item]]
                 assert raw.ndim == 2
                 if item.ndim == 0:
                     return raw[0, 0]
@@ -470,18 +468,18 @@ class Simulator(object):
                     raise NotImplementedError()
 
             def __setitem__(_, item, val):
-                raw = self.all_data[self.builder.sidx[item]]
+                raw = self.all_data[self.sidx[item]]
                 assert raw.ndim == 2
                 incoming = np.asarray(val)
                 if item.ndim == 0:
                     assert incoming.size == 1
-                    self.all_data[self.builder.sidx[item]][:] = incoming
+                    self.all_data[self.sidx[item]][:] = incoming
                 elif item.ndim == 1:
                     assert (item.size,) == incoming.shape
-                    self.all_data[self.builder.sidx[item]][:] = incoming[:, None]
+                    self.all_data[self.sidx[item]][:] = incoming[:, None]
                 elif item.ndim == 2:
                     assert item.shape == incoming.shape
-                    self.all_data[self.builder.sidx[item]][:] = incoming
+                    self.all_data[self.sidx[item]][:] = incoming
                 else:
                     raise NotImplementedError()
         return Cls()
@@ -501,27 +499,38 @@ class Simulator(object):
             lambda pop: pop.bias_signal,
             )
 
-    def plan_populations(self):
-        def fn():
-            dt = self.model.dt
-            sidx = self.builder.sidx
-            nls = sorted(self.model.nonlinearities, key=type)
-            for nl_type, nl_group in itertools.groupby(nls, type):
-                if nl_type == Direct:
-                    for nl in nl_group:
-                        J = self.all_data[sidx[nl.input_signal]]
-                        output = nl.fn(J)
-                        self.all_data[sidx[nl.output_signal]][:] = output
-                elif nl_type == LIF:
-                    for nl in nl_group:
-                        J = self.all_data[sidx[nl.input_signal]]
-                        voltage = self.all_data[sidx[self.lif_voltage[nl]]]
-                        reftime = self.all_data[sidx[self.lif_reftime[nl]]]
-                        output = self.all_data[sidx[nl.output_signal]]
-                        nl.step_math0(dt, J, voltage, reftime, output,)
-                else:
-                    raise NotImplementedError(nl_type)
-        return fn
+    def plan_direct(self, nls):
+        sidx = self.sidx
+        def direct():
+            for nl in nls:
+                J = self.all_data[sidx[nl.input_signal]]
+                output = nl.fn(J)
+                self.all_data[sidx[nl.output_signal]][:] = output
+        return direct
+
+    def plan_lif(self, nls):
+        dt = self.model.dt
+        sidx = self.sidx
+        def lif():
+            for nl in nls:
+                J = self.all_data[sidx[nl.input_signal]]
+                voltage = self.all_data[sidx[self.lif_voltage[nl]]]
+                reftime = self.all_data[sidx[self.lif_reftime[nl]]]
+                output = self.all_data[sidx[nl.output_signal]]
+                nl.step_math0(dt, J, voltage, reftime, output,)
+        return lif
+
+    def plan_nonlinearities(self):
+        nl_fns = []
+        nls = sorted(self.model.nonlinearities, key=type)
+        for nl_type, nl_group in itertools.groupby(nls, type):
+            if nl_type == Direct:
+                nl_fns.append(self.plan_direct(list(nl_group)))
+            elif nl_type == LIF:
+                nl_fns.append(self.plan_lif(list(nl_group)))
+            else:
+                raise NotImplementedError(nl_type)
+        return nl_fns
 
     def plan_decoders(self):
         decoders = self.model.decoders
@@ -626,7 +635,7 @@ class Simulator(object):
     def plan_probes(self):
         def fn():
             probes = self.model.probes
-            #sidx = self.builder.sidx
+            #sidx = self.sidx
             for probe in probes:
                 period = int(probe.dt // self.model.dt)
                 if self.sim_step % period == 0:
@@ -638,11 +647,13 @@ class Simulator(object):
         self._plan = [
             self.plan_save_for_filters(),
             self.plan_encoders(),
-            self.plan_populations(),
+        ]
+        self._plan.extend(self.plan_nonlinearities())
+        self._plan.extend([
             self.plan_decoders(),
             self.plan_filters(),
             self.plan_transforms(),
-        ]
+        ])
         self._plan.extend(self.plan_back_copy())
         self._plan.append(self.plan_probes())
 

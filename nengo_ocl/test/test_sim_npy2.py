@@ -9,11 +9,7 @@ you can still run individual test files like this:
 
 """
 
-try:
-    # For Python <=2.6
-    import unittest2 as unittest
-except ImportError:
-    import unittest
+from nengo_ocl.tricky_imports import unittest
 
 import nengo.tests.helpers
 
@@ -21,7 +17,6 @@ from nengo_ocl import sim_npy2
 
 def simulator_allocator(model):
     rval = sim_npy2.Simulator(model)
-    rval.alloc_all()
     rval.plan_all()
     return rval
 

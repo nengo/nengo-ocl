@@ -12,25 +12,48 @@ from ocl.gemv_batched import plan_ragged_gather_gemv
 from ocl.lif import plan_lif
 from ocl.elemwise import plan_copy, plan_inc
 
+
 class RaggedArray(object):
     # a linear buffer that is partitioned into
     # sections of various lengths.
     # 
-    def __init__(self, queue, listoflists):
-
+    def __init__(self, queue, listofarrays, names):
+        self.queue = queue
         starts = []
-        lens = []
+        shape0s = []
+        shape1s = []
+        ldas = []
         buf = []
 
-        for l in listoflists:
+        for l in listofarrays:
+            obj = np.asarray(l)
             starts.append(len(buf))
-            lens.append(len(l))
-            buf.extend(l)
+            shape0s.append(sim_npy.shape0(obj))
+            shape1s.append(sim_npy.shape1(obj))
+            if obj.ndim == 0:
+                ldas.append(0)
+            elif obj.ndim == 1:
+                ldas.append(obj.shape[0])
+            elif obj.ndim == 2:
+                # -- N.B. the original indexing was
+                #    based on ROW-MAJOR storage, and
+                #    this simulator uses COL-MAJOR storage
+                ldas.append(obj.shape[0])
+            else:
+                raise NotImplementedError()
+            buf.extend(obj.ravel('F'))
 
-        self.queue = queue
         self.starts = starts
-        self.lens = lens
-        self.buf = buf
+        self.shape0s = shape0s
+        self.shape1s = shape1s
+        self.ldas = ldas
+        self.buf = np.asarray(buf)
+        if names is None:
+            self.names = [''] * len(self)
+        else:
+            assert len(names) == len(ldas)
+            self.names = names
+
 
     @property
     def starts(self):
