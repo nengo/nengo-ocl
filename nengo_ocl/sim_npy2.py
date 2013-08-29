@@ -2,19 +2,22 @@
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
 import itertools
-import sys
-import time
+import logging
+
+logger = logging.getLogger(__name__)
+info = logger.info
+warn = logger.warn
+error = logger.error
+critical = logger.critical
 
 import numpy as np
 
 from nengo.objects import Signal
+from nengo.objects import SignalView
 from nengo.objects import LIF, LIFRate, Direct
 
 from sim_npy import ragged_gather_gemv
 from sim_npy import RaggedArray
-
-def info(msg):
-    print >> sys.stderr, "INFO: %s" % msg
 
 
 def isview(obj):
@@ -278,6 +281,7 @@ class Simulator(object):
             yield dec.pop.input_signal
         for sig in self.dec_outputs:
             yield sig
+            yield self.dec_outputs[sig]
 
         for sig in self.outbufs:
             yield self.outbufs[sig]
@@ -310,6 +314,13 @@ class Simulator(object):
             bases.append(a)
             return a
 
+        def add_view_like(sig, newbase, suffix):
+            return SignalView(newbase,
+                shape=sig.shape,
+                elemstrides=sig.elemstrides,
+                offset=sig.offset,
+                name=sig.name + suffix)
+
         # -- add some extra buffers for some signals:
         #    reset bias -> input current can be done in-place
         #    encoders -> input current can be done in-place
@@ -328,24 +339,33 @@ class Simulator(object):
                 raise NotImplementedError()
 
 
-        for dec in model.decoders:
-            if isview(dec.sig):
-                # -- I'm hoping that this is actually not something
-                #    that you ever really need to do.
-                #    Transforms and Filters can update into views.
-                raise NotImplementedError('decoding to view')
+        if any(isview(dec.sig) for dec in model.decoders):
+            # TODO: check for overlap
+            warn("decoding to views without checking for overlap")
 
         #    decoder outputs -> also generally needs copy
         #    N.B. technically many decoders can decode the same signal
         #         this is defined to mean that we add together the several
-        #         decoder outputs as if it were a large sparsely connected decoder
-        decoder_outputs_set = set(dec.sig for dec in model.decoders)
-        self.decoder_outputs = stable_unique([sig
-             for sig in self.orig_relevant_signals(self.model)
-             if sig in decoder_outputs_set])
+        #         decoder outputs as if it were a large sparsely connected
+        #         decoder
+        decoder_output_bases = stable_unique(
+            [dec.sig.base for dec in model.decoders])
 
+        # XXX: confusing to have both
+        #            self.decoder_outputs
+        #      *and* self.dec_outputs
+        self.decoder_outputs = stable_unique(
+            [dec.sig for dec in model.decoders])
+
+        for base in decoder_output_bases:
+            self.dec_outputs[base] = add_base_like(base, '.dec_output')
         for sig in self.decoder_outputs:
-            self.dec_outputs[sig] = add_base_like(sig, '.dec_output')
+            if sig not in self.dec_outputs:
+                assert isview(sig)
+                self.dec_outputs[sig] = add_view_like(
+                    sig,
+                    self.dec_outputs[sig.base],
+                    '.dec_output')
 
         if 1:
             # -- sanity check
@@ -361,13 +381,13 @@ class Simulator(object):
             transform_inputs_set = set(
                 tf.insig.base for tf in model.transforms)
             valid_transformable_things = pop_outputs_set
-            valid_transformable_things.update(decoder_outputs_set)
+            valid_transformable_things.update(decoder_output_bases)
             if not transform_inputs_set.issubset(valid_transformable_things):
                 print "Model error: Transform inputs != valid transformable"
-                print "Decoder outputs:         ", decoder_outputs_set
+                print "Decoder outputs:         ", decoder_output_bases
                 print "Population outputs:      ", pop_outputs_set
                 print "Transform inputs (bases):", transform_inputs_set
-                assert decoder_outputs_set == transform_inputs_set
+                assert 0
             del transform_inputs_set
             del valid_transformable_things
             del pop_outputs_set
