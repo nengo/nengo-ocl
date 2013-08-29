@@ -16,44 +16,15 @@ from ocl.elemwise import plan_copy, plan_inc
 class RaggedArray(object):
     # a linear buffer that is partitioned into
     # sections of various lengths.
-    # 
-    def __init__(self, queue, listofarrays, names):
+    #
+    def __init__(self, queue, np_raggedarray):
         self.queue = queue
-        starts = []
-        shape0s = []
-        shape1s = []
-        ldas = []
-        buf = []
-
-        for l in listofarrays:
-            obj = np.asarray(l)
-            starts.append(len(buf))
-            shape0s.append(sim_npy.shape0(obj))
-            shape1s.append(sim_npy.shape1(obj))
-            if obj.ndim == 0:
-                ldas.append(0)
-            elif obj.ndim == 1:
-                ldas.append(obj.shape[0])
-            elif obj.ndim == 2:
-                # -- N.B. the original indexing was
-                #    based on ROW-MAJOR storage, and
-                #    this simulator uses COL-MAJOR storage
-                ldas.append(obj.shape[0])
-            else:
-                raise NotImplementedError()
-            buf.extend(obj.ravel('F'))
-
-        self.starts = starts
-        self.shape0s = shape0s
-        self.shape1s = shape1s
-        self.ldas = ldas
-        self.buf = np.asarray(buf)
-        if names is None:
-            self.names = [''] * len(self)
-        else:
-            assert len(names) == len(ldas)
-            self.names = names
-
+        self.starts = np_raggedarray.starts
+        self.shape0s = np_raggedarray.shape0s
+        self.shape1s = np_raggedarray.shape1s
+        self.ldas = np_raggedarray.ldas
+        self.buf = np_raggedarray.buf
+        self.names = np_raggedarray.names
 
     @property
     def starts(self):
@@ -66,13 +37,33 @@ class RaggedArray(object):
         self.queue.flush()
 
     @property
-    def lens(self):
-        return map(int, self.cl_lens.get())
+    def shape0s(self):
+        return map(int, self.cl_shape0s.get())
 
-    @lens.setter
-    def lens(self, lens):
-        self.cl_lens = to_device(self.queue,
-                                   np.asarray(lens).astype('int32'))
+    @shape0s.setter
+    def shape0s(self, shape0s):
+        self.cl_shape0s = to_device(self.queue,
+                                    np.asarray(shape0s).astype('int32'))
+        self.queue.flush()
+
+    @property
+    def shape1s(self):
+        return map(int, self.cl_shape1s.get())
+
+    @shape1s.setter
+    def shape1s(self, shape1s):
+        self.cl_shape1s = to_device(self.queue,
+                                    np.asarray(shape1s).astype('int32'))
+        self.queue.flush()
+
+    @property
+    def ldas(self):
+        return map(int, self.cl_ldas.get())
+
+    @ldas.setter
+    def ldas(self, ldas):
+        self.cl_ldas = to_device(self.queue,
+                                   np.asarray(ldas).astype('int32'))
         self.queue.flush()
 
     @property
@@ -89,40 +80,68 @@ class RaggedArray(object):
         self.cl_buf = to_device(self.queue, buf)
         self.queue.flush()
 
-    def shallow_copy(self):
-        rval = self.__class__.__new__(self.__class__)
-        rval.cl_starts = self.cl_starts
-        rval.cl_lens = self.cl_lens
-        rval.cl_buf = self.cl_buf
-        rval.queue = self.queue
-        return rval
+    # def shallow_copy(self):
+    #     rval = self.__class__.__new__(self.__class__)
+    #     rval.cl_starts = self.cl_starts
+    #     rval.cl_lens = self.cl_lens
+    #     rval.cl_buf = self.cl_buf
+    #     rval.queue = self.queue
+    #     return rval
 
     def __len__(self):
         return self.cl_starts.shape[0]
 
     def __getitem__(self, item):
-        #print 'OCL RaggedArray getitem horribly slow'
-        # XXX only retrieve the bit we need
-        starts = self.cl_starts.get(self.queue)
-        lens = self.cl_lens.get(self.queue)
+        """
+        Getting one item returns a numpy array (on the host).
+        Getting multiple items returns a view into the device.
+        """
+
+        starts = self.starts
+        shape0s = self.shape0s
+        shape1s = self.shape1s
+        ldas = self.ldas
 
         if isinstance(item, (list, tuple)):
-            cl_starts = to_device(self.queue, starts[item].astype('int32'))
-            cl_lens = to_device(self.queue, lens[item].astype('int32'))
+            items = item
+            del item
+
             rval = self.__class__.__new__(self.__class__)
-            rval.cl_starts = cl_starts
-            rval.cl_lens = cl_lens
-            rval.cl_buf = self.cl_buf
             rval.queue = self.queue
+            rval.starts = [starts[i] for i in items]
+            rval.shape0s = [shape0s[i] for i in items]
+            rval.shape1s = [shape1s[i] for i in items]
+            rval.ldas = [ldas[i] for i in items]
+            rval.cl_buf = self.cl_buf
+            rval.names = [self.names[i] for i in items]
             return rval
         else:
-            buf = self.buf.get(self.queue)
-            o = starts[item]
-            n = lens[item]
-            rval = buf[o: o + n]
-            if len(rval) != n:
-                raise ValueError('buf not long enough')
-            return rval
+            m, n = shape0s[item], shape1s[item]
+            if m * n == 0:
+                return np.zeros((m,n), dtype=self.dtype)
+
+            lda = ldas[item]
+            assert lda >= 0, "lda must be non-negative"
+
+            itemsize = self.dtype.itemsize
+            bytestart = itemsize * starts[item]
+            byteend = bytestart + itemsize * (m + lda * (n-1))
+
+            temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
+            pyopencl.enqueue_copy(self.queue, temp_buf, self.cl_buf,
+                                  device_offset=bytestart, is_blocking=True)
+
+            bytestrides = (itemsize, itemsize * lda)
+            try:
+                view = np.ndarray(
+                    shape=(m, n),
+                    dtype=self.dtype,
+                    buffer=temp_buf.data,
+                    offset=0,
+                    strides=bytestrides)
+            except:
+                raise
+            return view
 
 
 class Simulator(sim_npy.Simulator):

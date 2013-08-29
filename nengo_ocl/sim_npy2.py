@@ -136,6 +136,9 @@ class Simulator(object):
                  Y_in_sig_fn=None,
                  verbose=0
                 ):
+        if len(seq) == 0:
+            return []
+
         sidx = self.sidx
         Y_sigs = [Y_sig_fn(item) for item in seq]
         if Y_in_sig_fn is None:
@@ -202,7 +205,7 @@ class Simulator(object):
         Y = self.all_data[Y_idxs]
         Y_in = self.all_data[Y_in_idxs]
 
-        return self.plan_ragged_gather_gemv(
+        return [self.plan_ragged_gather_gemv(
             Ms=self.all_data.shape0s,
             Ns=self.all_data.shape1s,
             alpha=alpha,
@@ -211,7 +214,7 @@ class Simulator(object):
             beta=beta,
             Y=Y,
             Y_in=Y_in,
-            )
+            )]
 
     def plan_ragged_gather_gemv(self, *args, **kwargs):
         return (lambda: ragged_gather_gemv(*args, **kwargs))
@@ -354,7 +357,7 @@ class Simulator(object):
                 self.lif_reftime[nl] = add_base_like(nl.output_signal,
                                                      '.reftime')
             elif isinstance(nl, LIFRate):
-                pass 
+                pass
             else:
                 raise NotImplementedError()
 
@@ -537,7 +540,7 @@ class Simulator(object):
 
         return self.sig_gemv(
             self.decoder_outputs,
-            1.0, 
+            1.0,
             lambda sig: [dec.weights_signal
                          for dec in decoders if dec.sig == sig],
             lambda sig: [dec.pop.output_signal
@@ -615,7 +618,7 @@ class Simulator(object):
         beta = 0.0
         while by_base:
             bases = by_base.keys()
-            copy_fns.append(
+            copy_fns.extend(
                 self.sig_gemv(
                     bases,
                     1.0,
@@ -644,16 +647,13 @@ class Simulator(object):
         return fn
 
     def plan_all(self):
-        self._plan = [
-            self.plan_save_for_filters(),
-            self.plan_encoders(),
-        ]
+        self._plan = []
+        self._plan.extend(self.plan_save_for_filters())
+        self._plan.extend(self.plan_encoders())
         self._plan.extend(self.plan_nonlinearities())
-        self._plan.extend([
-            self.plan_decoders(),
-            self.plan_filters(),
-            self.plan_transforms(),
-        ])
+        self._plan.extend(self.plan_decoders())
+        self._plan.extend(self.plan_filters())
+        self._plan.extend(self.plan_transforms())
         self._plan.extend(self.plan_back_copy())
         self._plan.append(self.plan_probes())
 
