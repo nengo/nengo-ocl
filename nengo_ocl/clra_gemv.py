@@ -2,7 +2,7 @@ import numpy as np
 import pyopencl as cl
 from plan import Plan
 from mako.template import Template
-from array import to_device
+from clarray import to_device
 
 
 def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,

@@ -1,9 +1,10 @@
+import nose
 import numpy as np
-from ..sim_npy import ragged_gather_gemv
-from ..sim_npy import RaggedArray as RA
-from ..sim_ocl import RaggedArray as CLRA
+from ..ra_gemv import ragged_gather_gemv
+from ..raggedarray import RaggedArray as RA
+from ..clraggedarray import CLRaggedArray as CLRA
 
-from gemv_batched import plan_ragged_gather_gemv
+from ..clra_gemv import plan_ragged_gather_gemv
 
 import pyopencl as cl
 ctx = cl.create_some_context()
@@ -19,7 +20,8 @@ def test_basic():
 
     Y = RA([[0.0], [2, 3],])
 
-    print ragged_gather_gemv(Ms, Ns, .5, A, A_js, X, X_js, .1, Y)
+    print ragged_gather_gemv(.5, A, A_js, X, X_js, .1, Y)
+
     result1 = Y.buf
 
     queue = cl.CommandQueue(ctx)
@@ -40,6 +42,7 @@ def test_basic():
     assert np.allclose(result1, result2)
 
 
+@nose.SkipTest
 def test_reduction_speed():
     queue = cl.CommandQueue(
         ctx,

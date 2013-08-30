@@ -1,10 +1,10 @@
 import numpy as np
 import pyopencl as cl
-import pyopencl.array
+import pyopencl.array as cl_array
 
 # XXX: use cl.array.Array, which has strides, flags
 
-class Array(cl.array.Array):
+class Array(cl_array.Array):
     def __init__(self, queue, shape, dtype, order='C', allocator=None,
                  data=None, strides=None, offset=0):
         try:

@@ -1,65 +1,43 @@
 """
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
-from collections import defaultdict
+import itertools
+import logging
+
+from tricky_imports import OrderedDict
+
+logger = logging.getLogger(__name__)
+info = logger.info
+warn = logger.warn
+error = logger.error
+critical = logger.critical
+
 import numpy as np
 
-from nengo.objects import LIF, LIFRate
+from nengo.objects import Signal
+from nengo.objects import SignalView
+from nengo.objects import LIF, LIFRate, Direct
 
-from raggedarray import shape0
-from raggedarray import shape1
+from ra_gemv import ragged_gather_gemv
 from raggedarray import RaggedArray
-from raggedarray import ragged_gather_gemv
+
 
 def isview(obj):
-    return obj.base is not obj
+    return obj.base is not None and obj.base is not obj
 
 
-def lif_step(dt, J, voltage, refractory_time, spiked, tau_ref, tau_rc,
-             upsample):
-    """
-    Replicates nengo.nonlinear.LIF's step_math0 function, except for
-    a) not requiring a LIF instance and
-    b) not adding the bias
-    """
-    if upsample != 1:
-        raise NotImplementedError()
-
-    # Euler's method
-    dV = dt / tau_rc * (J - voltage)
-
-    # increase the voltage, ignore values below 0
-    v = np.maximum(voltage + dV, 0)
-
-    # handle refractory period
-    post_ref = 1.0 - (refractory_time - dt) / dt
-
-    # set any post_ref elements < 0 = 0, and > 1 = 1
-    v *= np.clip(post_ref, 0, 1)
-
-    # determine which neurons spike
-    # if v > 1 set spiked = 1, else 0
-    spiked[...] = (v > 1) * 1.0
-
-    old = np.seterr(all='ignore')
+def shape0(obj):
     try:
+        return obj.shape[0]
+    except IndexError:
+        return 1
 
-        # linearly approximate time since neuron crossed spike threshold
-        overshoot = (v - 1) / dV
-        spiketime = dt * (1.0 - overshoot)
 
-        # adjust refractory time (neurons that spike get a new
-        # refractory time set, all others get it reduced by dt)
-        new_refractory_time = spiked * (spiketime + tau_ref) \
-                              + (1 - spiked) * (refractory_time - dt)
-    finally:
-        np.seterr(**old)
-
-    # return an ordered dictionary of internal variables to update
-    # (including setting a neuron that spikes to a voltage of 0)
-
-    voltage[:] = v * (1 - spiked)
-    refractory_time[:] = new_refractory_time
+def shape1(obj):
+    try:
+        return obj.shape[1]
+    except IndexError:
+        return 1
 
 
 def idxs(seq, offset):
@@ -75,407 +53,620 @@ def islifrate(obj):
     return isinstance(obj, LIFRate)
 
 
+def ivalueof(sig):
+    return sig.value
+
+
+def stable_unique(seq):
+    seen = set()
+    rval = []
+    for item in seq:
+        if item not in seen:
+            seen.add(item)
+            rval.append(item)
+    return rval
+
+
+class ViewBuilder(object):
+    def __init__(self, bases, rarray):
+        self.bases = bases
+        self.sidx = dict((bb, ii) for ii, bb in enumerate(bases))
+        assert len(self.bases) == len(self.sidx)
+        self.rarray = rarray
+
+        self.starts = []
+        self.shape0s = []
+        self.shape1s = []
+        self.ldas = []
+        self.names = []
+        #self.orig_len = len(self.all_signals)
+        #self.base_starts = self.all_data_A.starts
+
+    def append_view(self, obj):
+        if obj in self.bases:
+            # -- it is not a view, but OK
+            return
+        if not isview(obj):
+            # -- it is not a view, and not OK
+            raise ValueError('can only append views of known signals', obj)
+
+        if obj in self.sidx:
+            raise KeyError('sidx already contains object', obj)
+
+        idx = self.sidx[obj.base]
+        self.starts.append(self.rarray.starts[idx] + obj.offset)
+        self.shape0s.append(shape0(obj))
+        self.shape1s.append(shape1(obj))
+        if obj.ndim == 0:
+            self.ldas.append(0)
+        elif obj.ndim == 1:
+            self.ldas.append(obj.shape[0])
+        elif obj.ndim == 2:
+            # -- N.B. the original indexing was
+            #    based on ROW-MAJOR storage, and
+            #    this simulator uses COL-MAJOR storage
+            self.ldas.append(obj.elemstrides[0])
+        else:
+            raise NotImplementedError()
+        self.names.append(getattr(obj, 'name', ''))
+        self.sidx[obj] = len(self.sidx)
+
+    def add_views_to(self, rarray):
+        rarray.add_views(
+            starts=self.starts,
+            shape0s=self.shape0s,
+            shape1s=self.shape1s,
+            ldas=self.ldas,
+            names=self.names)
+
+
 class Simulator(object):
-    def __init__(self, model, n_prealloc_probes=1000):
-        self.model = model
-        self.nonlinearities = sorted(self.model.nonlinearities)
-
-        self.bias_signals = [nl.bias_signal for nl in self.nonlinearities]
-        self.input_signals = [nl.input_signal for nl in self.nonlinearities]
-        self.output_signals = [nl.output_signal for nl in self.nonlinearities]
-
-        bias_signals_set = set(self.bias_signals)
-
-        self.const_signals = [sig for sig in model.signals
-                if hasattr(sig, 'value') and not sig in bias_signals_set]
-
-        self.all_signals = self.bias_signals + self.const_signals
-        self.all_signals.extend(self.input_signals)
-        self.all_signals.extend(self.output_signals)
-        all_signals_set = set(self.all_signals)
-        self.vector_signals = [sig for sig in model.signals
-                if sig not in all_signals_set]
-        self.all_signals.extend(self.vector_signals)
-
-        self.all_signals_set = set(self.all_signals)
-
-        assert len(self.all_signals_set) == len(self.all_signals)
-
-        self.all_signal_idxs, offset = idxs(self.all_signals, 0)
-        assert offset == len(model.signals)
-
-        # -- append duplicate vector_signals
-        #    which are necessary for transforms
-        self.tmp_vector_idxs, offset = idxs(self.vector_signals, offset)
-        self.all_signals.extend(self.vector_signals)
-
-        self.n_prealloc_probes = n_prealloc_probes
-        self.sim_step = 0
 
     def RaggedArray(self, *args, **kwargs):
         return RaggedArray(*args, **kwargs)
 
-    def alloc_signals(self):
-        zeros = np.zeros
-        self.all_data_A = self.RaggedArray(
-            [zeros(s.shape) + getattr(s, 'value', zeros(s.shape))
-                for s in self.all_signals],
-            names=[getattr(s, 'name', '') for s in self.all_signals])
-        self.all_data_B = self.RaggedArray(
-            [zeros(s.shape) + getattr(s, 'value', zeros(s.shape))
-                for s in self.all_signals],
-            names=[getattr(s, 'name', '') for s in self.all_signals])
+    def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
+                 Y_in_sig_fn=None,
+                 verbose=0
+                ):
+        if len(seq) == 0:
+            return []
 
-        # -- by default all of the signals are
-        #    column vector "views" of themselves
-        starts = []
-        shape0s = []
-        shape1s = []
-        ldas = []
-        names = []
-        orig_len = len(self.all_signals)
-        base_starts = self.all_data_A.starts
+        sidx = self.sidx
+        Y_sigs = [Y_sig_fn(item) for item in seq]
+        if Y_in_sig_fn is None:
+            Y_in_sigs = Y_sigs
+        else:
+            Y_in_sigs = [Y_in_sig_fn(item) for item in seq]
+        Y_idxs = [sidx[sig] for sig in Y_sigs]
+        Y_in_idxs = [sidx[sig] for sig in Y_in_sigs]
 
-        # -- add signalviews that arise in filters, transforms,
-        #    encoders, and decoders.
-        def _add_view(obj, sidx):
-            if not isview(obj):
-                return
-            idx = sidx[obj.base]
-            starts.append(base_starts[idx] + obj.offset)
-            shape0s.append(shape0(obj))
-            shape1s.append(shape1(obj))
-            if obj.ndim == 0:
-                ldas.append(0)
-            elif obj.ndim == 1:
-                ldas.append(obj.shape[0])
-            elif obj.ndim == 2:
-                # -- N.B. the original indexing was
-                #    based on ROW-MAJOR storage, and
-                #    this simulator uses COL-MAJOR storage
-                ldas.append(obj.elemstrides[0])
+        # -- The following lines illustrate what we'd *like* to see...
+        #
+        # A_js = self.RaggedArray(
+        #   [[sidx[ss] for ss in A_js_fn(item)] for item in seq])
+        # X_js = self.RaggedArray(
+        #   [[sidx[ss] for ss in X_js_fn(item)] for item in seq])
+        #
+        # -- ... but the simulator supports broadcasting. So in fact whenever
+        #    a signal in X_js has shape (N, 1), the corresponding A_js signal
+        #    can have shape (M, N) or (1, 1).
+        #    Fortunately, scalar multiplication of X by A can be seen as
+        #    Matrix multiplication of A by X, so we can still use gemv,
+        #    we just need to reorder and transpose.
+        A_js = []
+        X_js = []
+        for ii, item in enumerate(seq):
+            A_js_i = []
+            X_js_i = []
+            A_sigs_i = A_js_fn(item)
+            X_sigs_i = X_js_fn(item)
+            assert len(A_sigs_i) == len(X_sigs_i)
+            ysig = Y_sigs[ii]
+            yidx = Y_idxs[ii]
+            yM = self.all_data.shape0s[yidx]
+            yN = self.all_data.shape1s[yidx]
+            for asig, xsig in zip(A_sigs_i, X_sigs_i):
+                aidx = sidx[asig]
+                xidx = sidx[xsig]
+                aM = self.all_data.shape0s[aidx]
+                aN = self.all_data.shape1s[aidx]
+                xM = self.all_data.shape0s[xidx]
+                xN = self.all_data.shape1s[xidx]
+                if aN == aM == 1:
+                    A_js_i.append(xidx)
+                    X_js_i.append(aidx)
+                else:
+                    if aN != xM:
+                        raise ValueError('shape mismatch in sig_gemv',
+                                         ((asig, aM, aN),
+                                          (xsig, xM, xN),
+                                          (ysig, yM, yN),
+                                         ))
+                    A_js_i.append(aidx)
+                    X_js_i.append(xidx)
+            A_js.append(A_js_i)
+            X_js.append(X_js_i)
+
+        if verbose:
+            print 'in sig_vemv'
+            print 'print A', A_js
+            print 'print X', X_js
+
+        A_js = self.RaggedArray(A_js)
+        X_js = self.RaggedArray(X_js)
+        Y = self.all_data[Y_idxs]
+        Y_in = self.all_data[Y_in_idxs]
+
+        return [self.plan_ragged_gather_gemv(
+            Ms=self.all_data.shape0s,
+            Ns=self.all_data.shape1s,
+            alpha=alpha,
+            A=self.all_data, A_js=A_js,
+            X=self.all_data, X_js=X_js,
+            beta=beta,
+            Y=Y,
+            Y_in=Y_in,
+            )]
+
+    def plan_ragged_gather_gemv(self, *args, **kwargs):
+        return (lambda: ragged_gather_gemv(*args, **kwargs))
+
+    @staticmethod
+    def orig_relevant_signals(model):
+        for enc in model.encoders:
+            yield (enc.weights_signal)
+            yield (enc.sig)
+            yield (enc.pop.input_signal)
+
+        for nl in model.nonlinearities:
+            yield nl.bias_signal
+            yield nl.input_signal
+            yield nl.output_signal
+
+        for dec in model.decoders:
+            yield (dec.weights_signal)
+            yield (dec.sig)
+            yield (dec.pop.input_signal)
+
+        for filt in model.filters:
+            yield (filt.alpha_signal)
+            yield (filt.oldsig)
+            yield (filt.newsig)
+
+        for tf in model.transforms:
+            yield (tf.alpha_signal)
+            yield (tf.insig)
+            yield (tf.outsig)
+
+
+    def signals_iter(self):
+        model = self.model
+
+        for nl in model.nonlinearities:
+            yield nl.bias_signal
+            yield nl.input_signal
+            yield nl.output_signal
+            if isinstance(nl, Direct):
+                pass
+            elif isinstance(nl, LIF):
+                yield self.lif_voltage[nl]
+                yield self.lif_reftime[nl]
+            elif isinstance(nl, LIFRate):
+                pass
+
+        for filt in model.filters:
+            yield (filt.alpha_signal)
+            yield (filt.oldsig)
+            yield (filt.newsig)
+
+        for tf in model.transforms:
+            yield (tf.alpha_signal)
+            yield (tf.insig)
+            yield (tf.outsig)
+
+        for enc in model.encoders:
+            yield (enc.weights_signal)
+            yield (enc.sig)
+            yield (enc.pop.input_signal)
+
+        for dec in model.decoders:
+            yield dec.weights_signal
+            yield dec.sig
+            yield dec.pop.input_signal
+        for sig in self.dec_outputs:
+            yield sig
+            yield self.dec_outputs[sig]
+
+        for sig in self.outbufs:
+            yield self.outbufs[sig]
+
+    def __init__(self, model, n_prealloc_probes=1000, dtype='float32'):
+        self.model = model
+        self.n_prealloc_probes = n_prealloc_probes
+        self.dtype = dtype
+        self.bases = []
+        self.sidx = []
+        self.sim_step = 0
+
+        self.lif_voltage = {}
+        self.lif_reftime = {}
+        self.dec_outputs = {}
+        self.filter_outputs = {}    # -- values also in outbufs
+        self.transform_outputs = {} # -- values also in outbufs
+        self.outbufs = {}
+
+        self.probe_output = dict((probe, []) for probe in model.probes)
+
+        # create at least one buffer for every signal
+        bases = stable_unique(sig.base for sig in
+                    self.orig_relevant_signals(model))
+
+        # -- the following bases cannot be modified during the simulator
+        #    loop, because we need their old values at the end.
+        self.filtered_bases_set = set(filt.oldsig.base for filt in model.filters)
+
+        self.saved_for_filtering = OrderedDict()
+        def save_for_filtering(sig):
+            try:
+                return self.saved_for_filtering[sig]
+            except KeyError:
+                newbase = add_base_like(sig, 'saved')
+                self.saved_for_filtering[sig] = newbase
+                return newbase
+
+
+        def add_base_like(sig, suffix):
+            N, = sig.shape
+            a = Signal(N, name=sig.name + suffix)
+            bases.append(a)
+            return a
+
+        def add_view_like(sig, newbase, suffix):
+            return SignalView(newbase,
+                shape=sig.shape,
+                elemstrides=sig.elemstrides,
+                offset=sig.offset,
+                name=sig.name + suffix)
+
+        # -- add some extra buffers for some signals:
+        #    reset bias -> input current can be done in-place
+        #    encoders -> input current can be done in-place
+        #    nl outputs -> generally needs buffer
+        for enc in model.encoders:
+            if enc.pop.input_signal.base in self.filtered_bases_set:
+                save_for_filtering(enc.pop.input_signal)
+
+        for nl in model.nonlinearities:
+            if nl.output_signal.base in self.filtered_bases_set:
+                save_for_filtering(nl.output_signal)
+
+            # -- also some neuron models need a few extra buffers
+            if isinstance(nl, Direct):
+                pass
+            elif isinstance(nl, LIF):
+                self.lif_voltage[nl] = add_base_like(nl.output_signal,
+                                                     '.voltage')
+                self.lif_reftime[nl] = add_base_like(nl.output_signal,
+                                                     '.reftime')
+            elif isinstance(nl, LIFRate):
+                pass
             else:
                 raise NotImplementedError()
-            names.append(getattr(obj, 'name', ''))
 
-            rval = len(names) - 1 + orig_len
-            sidx[obj] = rval
-            return rval
 
-        def add_view(obj):
-            _add_view(obj, self.all_signal_idxs)
-            if obj.base in self.tmp_vector_idxs:
-                _add_view(obj, self.tmp_vector_idxs)
+        if any(isview(dec.sig) for dec in model.decoders):
+            # TODO: check for overlap
+            warn("decoding to views without checking for overlap")
+
+        #    decoder outputs -> also generally needs copy
+        #    N.B. technically many decoders can decode the same signal
+        #         this is defined to mean that we add together the several
+        #         decoder outputs as if it were a large sparsely connected
+        #         decoder
+        decoder_output_bases = stable_unique(
+            [dec.sig.base for dec in model.decoders])
+
+        # XXX: confusing to have both
+        #            self.decoder_outputs
+        #      *and* self.dec_outputs
+        self.decoder_outputs = stable_unique(
+            [dec.sig for dec in model.decoders])
+
+        for base in decoder_output_bases:
+            self.dec_outputs[base] = add_base_like(base, '.dec_output')
+        for sig in self.decoder_outputs:
+            if sig not in self.dec_outputs:
+                assert isview(sig)
+                self.dec_outputs[sig] = add_view_like(
+                    sig,
+                    self.dec_outputs[sig.base],
+                    '.dec_output')
+
+        if 1:
+            # -- sanity check
+            #    Ensure that all decoder outputs are actually used, but more
+            #    importantly that all transform inputs are decoder outputs.
+            #    If you think you want to use a transform on something that
+            #    isn't a decoder output, then you actually want a filter.
+            #    A filter draws data from the original buffers. A transform
+            #    draws from the decoder output buffers, and that's all the
+            #    cases.
+            pop_outputs_set = set(
+                nl.output_signal for nl in model.nonlinearities)
+            transform_inputs_set = set(
+                tf.insig.base for tf in model.transforms)
+            valid_transformable_things = pop_outputs_set
+            valid_transformable_things.update(decoder_output_bases)
+            if not transform_inputs_set.issubset(valid_transformable_things):
+                print "Model error: Transform inputs != valid transformable"
+                print "Decoder outputs:         ", decoder_output_bases
+                print "Population outputs:      ", pop_outputs_set
+                print "Transform inputs (bases):", transform_inputs_set
+                assert 0
+            del transform_inputs_set
+            del valid_transformable_things
+            del pop_outputs_set
+
+        #    generally, filters and transforms are meant to
+        #    write into a fresh "output buffer"
+        #    which is then copied back over top of the old values
+        #    There are cases where more can be done in-place, but we'll
+        #    just do the general case for now.
+        #
+        #    -- N.B. that each of view of some common base gets its own
+        #       allocated space in outbufs
+        filt_and_tf_outputs = (
+            [filt.newsig for filt in model.filters]
+            + [tf.outsig for tf in model.transforms])
+        for sig in stable_unique(filt_and_tf_outputs):
+            self.outbufs[sig] = add_base_like(sig, '.outbuf')
 
         for filt in self.model.filters:
-            add_view(filt.alpha_signal)
-            add_view(filt.oldsig)
-            add_view(filt.newsig)
-
+            self.filter_outputs[filt] = self.outbufs[filt.newsig]
         for tf in self.model.transforms:
-            add_view(tf.alpha_signal)
-            add_view(tf.insig)
-            add_view(tf.outsig)
+            self.transform_outputs[tf] = self.outbufs[tf.outsig]
 
-        for enc in self.model.encoders:
-            #add_view(tf.weights) # TODO for learning
-            add_view(enc.sig)
-            add_view(enc.pop.input_signal)
+        # -- Choose a layout order for the constants.
+        bases = stable_unique(sorted(bases, key=lambda bb: bb.size))
+        self.bases[:] = bases
 
-        for dec in self.model.decoders:
-            #add_view(tf.weights) # TODO for learning
-            add_view(dec.sig)
-            add_view(dec.pop.input_signal)
+        ### N.B. we're allocating on the host in the constructor. The OCL
+        ### version transfers to the device in its constructor.
+        self.all_data = RaggedArray(
+            [np.zeros(ss.shape) + getattr(ss, 'value', np.zeros(ss.shape))
+                for ss in self.bases],
+            names=[getattr(ss, 'name', '') for ss in self.bases])
 
-        self.all_data_A.add_views(starts, shape0s, shape1s, ldas, names)
-        self.all_data_B.add_views(starts, shape0s, shape1s, ldas, names)
+        builder = ViewBuilder(self.bases, self.all_data)
+        for sig in stable_unique(self.signals_iter()):
+            builder.append_view(sig)
+        builder.add_views_to(self.all_data)
+        self.sidx = builder.sidx
 
-    def alloc_probes(self):
-        probes = self.model.probes
-        dts = list(sorted(set([probe.dt for probe in probes])))
-        self.probes_by_period = {}
-        self.probe_output = {}
-        for dt in dts:
-            sp_dt = [probe for probe in probes if probe.dt == dt]
-            period = int(dt // self.model.dt)
-            self.probes_by_period[period] = sp_dt
-        for probe in probes:
-            self.probe_output[probe] = []
+    def __getitem__(self, item):
+        """
+        Return internally shaped signals, which are always 2d
+        """
+        return self.all_data[self.sidx[item]]
 
-    def alloc_populations(self):
-        nls = self.nonlinearities
-        sidx = self.all_signal_idxs
-        pop_J_idxs = [sidx[nl.input_signal] for nl in nls]
-        pop_bias_idxs = [sidx[nl.bias_signal] for nl in nls]
-        pop_output_idxs = [sidx[nl.output_signal] for nl in nls]
+    @property
+    def signals(self):
+        """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)
+        """
+        class Cls(object):
+            def __iter__(_):
+                return iter(stable_unique(self.signals_iter()))
 
-        self.pop_bias = self.all_data_A[pop_bias_idxs]
-        self.pop_J = self.all_data_B[pop_J_idxs]
-        self.pop_output = self.all_data_B[pop_output_idxs]
-        self.pidx, _ = idxs(self.nonlinearities, 0)
-
-        lif_idxs = []
-        direct_idxs = []
-        for i, p in enumerate(nls):
-            if islif(p):
-                lif_idxs.append(i)
-            else:
-                direct_idxs.append(i)
-
-        self.pop_lif_idxs = lif_idxs
-        self.pop_direct_idxs = direct_idxs
-
-        if lif_idxs:
-            # sorting in the constructor was supposed to ensure this:
-            assert lif_idxs == range(lif_idxs[0], lif_idxs[0] + len(lif_idxs))
-
-            tau_rcs = set([nls[li].tau_rc for li in lif_idxs])
-            tau_refs = set([nls[li].tau_ref for li in lif_idxs])
-            if len(tau_rcs) > 1 or len(tau_refs) > 1:
-                raise NotImplementedError('Non-homogeneous lif population')
-
-            self.pop_lif_rep = nls[lif_idxs[0]]
-            #self.pop_lif_J = self.pop_J.view1d(lif_idxs)
-            #self.pop_lif_output = self.pop_output.view1d(lif_idxs)
-
-            self.pop_lif_voltage = self.RaggedArray(
-                [np.zeros(nls[idx].n_neurons) for idx in lif_idxs])
-            self.pop_lif_reftime = self.RaggedArray(
-                [np.zeros(nls[idx].n_neurons) for idx in lif_idxs])
-
-        if direct_idxs:
-            self.pop_direct_ins = self.pop_J[direct_idxs]
-            self.pop_direct_outs = self.pop_output[direct_idxs]
-            dtype = self.pop_direct_ins.buf.dtype
-            # N.B. This uses numpy-based RaggedArray specifically.
-            self.pop_direct_ins_npy = RaggedArray(
-                [np.zeros(nls[di].n_in, dtype=dtype) for di in direct_idxs])
-            self.pop_direct_outs_npy = RaggedArray(
-                [np.zeros(nls[di].n_out, dtype=dtype) for di in direct_idxs])
-
-    def alloc_transforms(self):
-        sidx = self.all_signal_idxs
-        tmpidx = self.tmp_vector_idxs
-        transforms = self.model.transforms
-        tidx, _ = idxs(transforms, 0)
-        tf_by_outsig = defaultdict(list)
-        for tf in transforms:
-            tf_by_outsig[tf.outsig].append(tf)
-
-        A_js = []
-        X_js = []
-        for sig in self.vector_signals:
-            A_js_i = []
-            X_js_i = []
-            for tf in tf_by_outsig[sig]:
-                if tf.alpha.size == 1:
-                    A_js_i.append(tmpidx[tf.insig])
-                    X_js_i.append(sidx[tf.alpha_signal])
+            def __getitem__(_, item):
+                raw = self.all_data[self.sidx[item]]
+                assert raw.ndim == 2
+                if item.ndim == 0:
+                    return raw[0, 0]
+                elif item.ndim == 1:
+                    return raw.ravel()
+                elif item.ndim == 2:
+                    return raw
                 else:
-                    A_js_i.append(sidx[tf.alpha_signal])
-                    X_js_i.append(tmpidx[tf.insig])
-            A_js.append(A_js_i)
-            X_js.append(X_js_i)
+                    raise NotImplementedError()
 
-        self.tf_A_js = self.RaggedArray(A_js)
-        self.tf_X_js = self.RaggedArray(X_js)
-
-        dst_signal_idxs = [sidx[v] for v in self.vector_signals]
-        self.tf_Y = self.all_data_B[dst_signal_idxs]
-
-    def alloc_filters(self):
-        sidx = self.all_signal_idxs
-        filters = self.model.filters
-        f_by_newsig = defaultdict(list)
-        for f in filters:
-            f_by_newsig[f.newsig].append(f)
-
-        A_js = []
-        X_js = []
-        for sig in self.vector_signals:
-            A_js_i = []
-            X_js_i = []
-            for f in f_by_newsig[sig]:
-                if f.alpha.size == 1:
-                    A_js_i.append(sidx[f.oldsig])
-                    X_js_i.append(sidx[f.alpha_signal])
+            def __setitem__(_, item, val):
+                raw = self.all_data[self.sidx[item]]
+                assert raw.ndim == 2
+                incoming = np.asarray(val)
+                if item.ndim == 0:
+                    assert incoming.size == 1
+                    self.all_data[self.sidx[item]] = incoming
+                elif item.ndim == 1:
+                    assert (item.size,) == incoming.shape
+                    self.all_data[self.sidx[item]] = incoming[:, None]
+                elif item.ndim == 2:
+                    assert item.shape == incoming.shape
+                    self.all_data[self.sidx[item]] = incoming
                 else:
-                    A_js_i.append(sidx[f.alpha_signal])
-                    X_js_i.append(sidx[f.oldsig])
-            A_js.append(A_js_i)
-            X_js.append(X_js_i)
+                    raise NotImplementedError()
+        return Cls()
 
-        self.f_A_js = self.RaggedArray(A_js)
-        self.f_X_js = self.RaggedArray(X_js)
-
-        dst_signal_idxs = [sidx[v] for v in self.vector_signals]
-        self.f_Y = self.all_data_B[dst_signal_idxs]
-
-    def alloc_encoders(self):
+    def plan_encoders(self):
         encoders = self.model.encoders
-        sidx = self.all_signal_idxs
 
-        # -- which encoder(s) does each population use
-        self.enc_A_js = self.RaggedArray([
-            [sidx[enc.weights_signal] for enc in encoders if enc.pop == pop]
-            for pop in self.model.nonlinearities])
+        return self.sig_gemv(
+            self.model.nonlinearities,
+            1.0,
+            lambda pop: [enc.weights_signal
+                         for enc in encoders if enc.pop == pop],
+            lambda pop: [enc.sig
+                         for enc in encoders if enc.pop == pop],
+            1.0,
+            lambda pop: pop.input_signal,
+            lambda pop: pop.bias_signal,
+            )
 
-        # -- and which corresponding signal does it encode
-        self.enc_X_js = self.RaggedArray([
-            [sidx[enc.sig] for enc in encoders if enc.pop == pop]
-            for pop in self.model.nonlinearities])
+    def plan_direct(self, nls):
+        sidx = self.sidx
+        def direct():
+            for nl in nls:
+                J = self.all_data[sidx[nl.input_signal]]
+                output = nl.fn(J)
+                self.all_data[sidx[nl.output_signal]][:] = output
+        return direct
 
-        Yidxs = [sidx[pop.input_signal] for pop in self.model.nonlinearities]
-        self.enc_Y = self.all_data_B[Yidxs]
+    def plan_lif(self, nls):
+        dt = self.model.dt
+        sidx = self.sidx
+        def lif():
+            for nl in nls:
+                J = self.all_data[sidx[nl.input_signal]]
+                voltage = self.all_data[sidx[self.lif_voltage[nl]]]
+                reftime = self.all_data[sidx[self.lif_reftime[nl]]]
+                output = self.all_data[sidx[nl.output_signal]]
+                nl.step_math0(dt, J, voltage, reftime, output,)
+        return lif
 
-    def alloc_decoders(self):
+    def plan_nonlinearities(self):
+        nl_fns = []
+        nls = sorted(self.model.nonlinearities, key=type)
+        for nl_type, nl_group in itertools.groupby(nls, type):
+            if nl_type == Direct:
+                nl_fns.append(self.plan_direct(list(nl_group)))
+            elif nl_type == LIF:
+                nl_fns.append(self.plan_lif(list(nl_group)))
+            else:
+                raise NotImplementedError(nl_type)
+        return nl_fns
+
+    def plan_decoders(self):
         decoders = self.model.decoders
-        sidx = self.all_signal_idxs
 
-        # -- which decoder(s) does each signal use
-        self.dec_A_js = self.RaggedArray([
-            [sidx[dec.weights_signal] for dec in decoders if dec.sig == sig]
-            for sig in self.vector_signals])
+        return self.sig_gemv(
+            self.decoder_outputs,
+            1.0,
+            lambda sig: [dec.weights_signal
+                         for dec in decoders if dec.sig == sig],
+            lambda sig: [dec.pop.output_signal
+                         for dec in decoders if dec.sig == sig],
+            0.0,
+            lambda sig: self.dec_outputs[sig],
+            )
 
-        # -- and which corresponding population does it decode
-        self.dec_X_js = self.RaggedArray([
-            [sidx[dec.pop.output_signal]
-                for dec in decoders if dec.sig == sig]
-            for sig in self.vector_signals])
-
-        dst_idxs = [self.tmp_vector_idxs[sig]
-            for sig in self.vector_signals]
-        self.dec_Y = self.all_data_B[dst_idxs]
-
-    def alloc_all(self):
-        self.alloc_signals()
-        self.alloc_probes()
-        self.alloc_populations()
-        self.alloc_transforms()
-        self.alloc_filters()
-        self.alloc_encoders()
-        self.alloc_decoders()
-
-    def do_transforms(self):
+    def plan_transforms(self, verbose=0):
         """
         Combine the elements of input accumulator buffer (sigs_ic)
         into *add* them into sigs
         """
-        # ADD linear combinations of signals to some signals
-        ragged_gather_gemv(
-            Ms=self.all_data_A.shape0s,
-            Ns=self.all_data_A.shape1s,
-            alpha=1.0,
-            A=self.all_data_B,
-            A_js=self.tf_A_js,
-            X=self.all_data_B,
-            X_js=self.tf_X_js,
-            beta=1.0,
-            Y=self.tf_Y,
+        transforms = self.model.transforms
+        return self.sig_gemv(self.outbufs.keys(),
+            1.0,
+            lambda sig: [tf.alpha_signal
+                         for tf in transforms if tf.outsig == sig],
+            lambda sig: [self.dec_outputs.get(tf.insig, tf.insig)
+                         for tf in transforms if tf.outsig == sig],
+            1.0,
+            lambda sig: self.outbufs[sig],
+            verbose=verbose
             )
 
-    def do_filters(self):
+    def plan_filters(self, verbose=0):
         """
         Recombine the elements of previous signal buffer (sigs)
         and write them back to `sigs`
         """
-        # ADD linear combinations of signals to some signals
-        ragged_gather_gemv(
-            Ms=self.all_data_A.shape0s,
-            Ns=self.all_data_A.shape1s,
-            alpha=1.0,
-            A=self.all_data_A,
-            A_js=self.f_A_js,
-            X=self.all_data_A,
-            X_js=self.f_X_js,
-            beta=0.0,
-            Y=self.f_Y,
+        filters = self.model.filters
+        saved = self.saved_for_filtering
+        return self.sig_gemv(
+            self.outbufs.keys(),
+            1.0,
+            lambda sig: [filt.alpha_signal
+                         for filt in filters if filt.newsig == sig],
+            lambda sig: [saved.get(filt.oldsig, filt.oldsig)
+                         for filt in filters if filt.newsig == sig],
+            0.0,
+            lambda sig: self.outbufs[sig],
+            verbose=verbose
             )
 
-    def do_encoders(self):
-        ragged_gather_gemv(
-            Ms=self.all_data_A.shape0s,
-            Ns=self.all_data_A.shape1s,
-            alpha=1.0,
-            A=self.all_data_A, A_js=self.enc_A_js,
-            X=self.all_data_A, X_js=self.enc_X_js,
-            beta=1.0, Y_in=self.pop_bias,
-            Y=self.enc_Y,
+    def plan_save_for_filters(self):
+        saved = self.saved_for_filtering
+        return self.sig_gemv(
+            saved,
+            1.0,
+            lambda item: [self.model.one],
+            lambda item: [item],
+            0.0,
+            lambda item: saved[item],
+            verbose=0,
             )
 
-    def do_populations(self):
-        dt = self.model.dt
+    def plan_back_copy(self):
+        # -- here we may have to serialize a little bit so that
+        #    updates to views are copied back incrementally into
+        #    any original signals
 
-        if self.pop_lif_idxs:
-            J = self.pop_J.view1d(self.pop_lif_idxs)
-            out = self.pop_output.view1d(self.pop_lif_idxs)
-            lif_step(
-                dt=dt,
-                J=J.T,
-                voltage=self.pop_lif_voltage.buf,
-                refractory_time=self.pop_lif_reftime.buf,
-                spiked=out.T,
-                tau_ref=self.pop_lif_rep.tau_ref,
-                tau_rc=self.pop_lif_rep.tau_rc,
-                upsample=self.pop_lif_rep.upsample
-                )
+        # XXX This function should be more sophisticated, if sets
+        #     of views are shown to be non-overlapping, then they
+        #     can be updated at the same time.
 
-        for ii in self.pop_direct_idxs:
-            nl = self.nonlinearities[ii]
-            popidx = self.pidx[nl]
-            self.pop_output[popidx][...] = nl.fn(self.pop_J[popidx])
+        # -- by_base: map original base -> (view of base, outbuf for view)
+        by_base = dict((sig_or_view.base, [])
+                       for sig_or_view in self.outbufs.keys())
 
-    def do_decoders(self):
-        ragged_gather_gemv(
-            Ms=self.all_data_A.shape0s,
-            Ns=self.all_data_A.shape1s,
-            alpha=1.0,
-            A=self.all_data_B,
-            A_js=self.dec_A_js,
-            X=self.all_data_B,
-            X_js=self.dec_X_js,
-            beta=0.0,
-            Y=self.dec_Y,
-            )
+        for sig_or_view in self.outbufs:
+            by_base[sig_or_view.base].append(
+                (sig_or_view, self.outbufs[sig_or_view]))
 
-    def do_probes(self):
-        for period in self.probes_by_period:
-            if 0 == self.sim_step % period:
-                for probe in self.probes_by_period[period]:
-                    val = self.all_signal_idxs[probe.sig]
+        copy_fns = []
+        beta = 0.0
+        while by_base:
+            bases = by_base.keys()
+            copy_fns.extend(
+                self.sig_gemv(
+                    bases,
+                    1.0,
+                    lambda base: [self.model.one],
+                    lambda base: [by_base[base][-1][1]],
+                    beta,
+                    lambda base: by_base[base][-1][0],
+                    verbose=0,
+                    ))
+            for base in by_base:
+                by_base[base].pop()
+            by_base = dict((k, v) for k, v in by_base.items() if v)
+            beta = 1.0
+        info('back_copy required %i passes' % len(copy_fns))
+        return copy_fns
+
+    def plan_probes(self):
+        def fn():
+            probes = self.model.probes
+            #sidx = self.sidx
+            for probe in probes:
+                period = int(probe.dt // self.model.dt)
+                if self.sim_step % period == 0:
                     self.probe_output[probe].append(
-                        self.all_data_B[val].copy())
+                        self.signals[probe.sig].copy())
+        return fn
 
-    def do_all(self):
-        #print '-' * 10 + 'A' * 10 + '-' * 10
-        #print self.all_data_A
-        #print '-' * 20
-        self.do_encoders()          # encode sigs_t into pops
-        #print self.pop_J
-        self.do_populations()       # pop dynamics
-        #print self.pop_J
-        self.do_decoders()          # decode into sigs_ic
-        #print self.pop_J
-        self.do_filters()           # make sigs_t's contribution to t + 1
-        #print self.pop_J
-        self.do_transforms()        # add sigs_ic's contribution to t + 1
-        #print self.pop_J
-        self.do_probes()
-        #print self.pop_J
-        self.all_data_A.buf[:] = self.all_data_B.buf
-
-        #print '-' * 10 + 'B' * 10 + '-' * 10
-        #print self.all_data_A
-        #print '-' * 20
+    def plan_all(self):
+        self._plan = []
+        self._plan.extend(self.plan_save_for_filters())
+        self._plan.extend(self.plan_encoders())
+        self._plan.extend(self.plan_nonlinearities())
+        self._plan.extend(self.plan_decoders())
+        self._plan.extend(self.plan_filters())
+        self._plan.extend(self.plan_transforms())
+        self._plan.extend(self.plan_back_copy())
+        self._plan.append(self.plan_probes())
 
     def step(self):
-        self.do_all()
+        for fn in self._plan:
+            fn()
         self.sim_step += 1
 
     def run_steps(self, N, verbose=False):
         for i in xrange(N):
             self.step()
 
+    # XXX there is both .signals and .signal and they are pretty different
     def signal(self, sig):
         probes = [sp for sp in self.model.probes if sp.sig == sig]
         if len(probes) == 0:
