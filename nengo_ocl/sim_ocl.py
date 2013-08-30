@@ -36,7 +36,7 @@ class Simulator(sim_npy.Simulator):
         # -- replace the numpy-allocated RaggedArray with OpenCL one
         self.all_data = CLRaggedArray(self.queue, self.all_data)
 
-    def plan_ragged_gather_gemv(self, Ms, Ns, *args, **kwargs):
+    def plan_ragged_gather_gemv(self, *args, **kwargs):
         return plan_ragged_gather_gemv(
             self.queue, *args, **kwargs)
 
