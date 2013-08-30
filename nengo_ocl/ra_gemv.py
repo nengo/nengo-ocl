@@ -2,22 +2,26 @@
 import numpy as np
 
 
-def raw_ragged_gather_gemv(BB,
-        Ns, alphas,
-        A_starts, A_data,
-        A_js_starts,
-        A_js_lens,
-        A_js_data,
-        X_starts,
-        X_data,
-        X_js_starts,
-        X_js_data,
-        betas,
-        Y_in_starts,
-        Y_in_data,
-        Y_starts,
-        Y_lens,
-        Y_data):
+def raw_ragged_gather_gemv(
+    BB,
+    Ns,
+    alphas,
+    A_starts,
+    A_ldas,
+    A_data,
+    A_js_starts,
+    A_js_lens,
+    A_js_data,
+    X_starts,
+    X_data,
+    X_js_starts,
+    X_js_data,
+    betas,
+    Y_in_starts,
+    Y_in_data,
+    Y_starts,
+    Y_lens,
+    Y_data):
     for bb in xrange(BB):
         alpha = alphas[bb]
         beta = betas[bb]
@@ -32,22 +36,23 @@ def raw_ragged_gather_gemv(BB,
             x_i = X_js_data[X_js_starts[bb] + ii]
             a_i = A_js_data[A_js_starts[bb] + ii]
             N_i = Ns[a_i]
+            a_lda = A_ldas[a_i]
             x_offset = X_starts[x_i]
             a_offset = A_starts[a_i]
             for mm in xrange(M):
                 y_sum = 0.0
                 for nn in xrange(N_i):
-                    y_sum += X_data[x_offset + nn] * A_data[a_offset + nn * M + mm]
+                    a_i_m_n = A_data[a_offset + nn * a_lda + mm]
+                    y_sum += X_data[x_offset + nn] * a_i_m_n
                 Y_data[y_offset + mm] += alpha * y_sum
 
 
-def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
+def ragged_gather_gemv(alpha, A, A_js, X, X_js,
                        beta, Y, Y_in=None,
                        use_raw_fn=False,
                       ):
     """
     """
-    del Ms
     try:
         float(alpha)
         alpha = [alpha] * len(Y)
@@ -67,9 +72,10 @@ def ragged_gather_gemv(Ms, Ns, alpha, A, A_js, X, X_js,
         # This is close to the OpenCL reference impl
         return raw_ragged_gather_gemv(
             len(Y),
-            Ns,
+            A.shape1s,
             alpha,
             A.starts,
+            A.ldas,
             A.buf,
             A_js.starts,
             A_js.shape0s,

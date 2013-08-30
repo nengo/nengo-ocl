@@ -19,6 +19,15 @@ def shape1(obj):
         return 1
 
 
+def allclose(a, b, atol=1e-3, rtol=1e-3):
+    if not np.allclose(a.starts, b.starts): return False
+    if not np.allclose(a.shape0s, b.shape0s): return False
+    if not np.allclose(a.shape1s, b.shape1s): return False
+    if not np.allclose(a.ldas, b.ldas): return False
+    if not np.allclose(a.buf, b.buf, atol=atol, rtol=rtol): return False
+    return True
+
+
 class RaggedArray(object):
     # a linear buffer that is partitioned into
     # sections of various lengths.
