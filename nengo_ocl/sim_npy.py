@@ -300,9 +300,9 @@ class Simulator(object):
         self.lif_voltage = {}
         self.lif_reftime = {}
         self.dec_outputs = {}
+        self.outbufs = {}
         self.filter_outputs = {}    # -- values also in outbufs
         self.transform_outputs = {} # -- values also in outbufs
-        self.outbufs = {}
 
         self.probe_output = dict((probe, []) for probe in model.probes)
 
@@ -612,20 +612,33 @@ class Simulator(object):
         #    updates to views are copied back incrementally into
         #    any original signals
 
-        # XXX This function should be more sophisticated, if sets
-        #     of views are shown to be non-overlapping, then they
-        #     can be updated at the same time.
-
         # -- by_base: map original base -> (view of base, outbuf for view)
-        by_base = dict((sig_or_view.base, [])
+        by_base = OrderedDict((sig_or_view.base, [])
                        for sig_or_view in self.outbufs.keys())
 
         for sig_or_view in self.outbufs:
             by_base[sig_or_view.base].append(
                 (sig_or_view, self.outbufs[sig_or_view]))
 
-        copy_fns = []
-        beta = 0.0
+        # -- run a first call just to initialize outputs to 0
+        copy_fns = self.sig_gemv(
+            self.outbufs,
+            0.0,
+            lambda sig_or_view: [],
+            lambda sig_or_view: [],
+            0.0,
+            lambda sig_or_view: sig_or_view,
+            verbose=0,
+            tag='back_copy_init'
+            )
+
+        # -- now that outputs have been cleared
+        #    increment into each base one view at a time
+        #
+        # XXX This function could be more sophisticated, if sets
+        #     of views are shown to be non-overlapping, then they
+        #     can be updated at the same time.
+
         while by_base:
             bases = by_base.keys()
             copy_fns.extend(
@@ -634,15 +647,15 @@ class Simulator(object):
                     1.0,
                     lambda base: [self.model.one],
                     lambda base: [by_base[base][-1][1]],
-                    beta,
+                    1.0,
                     lambda base: by_base[base][-1][0],
                     verbose=0,
-                    tag='back_copy_%i' % len(copy_fns)
+                    tag='back_copy_%i' % (len(copy_fns) - 1)
                     ))
-            for base in by_base:
-                by_base[base].pop()
-            by_base = dict((k, v) for k, v in by_base.items() if v)
-            beta = 1.0
+            # -- pop last elements and remove empty lists
+            by_base = OrderedDict((k, v[:-1])
+                                  for k, v in by_base.items()
+                                  if len(v) > 1)
         info('back_copy required %i passes' % len(copy_fns))
         return copy_fns
 
