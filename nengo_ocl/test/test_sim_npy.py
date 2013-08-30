@@ -9,23 +9,18 @@ you can still run individual test files like this:
 
 """
 
-import pyopencl as cl
-from nengo.tests.helpers import simulator_test_cases
+from nengo_ocl.tricky_imports import unittest
+from nengo.tests.helpers import NengoTestLoader
+from nengo.tests.helpers import load_nengo_tests
 from nengo_ocl import sim_npy
 
-for TestCase in simulator_test_cases:
-    class MyTestCase(TestCase):
-        simulator_test_case_ignore = True
-        def Simulator(self, model):
-            rval = sim_npy.Simulator(model)
-            rval.alloc_all()
-            rval.plan_all()
-            return rval
-    MyTestCase.__name__ = TestCase.__name__
-    globals()[TestCase.__name__] = MyTestCase
-    # -- delete these symbols so that nose will not
-    #    detect and run them as extra unit tests.
-    del MyTestCase
-    del TestCase
+def NpySimulator(model):
+    rval = sim_npy.Simulator(model)
+    rval.plan_all()
+    return rval
 
+load_tests = load_nengo_tests(NpySimulator)
+
+if __name__ == '__main__':
+   unittest.main(testLoader=NengoTestLoader(NpySimulator))
 
