@@ -140,7 +140,6 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
                 tag=tag,
                )
     # prevent garbage-collection
-    rval.alpha = cl_alpha
-    rval.beta = cl_beta
+    rval.full_args = full_args
     return rval
 
