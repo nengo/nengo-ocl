@@ -148,6 +148,40 @@ class DevRaggedArray(object):
                 raise
             return view
 
+    def __setitem__(self, item, new_value):
+        starts = self.starts
+        shape0s = self.shape0s
+        shape1s = self.shape1s
+        ldas = self.ldas
+        if isinstance(item, (list, tuple)):
+            raise NotImplementedError('TODO')
+        else:
+            m, n = shape0s[item], shape1s[item]
+
+            lda = ldas[item]
+            assert lda >= 0, "lda must be non-negative"
+
+            itemsize = self.dtype.itemsize
+            bytestart = itemsize * starts[item]
+            byteend = bytestart + itemsize * (m + lda * (n-1))
+
+            temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
+            # -- TODO: if copying into a contiguous region, this
+            #          first copy from the device is unnecessary
+            cl.enqueue_copy(self.queue, temp_buf, self.cl_buf.data,
+                            device_offset=bytestart, is_blocking=True)
+
+            bytestrides = (itemsize, itemsize * lda)
+            view = np.ndarray(
+                shape=(m, n),
+                dtype=self.dtype,
+                buffer=temp_buf.data,
+                offset=0,
+                strides=bytestrides)
+            view[...] = new_value
+            print temp_buf.view('float32')
+            cl.enqueue_copy(self.queue, self.cl_buf.data, temp_buf, 
+                            device_offset=bytestart, is_blocking=True)
 
 # class Simulator(sim_npy.Simulator):
 

@@ -476,13 +476,13 @@ class Simulator(object):
                 incoming = np.asarray(val)
                 if item.ndim == 0:
                     assert incoming.size == 1
-                    self.all_data[self.sidx[item]][:] = incoming
+                    self.all_data[self.sidx[item]] = incoming
                 elif item.ndim == 1:
                     assert (item.size,) == incoming.shape
-                    self.all_data[self.sidx[item]][:] = incoming[:, None]
+                    self.all_data[self.sidx[item]] = incoming[:, None]
                 elif item.ndim == 2:
                     assert item.shape == incoming.shape
-                    self.all_data[self.sidx[item]][:] = incoming
+                    self.all_data[self.sidx[item]] = incoming
                 else:
                     raise NotImplementedError()
         return Cls()
