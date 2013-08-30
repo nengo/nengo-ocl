@@ -41,6 +41,8 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
         'type_A': A.cl_buf.ocldtype,
         'type_X': X.cl_buf.ocldtype,
         'type_Y': Y.cl_buf.ocldtype,
+        'tag': str(tag),
+        'do_inner_products': (A_js is not None),
     }
 
     text = """
@@ -69,6 +71,8 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
             const int M = Y_shape0s[bb];
             if (mm < M)
             {
+                // printf("${tag}: mm=%i bb=%i\\n", mm, bb);
+
                 const ${type_alpha} alpha = alphas[bb];
                 const ${type_beta} beta = betas[bb];
 
@@ -77,27 +81,29 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
 
                 Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm];
 
-                % if A_js is not None :
+                % if do_inner_products :
                 const int n_dot_products = A_js_shape0s[bb];
                 X_js_data += X_js_starts[bb];
                 A_js_data += A_js_starts[bb];
 
                 for (int ii = 0; ii < n_dot_products; ++ii)
                 {
-                    int x_ji = X_js_data[ii];
-                    int a_ji = A_js_data[ii];
-                    int N_i = A_shape1s[a_ji];
-                    int x_offset = X_starts[x_ji];
-                    int a_offset = A_starts[a_ji];
-                    int lda_i = A_ldas[a_ji];
+                    //printf("${tag}: ii=%i / %i\\n", ii, n_dot_products);
+                    const int x_ji = X_js_data[ii];
+                    const int a_ji = A_js_data[ii];
+                    //printf("x_ji=%i a_ji=%i\\n", x_ji, a_ji);
+                    const int N_i = A_shape1s[a_ji];
+                    const int x_offset = X_starts[x_ji];
+                    const int a_offset = A_starts[a_ji];
+                    //printf("x_offset=%i a_offset=%i\\n", x_offset, a_offset);
+                    const int lda_i = A_ldas[a_ji];
 
-                    // compute the matrix-vector product
-                    // dot(X[x_ji], A[a_ji])
+
                     ${type_Y} y_sum = 0;
                     for (int nn = 0; nn < N_i; ++nn)
                     {
                         y_sum += X_data[x_offset + nn]
-                            * A_data[a_offset + nn * lda_i + mm];
+                                 * A_data[a_offset + nn * lda_i + mm];
                     }
                     Y_data[y_offset + mm] += alpha * y_sum;
                 }
@@ -107,8 +113,9 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     """
 
     text = Template(text, output_encoding='ascii').render(**textconf)
-    #print text
-    #print A_js
+    if False: #tag == 'transforms':
+        print text
+        print A_js
 
     ### TODO: use the maximum of A.shape0s that is actually used in this op
     gsize = (int(max(A.shape0s)), int(len(Y)),)
