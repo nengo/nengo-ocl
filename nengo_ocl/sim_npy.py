@@ -175,6 +175,8 @@ class Simulator(object):
                 xM = self.all_data.shape0s[xidx]
                 xN = self.all_data.shape1s[xidx]
                 if aN == aM == 1:
+                    # -- X must be column vector for this trick
+                    assert xN == 1
                     A_js_i.append(xidx)
                     X_js_i.append(aidx)
                 else:
