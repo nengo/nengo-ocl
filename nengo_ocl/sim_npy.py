@@ -127,7 +127,8 @@ class Simulator(object):
 
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
                  Y_in_sig_fn=None,
-                 verbose=0
+                 verbose=0,
+                 tag=None
                 ):
         if len(seq) == 0:
             return []
@@ -198,6 +199,11 @@ class Simulator(object):
         Y = self.all_data[Y_idxs]
         Y_in = self.all_data[Y_in_idxs]
 
+        # if tag == 'transforms':
+        #     print '=' * 70
+        #     print A_js
+        #     print X_js
+
         return [self.plan_ragged_gather_gemv(
             Ms=self.all_data.shape0s,
             Ns=self.all_data.shape1s,
@@ -207,9 +213,11 @@ class Simulator(object):
             beta=beta,
             Y=Y,
             Y_in=Y_in,
+            tag=tag,
             )]
 
     def plan_ragged_gather_gemv(self, *args, **kwargs):
+        kwargs.pop('tag') # -- only supported by ocl stuff at the moment
         return (lambda: ragged_gather_gemv(*args, **kwargs))
 
     @staticmethod
@@ -563,7 +571,8 @@ class Simulator(object):
                          for tf in transforms if tf.outsig == sig],
             1.0,
             lambda sig: self.outbufs[sig],
-            verbose=verbose
+            verbose=verbose,
+            tag='transforms',
             )
 
     def plan_filters(self, verbose=0):
@@ -582,7 +591,8 @@ class Simulator(object):
                          for filt in filters if filt.newsig == sig],
             0.0,
             lambda sig: self.outbufs[sig],
-            verbose=verbose
+            verbose=verbose,
+            tag='filters',
             )
 
     def plan_save_for_filters(self):
@@ -627,6 +637,7 @@ class Simulator(object):
                     beta,
                     lambda base: by_base[base][-1][0],
                     verbose=0,
+                    tag='back_copy_%i' % len(copy_fns)
                     ))
             for base in by_base:
                 by_base[base].pop()
