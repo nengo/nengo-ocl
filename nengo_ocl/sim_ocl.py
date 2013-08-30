@@ -1,5 +1,6 @@
 #import time
 import os
+import StringIO
 import numpy as np
 import pyopencl as cl
 
@@ -30,6 +31,16 @@ class DevRaggedArray(object):
         self.ldas = np_raggedarray.ldas
         self.buf = np_raggedarray.buf
         self.names = np_raggedarray.names
+
+    def __str__(self):
+        sio = StringIO.StringIO()
+        print 'names', self.names
+        namelen = max(len(n) for n in self.names)
+        fmt = '%%%is' % namelen
+        for ii, nn in enumerate(self.names):
+            print '->', self[ii]
+            print >> sio, (fmt % nn), self[ii]
+        return sio.getvalue()
 
     @property
     def starts(self):
