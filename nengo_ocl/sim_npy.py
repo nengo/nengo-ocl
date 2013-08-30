@@ -207,8 +207,6 @@ class Simulator(object):
         #     print X_js
 
         return [self.plan_ragged_gather_gemv(
-            Ms=self.all_data.shape0s,
-            Ns=self.all_data.shape1s,
             alpha=alpha,
             A=self.all_data, A_js=A_js,
             X=self.all_data, X_js=X_js,
