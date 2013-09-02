@@ -10,32 +10,20 @@ you can still run individual test files like this:
 """
 
 from nengo_ocl.tricky_imports import unittest
-
-import nengo.tests.helpers
-
+from nengo.tests.helpers import NengoTestLoader
+from nengo.tests.helpers import load_nengo_tests
 from nengo_ocl import sim_ocl
 
 import pyopencl as cl
 
 ctx = cl.create_some_context()
 
-def simulator_allocator(*args, **kwargs):
+def OclSimulator(*args, **kwargs):
     rval = sim_ocl.Simulator(ctx, *args, **kwargs)
     rval.plan_all()
     return rval
 
-load_tests = nengo.tests.helpers.load_nengo_tests(simulator_allocator)
+load_tests = load_nengo_tests(OclSimulator)
 
-for foo in load_tests(None, None, None):
-    class MyCLS(foo.__class__):
-        def Simulator(self, model):
-            return simulator_allocator(model)
-    globals()[foo.__class__.__name__] = MyCLS
-    MyCLS.__name__ = foo.__class__.__name__
-    del MyCLS
-    del foo
-del load_tests
-
-
-if __name__ == "__main__":
-    unittest.main()
+if __name__ == '__main__':
+   unittest.main(testLoader=NengoTestLoader(OclSimulator))
