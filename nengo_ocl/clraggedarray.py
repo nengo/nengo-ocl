@@ -6,8 +6,37 @@ OpenCL-based implementation of RaggedArray data structure.
 import StringIO
 import numpy as np
 import pyopencl as cl
-from clarray import to_device
+from .clarray import to_device
+from .raggedarray import RaggedArray
 
+def to_host(queue, data, dtype, start, shape, lda):
+    """Copy memory off the device, into a Numpy array"""
+
+    m, n = shape
+    if m * n == 0:
+        return np.zeros(shape, dtype=dtype)
+
+    assert lda >= 0, "lda must be non-negative"
+
+    itemsize = dtype.itemsize
+    bytestart = itemsize * start
+    byteend = bytestart + itemsize * (m + lda * (n-1))
+
+    temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
+    cl.enqueue_copy(queue, temp_buf, data,
+                    device_offset=bytestart, is_blocking=True)
+
+    bytestrides = (itemsize, itemsize * lda)
+    try:
+        view = np.ndarray(
+            shape=(m, n),
+            dtype=dtype,
+            buffer=temp_buf.data,
+            offset=0,
+            strides=bytestrides)
+    except:
+        raise
+    return view
 
 class CLRaggedArray(object):
     # a linear buffer that is partitioned into
@@ -127,32 +156,9 @@ class CLRaggedArray(object):
             rval.names = [self.names[i] for i in items]
             return rval
         else:
-            m, n = shape0s[item], shape1s[item]
-            if m * n == 0:
-                return np.zeros((m,n), dtype=self.dtype)
-
-            lda = ldas[item]
-            assert lda >= 0, "lda must be non-negative"
-
-            itemsize = self.dtype.itemsize
-            bytestart = itemsize * starts[item]
-            byteend = bytestart + itemsize * (m + lda * (n-1))
-
-            temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
-            cl.enqueue_copy(self.queue, temp_buf, self.cl_buf.data,
-                            device_offset=bytestart, is_blocking=True)
-
-            bytestrides = (itemsize, itemsize * lda)
-            try:
-                view = np.ndarray(
-                    shape=(m, n),
-                    dtype=self.dtype,
-                    buffer=temp_buf.data,
-                    offset=0,
-                    strides=bytestrides)
-            except:
-                raise
-            return view
+            return to_host(
+                self.queue, self.cl_buf.data, self.dtype, self.starts[item],
+                (self.shape0s[item], self.shape1s[item]), self.ldas[item])
 
     def __setitem__(self, item, new_value):
         starts = self.starts
@@ -186,6 +192,12 @@ class CLRaggedArray(object):
                 strides=bytestrides)
             view[...] = new_value
             print temp_buf.view('float32')
-            cl.enqueue_copy(self.queue, self.cl_buf.data, temp_buf, 
+            cl.enqueue_copy(self.queue, self.cl_buf.data, temp_buf,
                             device_offset=bytestart, is_blocking=True)
+
+    def to_host(self):
+        """Copy the whole object to a host RaggedArray"""
+        arrays = [self[i] for i in xrange(len(self))]
+        np_raggedarray = RaggedArray(arrays, names=self.names[:])
+        return np_raggedarray
 
