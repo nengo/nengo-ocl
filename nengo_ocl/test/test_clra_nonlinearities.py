@@ -40,11 +40,11 @@ def test_lif_step(upsample=1, n_elements=0):
     # tau_array = RA([tau*np.ones(n) for n in n_neurons])
 
     queue = cl.CommandQueue(ctx)
-    dJ = CLRA(queue, J)
-    dV = CLRA(queue, V)
-    dW = CLRA(queue, W)
-    dOS = CLRA(queue, OS)
-    # dTau = CLRA(queue, tau_array)
+    clJ = CLRA(queue, J)
+    clV = CLRA(queue, V)
+    clW = CLRA(queue, W)
+    clOS = CLRA(queue, OS)
+    # clTau = CLRA(queue, tau_array)
 
     ### simulate host
     nls = [LIF(n, tau_ref=ref, tau_rc=tau) for n in n_neurons]
@@ -58,28 +58,28 @@ def test_lif_step(upsample=1, n_elements=0):
                 OS[i] = (OS[i] > 0.5) | (s > 0.5)
 
     ### simulate device
-    plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, tau, dt,
+    plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, tau, dt,
                     upsample=upsample)
-    # plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, dTau, dt)
+    # plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, clTau, dt)
     plan()
 
     if 1:
-        a, b = V, dV
+        a, b = V, clV
         for i in xrange(len(a)):
             nc, _ = not_close(a[i], b[i]).nonzero()
             if len(nc) > 0:
                 j = nc[0]
                 print "i", i, "j", j
-                print "J", J[i][j], dJ[i][j]
-                print "V", V[i][j], dV[i][j]
-                print "W", W[i][j], dW[i][j]
+                print "J", J[i][j], clJ[i][j]
+                print "V", V[i][j], clV[i][j]
+                print "W", W[i][j], clW[i][j]
                 print "...", len(nc) - 1, "more"
 
     print "number of spikes", np.sum([np.sum(OS[i]) for i in xrange(len(OS))])
-    assert ra.allclose(J, dJ.to_host())
-    assert ra.allclose(V, dV.to_host())
-    assert ra.allclose(W, dW.to_host())
-    assert ra.allclose(OS, dOS.to_host())
+    assert ra.allclose(J, clJ.to_host())
+    assert ra.allclose(V, clV.to_host())
+    assert ra.allclose(W, clW.to_host())
+    assert ra.allclose(OS, clOS.to_host())
 
 def test_lif_speed():
     # import time
@@ -102,12 +102,12 @@ def test_lif_speed():
     queue = cl.CommandQueue(
         ctx, properties=cl.command_queue_properties.PROFILING_ENABLE)
 
-    dJ = CLRA(queue, J)
-    dV = CLRA(queue, V)
-    dW = CLRA(queue, W)
-    dOS = CLRA(queue, OS)
+    clJ = CLRA(queue, J)
+    clV = CLRA(queue, V)
+    clW = CLRA(queue, W)
+    clOS = CLRA(queue, OS)
 
-    plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, tau, dt)
+    plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, tau, dt)
 
     for i in range(1000):
         plan(profiling=True)
