@@ -68,42 +68,42 @@ class CLRaggedArray(object):
 
     @property
     def starts(self):
-        return map(int, self.cl_starts.get())
+        return self._starts.tolist()
 
     @starts.setter
     def starts(self, starts):
-        self.cl_starts = to_device(self.queue,
-                                   np.asarray(starts).astype('int32'))
+        self._starts = np.array(starts, dtype='int32')
+        self.cl_starts = to_device(self.queue, self._starts)
         self.queue.flush()
 
     @property
     def shape0s(self):
-        return map(int, self.cl_shape0s.get())
+        return self._shape0s.tolist()
 
     @shape0s.setter
     def shape0s(self, shape0s):
-        self.cl_shape0s = to_device(self.queue,
-                                    np.asarray(shape0s).astype('int32'))
+        self._shape0s = np.array(shape0s, dtype='int32')
+        self.cl_shape0s = to_device(self.queue, self._shape0s)
         self.queue.flush()
 
     @property
     def shape1s(self):
-        return map(int, self.cl_shape1s.get())
+        return self._shape1s.tolist()
 
     @shape1s.setter
     def shape1s(self, shape1s):
-        self.cl_shape1s = to_device(self.queue,
-                                    np.asarray(shape1s).astype('int32'))
+        self._shape1s = np.array(shape1s, dtype='int32')
+        self.cl_shape1s = to_device(self.queue, self._shape1s)
         self.queue.flush()
 
     @property
     def ldas(self):
-        return map(int, self.cl_ldas.get())
+        return self._ldas.tolist()
 
     @ldas.setter
     def ldas(self, ldas):
-        self.cl_ldas = to_device(self.queue,
-                                   np.asarray(ldas).astype('int32'))
+        self._ldas = np.array(ldas, dtype='int32')
+        self.cl_ldas = to_device(self.queue, self._ldas)
         self.queue.flush()
 
     @property
@@ -197,7 +197,11 @@ class CLRaggedArray(object):
 
     def to_host(self):
         """Copy the whole object to a host RaggedArray"""
-        arrays = [self[i] for i in xrange(len(self))]
-        np_raggedarray = RaggedArray(arrays, names=self.names[:])
-        return np_raggedarray
-
+        rval = RaggedArray.__new__(RaggedArray)
+        rval.starts = self.starts
+        rval.shape0s = self.shape0s
+        rval.shape1s = self.shape1s
+        rval.ldas = self.ldas
+        rval.buf = self.buf
+        rval.names = self.names[:]
+        return rval

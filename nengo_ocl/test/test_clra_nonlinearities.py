@@ -17,19 +17,22 @@ ctx = cl.create_some_context()
 def not_close(a, b, rtol=1e-3, atol=1e-3):
     return np.abs(a - b) > atol + rtol * np.abs(b)
 
-def test_lif_step():
-    dt = 1e-3
-    upsample = 2
-    # t_final = 1.
-    # t = dt * np.arange(np.round(t_final / dt))
-    # nt = len(t)
+def test_lif_step0():
+    test_lif_step(upsample=1, n_elements=0)
 
+def test_lif_step1():
+    test_lif_step(upsample=4, n_elements=0)
+
+def test_lif_step2():
+    test_lif_step(upsample=4, n_elements=7)
+
+def test_lif_step(upsample=1, n_elements=0):
+    dt = 1e-3
     # n_neurons = [3, 3, 3]
-    # n_neurons = [500, 200, 100]
     n_neurons = [12345, 23456, 34567]
-    J = RA([np.random.randn(n) for n in n_neurons])
+    J = RA([np.random.normal(scale=1.2, size=n) for n in n_neurons])
     V = RA([np.random.uniform(low=0, high=1, size=n) for n in n_neurons])
-    W = RA([np.random.uniform(low=-10*dt, high=10*dt, size=n) for n in n_neurons])
+    W = RA([np.random.uniform(low=-5*dt, high=5*dt, size=n) for n in n_neurons])
     OS = RA([np.zeros(n) for n in n_neurons])
 
     ref = 2e-3
@@ -47,7 +50,7 @@ def test_lif_step():
     nls = [LIF(n, tau_ref=ref, tau_rc=tau) for n in n_neurons]
     for i, nl in enumerate(nls):
         if upsample <= 1:
-            nl.step_math0(dt, J[i], V[i], W[i], OS[i], upsample=upsample)
+            nl.step_math0(dt, J[i], V[i], W[i], OS[i])
         else:
             s = np.zeros_like(OS[i])
             for j in xrange(upsample):
@@ -55,7 +58,8 @@ def test_lif_step():
                 OS[i] = (OS[i] > 0.5) | (s > 0.5)
 
     ### simulate device
-    plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, tau, dt, upsample=upsample)
+    plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, tau, dt,
+                    upsample=upsample)
     # plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, dTau, dt)
     plan()
 
@@ -104,8 +108,6 @@ def test_lif_speed():
     dOS = CLRA(queue, OS)
 
     plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, tau, dt)
-    # plan = plan_lif_flat(queue, dJ, dV, dW, dV, dW, dOS, ref, tau, dt)
-    # plan = plan_lif_group(queue, dJ, dV, dW, dV, dW, dOS, ref, tau, dt)
 
     for i in range(1000):
         plan(profiling=True)
@@ -114,31 +116,4 @@ def test_lif_speed():
     print 'queued -> submit', plan.atime
     print 'submit -> start ', plan.btime
     print 'start -> end    ', plan.ctime
-
-    # timer = time.time()
-    # for i in xrange(1000):
-        # plan()
-    # print "elapsed time:", time.time() - timer
-
-# def test_lif0():
-#     if profiling:
-#         queue = cl.CommandQueue(
-#             ctx,
-#             properties=cl.command_queue_properties.PROFILING_ENABLE)
-#     else:
-#         queue = cl.CommandQueue(ctx)
-#     N_neurons = 50000
-#     N_iters = 50
-
-#     J = to_device(queue, np.random.rand(N_neurons).astype('float32'))
-#     V = to_device(queue, np.random.rand(N_neurons).astype('float32'))
-#     RT = to_device(queue, np.random.rand(N_neurons).astype('float32'))
-#     OS = to_device(queue, np.random.rand(N_neurons).astype('float32'))
-
-#     plan = plan_lif(queue, V, RT, J, V, RT, OS,
-#             .001, .02, .002, 1.0, 2)
-
-#     for ii in range(N_iters):
-#         plan(profiling=profiling)
-#     print 'time per call', plan.ctime / plan.n_calls
 

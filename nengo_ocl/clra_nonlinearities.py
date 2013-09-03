@@ -125,7 +125,10 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                     variables=variables, sparams=sparams,
                     ivariables=ivariables, ovariables=ovariables)
 
-    text = """
+    if n_elements > 0:
+        ### Allocate the exact number of required kernels in a vector
+        gsize = (int(np.ceil(np.sum(base.shape0s) / float(n_elements))),)
+        text = """
         ////////// MAIN FUNCTION //////////
         __kernel void fn(
 % for name, [type, offset] in ivariables.items():
@@ -139,8 +142,6 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             __global const int *lengths
         )
         {
-
-% if n_elements > 0:
             const int gid = get_global_id(0);
             int m = gid * ${n_elements}, n = 0;
             while (m >= lengths[n]) {
@@ -158,7 +159,66 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
 % for name, [type, offset] in variables.items():
             ${type} ${name};
 % endfor
-% else:
+% for name, [type, value] in sparams.items():
+            const ${type} ${name} = ${value};
+% endfor
+            //////////////////////////////////////////////////
+            //vvvvv USER DECLARATIONS BELOW vvvvv
+            ${declares}
+            //^^^^^ USER DECLARATIONS ABOVE ^^^^^
+            //////////////////////////////////////////////////
+
+% for ii in range(n_elements):
+            //////////////////////////////////////////////////
+            ////////// LOOP ITERATION ${ii}
+  % for name, [type, offset] in ivariables.items():
+            ${name} = *cur_${name};
+  % endfor
+
+            /////vvvvv USER COMPUTATIONS BELOW vvvvv
+            ${core_text}
+            /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
+
+  % for name, [type, offset] in ovariables.items():
+            *cur_${name} = ${name};
+  % endfor
+
+  % if ii + 1 < n_elements:
+            m++;
+            if (m >= lengths[n]) {
+                n++;
+                m = 0;
+                if (n >= ${N}) return;
+
+    % for name, [type, offset] in variables.items():
+                cur_${name} = in_${name} + ${offset};
+    % endfor
+            } else {
+    % for name, [type, offset] in variables.items():
+                cur_${name}++;
+    % endfor
+            }
+  % endif
+% endfor
+        }
+        """
+    else:
+        ### Allocate more than enough kernels in a matrix
+        gsize = (int(np.max(base.shape0s)), int(N))
+        text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void fn(
+% for name, [type, offset] in ivariables.items():
+            __global const int *${name}_starts,
+            __global const ${type} *in_${name},
+% endfor
+% for name, [type, offset] in ovariables.items():
+            __global const int *${name}_starts,
+            __global ${type} *in_${name},
+% endfor
+            __global const int *lengths
+        )
+        {
             const int m = get_global_id(0);
             const int n = get_global_id(1);
             const int M = lengths[n];
@@ -170,8 +230,6 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
 % for name, [type, offset] in ovariables.items():
             ${type} ${name};
 % endfor
-% endif
-
 % for name, [type, value] in sparams.items():
             const ${type} ${name} = ${value};
 % endfor
@@ -181,62 +239,20 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             //^^^^^ USER DECLARATIONS ABOVE ^^^^^
             //////////////////////////////////////////////////
 
-% if n_elements > 0:
-  % for ii in range(n_elements):
-            //////////////////////////////////////////////////
-            ////////// LOOP ITERATION ${ii}
-    % for name, [type, offset] in ivariables.items():
-            ${name} = *cur_${name};
-    % endfor
-
             /////vvvvv USER COMPUTATIONS BELOW vvvvv
             ${core_text}
             /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
 
-    % for name, [type, offset] in ovariables.items():
-            *cur_${name} = ${name};
-    % endfor
-
-    % if ii + 1 < n_elements:
-            m++;
-            if (m >= lengths[n]) {
-                n++;
-                m = 0;
-                if (n >= ${N}) return;
-
-      % for name, [type, offset] in variables.items():
-                cur_${name} = in_${name} + ${offset};
-      % endfor
-            } else {
-      % for name, [type, offset] in variables.items():
-                cur_${name}++;
-      % endfor
-            }
-    % endif
-
-  % endfor
-% else:
-            /////vvvvv USER COMPUTATIONS BELOW vvvvv
-            ${core_text}
-            /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
-
-  % for name, [type, offset] in ovariables.items():
+% for name, [type, offset] in ovariables.items():
             in_${name}[${offset} + m] = ${name};
-  % endfor
-% endif
+% endfor
         }
         """
+
     text = Template(text, output_encoding='ascii').render(**textconf)
     if 0:
         for i, line in enumerate(text.split('\n')):
             print "%3d %s" % (i + 1, line)
-
-    if n_elements > 0:
-        gsize = (int(np.ceil(np.sum(base.shape0s) / float(n_elements))),)
-    else:
-        gsize = (int(np.max(base.shape0s)), int(N))
-    lsize = None
-    _fn = cl.Program(queue.context, text).build().fn
 
     full_args = []
     for name, v in avars:
@@ -244,12 +260,10 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     full_args.append(base.cl_shape0s)
     full_args = tuple(full_args)
 
+    _fn = cl.Program(queue.context, text).build().fn
     _fn.set_args(*[arr.data for arr in full_args])
-    rval = Plan(queue, _fn, gsize, lsize,
-                name=name,
-                tag=tag,
-               )
-    # prevent garbage-collection
-    rval.full_args = full_args
+
+    rval = Plan(queue, _fn, gsize, lsize=None, name=name, tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
     return rval
 
