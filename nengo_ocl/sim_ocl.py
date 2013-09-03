@@ -43,5 +43,14 @@ class Simulator(sim_npy.Simulator):
     def plan_lif(self, *args, **kwargs):
         return plan_lif(self.queue, *args, **kwargs)
 
-
+    def plan_direct(self, nls):
+        ### TODO: this is sub-optimal, since it involves copying everything
+        ### off the device, running the nonlinearity, then copying back on
+        sidx = self.sidx
+        def direct():
+            for nl in nls:
+                J = self.all_data[sidx[nl.input_signal]]
+                output = nl.fn(J)
+                self.all_data[sidx[nl.output_signal]] = output
+        return direct
 

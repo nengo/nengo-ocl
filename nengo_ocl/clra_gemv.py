@@ -71,8 +71,6 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
             const int M = Y_shape0s[bb];
             if (mm < M)
             {
-                // printf("${tag}: mm=%i bb=%i\\n", mm, bb);
-
                 const ${type_alpha} alpha = alphas[bb];
                 const ${type_beta} beta = betas[bb];
 
@@ -81,11 +79,12 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
 
                 Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm];
 
-                % if do_inner_products :
+% if do_inner_products :
                 const int n_dot_products = A_js_shape0s[bb];
                 X_js_data += X_js_starts[bb];
                 A_js_data += A_js_starts[bb];
 
+                ${type_Y} y_sum = 0;
                 for (int ii = 0; ii < n_dot_products; ++ii)
                 {
                     //printf("${tag}: ii=%i / %i\\n", ii, n_dot_products);
@@ -98,16 +97,12 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
                     //printf("x_offset=%i a_offset=%i\\n", x_offset, a_offset);
                     const int lda_i = A_ldas[a_ji];
 
-
-                    ${type_Y} y_sum = 0;
                     for (int nn = 0; nn < N_i; ++nn)
-                    {
                         y_sum += X_data[x_offset + nn]
                                  * A_data[a_offset + nn * lda_i + mm];
-                    }
-                    Y_data[y_offset + mm] += alpha * y_sum;
                 }
-                % endif
+                Y_data[y_offset + mm] += alpha * y_sum;
+% endif
             }
         }
     """
