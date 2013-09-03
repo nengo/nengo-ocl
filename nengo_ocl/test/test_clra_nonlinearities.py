@@ -19,6 +19,7 @@ def not_close(a, b, rtol=1e-3, atol=1e-3):
 
 def test_lif_step():
     dt = 1e-3
+    upsample = 2
     # t_final = 1.
     # t = dt * np.arange(np.round(t_final / dt))
     # nt = len(t)
@@ -45,10 +46,16 @@ def test_lif_step():
     ### simulate host
     nls = [LIF(n, tau_ref=ref, tau_rc=tau) for n in n_neurons]
     for i, nl in enumerate(nls):
-        nl.step_math0(dt, J[i], V[i], W[i], OS[i])
+        if upsample <= 1:
+            nl.step_math0(dt, J[i], V[i], W[i], OS[i], upsample=upsample)
+        else:
+            s = np.zeros_like(OS[i])
+            for j in xrange(upsample):
+                nl.step_math0(dt/upsample, J[i], V[i], W[i], s)
+                OS[i] = (OS[i] > 0.5) | (s > 0.5)
 
     ### simulate device
-    plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, tau, dt)
+    plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, tau, dt, upsample=upsample)
     # plan = plan_lif(queue, dJ, dV, dW, dV, dW, dOS, ref, dTau, dt)
     plan()
 
@@ -64,6 +71,7 @@ def test_lif_step():
                 print "W", W[i][j], dW[i][j]
                 print "...", len(nc) - 1, "more"
 
+    print "number of spikes", np.sum([np.sum(OS[i]) for i in xrange(len(OS))])
     assert ra.allclose(J, dJ.to_host())
     assert ra.allclose(V, dV.to_host())
     assert ra.allclose(W, dW.to_host())
