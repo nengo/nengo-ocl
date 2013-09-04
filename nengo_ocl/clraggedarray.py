@@ -108,7 +108,9 @@ class CLRaggedArray(object):
 
     @property
     def buf(self):
-        return self.cl_buf.get()
+        buf = self.cl_buf.get()
+        buf.setflags(write=False)
+        return buf
 
     @buf.setter
     def buf(self, buf):
@@ -156,9 +158,11 @@ class CLRaggedArray(object):
             rval.names = [self.names[i] for i in items]
             return rval
         else:
-            return to_host(
+            buf = to_host(
                 self.queue, self.cl_buf.data, self.dtype, self.starts[item],
                 (self.shape0s[item], self.shape1s[item]), self.ldas[item])
+            buf.setflags(write=False)
+            return buf
 
     def __setitem__(self, item, new_value):
         starts = self.starts

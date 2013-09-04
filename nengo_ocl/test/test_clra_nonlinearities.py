@@ -2,17 +2,23 @@
 import nose
 import numpy as np
 
+import nengo
 from nengo.objects import LIF, LIFRate, Direct
+
+import pyopencl as cl
+ctx = cl.create_some_context()
+
+import logging
+logger = logging.getLogger(__name__)
+# nengo.log(True)
 
 from ..ra_gemv import ragged_gather_gemv
 from  .. import raggedarray as ra
 from  ..raggedarray import RaggedArray as RA
 from ..clraggedarray import CLRaggedArray as CLRA
 
-from ..clra_nonlinearities import plan_lif
-
-import pyopencl as cl
-ctx = cl.create_some_context()
+# from ..clra_nonlinearities import plan_lif, plan_lif_rate
+from ..clra_nonlinearities import *
 
 def not_close(a, b, rtol=1e-3, atol=1e-3):
     return np.abs(a - b) > atol + rtol * np.abs(b)
@@ -27,9 +33,10 @@ def test_lif_step2():
     test_lif_step(upsample=4, n_elements=7)
 
 def test_lif_step(upsample=1, n_elements=0):
+    """Test the lif nonlinearity, comparing one step with the Numpy version."""
     dt = 1e-3
-    n_neurons = [3, 3, 3]
-    # n_neurons = [12345, 23456, 34567]
+    # n_neurons = [3, 3, 3]
+    n_neurons = [12345, 23456, 34567]
     N = len(n_neurons)
     J = RA([np.random.normal(scale=1.2, size=n) for n in n_neurons])
     V = RA([np.random.uniform(low=0, high=1, size=n) for n in n_neurons])
@@ -38,8 +45,6 @@ def test_lif_step(upsample=1, n_elements=0):
 
     ref = 2e-3
     # tau = 20e-3
-    # tau_array = RA([tau*np.ones(n) for n in n_neurons])
-
     # refs = list(np.random.uniform(low=1.7e-3, high=4.2e-3, size=len(n_neurons)))
     taus = list(np.random.uniform(low=15e-3, high=80e-3, size=len(n_neurons)))
 
@@ -48,8 +53,6 @@ def test_lif_step(upsample=1, n_elements=0):
     clV = CLRA(queue, V)
     clW = CLRA(queue, W)
     clOS = CLRA(queue, OS)
-    # clTau = CLRA(queue, tau_array)
-
     # clRef = CLRA(queue, RA(refs))
     clTau = CLRA(queue, RA(taus))
 
@@ -68,7 +71,6 @@ def test_lif_step(upsample=1, n_elements=0):
     ### simulate device
     plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, clTau, dt,
                     n_elements=n_elements, upsample=upsample)
-    # plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, clTau, dt)
     plan()
 
     if 1:
@@ -83,25 +85,29 @@ def test_lif_step(upsample=1, n_elements=0):
                 print "W", W[i][j], clW[i][j]
                 print "...", len(nc) - 1, "more"
 
-    print "number of spikes", np.sum([np.sum(OS[i]) for i in xrange(len(OS))])
+    n_spikes = np.sum([np.sum(os) for os in OS])
+    if n_spikes < 1.0:
+        logger.warn("LIF spiking mechanism was not tested!")
     assert ra.allclose(J, clJ.to_host())
     assert ra.allclose(V, clV.to_host())
     assert ra.allclose(W, clW.to_host())
     assert ra.allclose(OS, clOS.to_host())
 
-def test_lif_speed():
-    # import time
+def test_lif_speed(heterogeneous=True):
+    """Test the speed of the lif nonlinearity
+
+    heterogeneous: if true, use a wide range of population sizes.
+    """
 
     dt = 1e-3
-    # t_final = 1.
-    # t = dt * np.arange(np.round(t_final / dt))
-    # nt = len(t)
-
     ref = 2e-3
     tau = 20e-3
 
-    # n_neurons = [1.1e5] * 5
-    n_neurons = [1.0e5] * 5 + [1e3]*50
+    if heterogeneous:
+        n_neurons = [1.0e5] * 5 + [1e3]*50
+    else:
+        n_neurons = [1.1e5] * 5
+
     J = RA([np.random.randn(n) for n in n_neurons])
     V = RA([np.random.uniform(low=0, high=1, size=n) for n in n_neurons])
     W = RA([np.random.uniform(low=-10*dt, high=10*dt, size=n) for n in n_neurons])
@@ -128,4 +134,36 @@ def test_lif_speed():
         print 'queued -> submit', plan.atime
         print 'submit -> start ', plan.btime
         print 'start -> end    ', plan.ctime
+
+def test_lif_rate(n_elements=0):
+    """Test the `lif_rate` nonlinearity"""
+    # n_neurons = [3, 3, 3]
+    n_neurons = [123459, 23456, 34567]
+    N = len(n_neurons)
+    J = RA([np.random.normal(loc=1, scale=10, size=n) for n in n_neurons])
+    R = RA([np.zeros(n) for n in n_neurons])
+
+    ref = 2e-3
+    taus = list(np.random.uniform(low=15e-3, high=80e-3, size=len(n_neurons)))
+
+    queue = cl.CommandQueue(ctx)
+    clJ = CLRA(queue, J)
+    clR = CLRA(queue, R)
+    clTau = CLRA(queue, RA(taus))
+
+    ### simulate host
+    nls = [LIF(n, tau_ref=ref, tau_rc=taus[i])
+           for i, n in enumerate(n_neurons)]
+    for i, nl in enumerate(nls):
+        R[i] = nl.rates(J[i].flatten()).reshape((-1,1))
+
+    ### simulate device
+    plan = plan_lif_rate(queue, clJ, clR, ref, clTau, n_elements=n_elements)
+    plan()
+
+    rate_sum = np.sum([np.sum(r) for r in R])
+    if rate_sum < 1.0:
+        logger.warn("LIF rate was not tested above the firing threshold!")
+    assert ra.allclose(J, clJ.to_host())
+    assert ra.allclose(R, clR.to_host())
 

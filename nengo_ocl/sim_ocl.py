@@ -6,7 +6,7 @@ from clraggedarray import CLRaggedArray
 
 from raggedarray import RaggedArray
 from clra_gemv import plan_ragged_gather_gemv
-from clra_nonlinearities import plan_lif
+from clra_nonlinearities import plan_lif, plan_lif_rate
 
 class Simulator(sim_npy.Simulator):
 
@@ -40,17 +40,6 @@ class Simulator(sim_npy.Simulator):
         return plan_ragged_gather_gemv(
             self.queue, *args, **kwargs)
 
-    def plan_lif(self, nls):
-        J = self.all_data[[self.sidx[nl.input_signal] for nl in nls]]
-        V = self.all_data[[self.sidx[self.lif_voltage[nl]] for nl in nls]]
-        W = self.all_data[[self.sidx[self.lif_reftime[nl]] for nl in nls]]
-        S = self.all_data[[self.sidx[nl.output_signal] for nl in nls]]
-        ref = self.RaggedArray([nl.tau_ref for nl in nls])
-        tau = self.RaggedArray([nl.tau_rc for nl in nls])
-        dt = self.model.dt
-        return plan_lif(self.queue, J, V, W, V, W, S,
-                        ref, tau, dt, tag="lif", upsample=1)
-
     def plan_direct(self, nls):
         ### TODO: this is sub-optimal, since it involves copying everything
         ### off the device, running the nonlinearity, then copying back on
@@ -61,4 +50,23 @@ class Simulator(sim_npy.Simulator):
                 output = nl.fn(J)
                 self.all_data[sidx[nl.output_signal]] = output
         return direct
+
+    def plan_lif(self, nls):
+        J = self.all_data[[self.sidx[nl.input_signal] for nl in nls]]
+        V = self.all_data[[self.sidx[self.lif_voltage[nl]] for nl in nls]]
+        W = self.all_data[[self.sidx[self.lif_reftime[nl]] for nl in nls]]
+        S = self.all_data[[self.sidx[nl.output_signal] for nl in nls]]
+        ref = self.RaggedArray([nl.tau_ref for nl in nls])
+        tau = self.RaggedArray([nl.tau_rc for nl in nls])
+        dt = self.model.dt
+        return plan_lif(self.queue, J, V, W, V, W, S, ref, tau, dt,
+                        tag="lif", upsample=1, n_elements=10)
+
+    def plan_lif_rate(self, nls):
+        J = self.all_data[[self.sidx[nl.input_signal] for nl in nls]]
+        R = self.all_data[[self.sidx[nl.output_signal] for nl in nls]]
+        ref = self.RaggedArray([nl.tau_ref for nl in nls])
+        tau = self.RaggedArray([nl.tau_rc for nl in nls])
+        return plan_lif_rate(self.queue, J, R, ref, tau,
+                             tag="lif_rate", n_elements=10)
 
