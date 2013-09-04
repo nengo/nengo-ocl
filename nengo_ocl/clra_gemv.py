@@ -55,6 +55,7 @@ def plan_parallel_ragged_gather_gemv2(queue,
         'type_Y': Y.cl_buf.ocldtype,
         'y_len': len(Y),
         'lsize': group_size,
+        'MAX_N_DOT_PRODUCTS': max(A_js.shape0s),
     }
 
     text = """
@@ -79,28 +80,47 @@ def plan_parallel_ragged_gather_gemv2(queue,
             __global ${type_Y} *Y_data)
     {
         __local ${type_Y} partialDotProduct[${lsize}]; //Scratch space for the dot products
+        __local int y_offset;
+        __local int n_dot_products;
+        __local int A_js_offset;
+        __local int X_js_offset;
+        __local int A_js_row[${MAX_N_DOT_PRODUCTS}];
+        __local int X_js_row[${MAX_N_DOT_PRODUCTS}];
+        __local ${type_Y} y_sum_pre;
+        ${type_Y} y_sum_post;
+
         for (int bb = get_global_id(1);
                  bb < ${y_len};
                  bb += get_global_size(1))
         {
             const int mm = 0; // TODO: SUPPORT M > 1
 
-            const int y_offset = Y_starts[bb];
+            if (get_local_id(0) < n_dot_products)
+            {
+                if (get_local_id(0) == 0)
+                {
+                    y_offset = Y_starts[bb];
+                    n_dot_products = A_js_lens[bb];
+                    A_js_offset = A_js_starts[bb];
+                    X_js_offset = X_js_starts[bb];
 
-            % if beta != 0 :
-                Y_data[y_offset] = ${beta} * Y_in_data[Y_in_starts[bb]];
-            % else :
-                Y_data[y_offset] = 0;
-            % endif
+                    % if beta != 0 :
+                        y_sum_pre = ${beta} * Y_in_data[Y_in_starts[bb]];
+                    % else :
+                        y_sum_pre = 0;
+                    % endif
+                }
 
-            ${type_Y} y_sum = 0;
-            const int n_dot_products = A_js_lens[bb];
-            const __global int* X_js_row = X_js_data + X_js_starts[bb];
-            const __global int* A_js_row = A_js_data + A_js_starts[bb];
+                barrier(CLK_LOCAL_MEM_FENCE);
+                A_js_row[get_local_id(0)] = A_js_data[A_js_offset + get_local_id(0)];
+                X_js_row[get_local_id(0)] = X_js_data[X_js_offset + get_local_id(0)];
+            }
+            barrier(CLK_LOCAL_MEM_FENCE);
+            y_sum_post = 0;
 
             for(int ii = 0; ii < n_dot_products; ii++) {
-                const int x_ji = X_js_row[ii];
                 const int a_ji = A_js_row[ii];
+                const int x_ji = X_js_row[ii];
                 const int N_i = A_shape1s[a_ji];
                 const int lda_i = A_ldas[a_ji];
 
@@ -108,13 +128,13 @@ def plan_parallel_ragged_gather_gemv2(queue,
                 const __global ${type_X}* X_row = X_data + X_starts[x_ji];
 
                 for (int nn = get_local_id(0); nn < N_i; nn += get_local_size(0)) {
-                    y_sum += A_row[nn * lda_i + mm] * X_row[nn];
+                    y_sum_post += A_row[nn * lda_i + mm] * X_row[nn];
                 }
             }
 
             // -- Parallel reduction within local group sum registers
             barrier(CLK_LOCAL_MEM_FENCE);
-            partialDotProduct[get_local_id(0)] = y_sum;
+            partialDotProduct[get_local_id(0)] = y_sum_post;
 
             for (uint stride = 1; stride < get_local_size(0); stride *= 2) {
                 // XXX not necessary IFF local_size(0) < warp size
@@ -126,7 +146,7 @@ def plan_parallel_ragged_gather_gemv2(queue,
                 }
             }
             if (get_local_id(0) == 0) {
-                Y_data[y_offset] += ${alpha} * partialDotProduct[0];
+                Y_data[y_offset] = y_sum_pre + ${alpha} * partialDotProduct[0];
             }
         }
     }

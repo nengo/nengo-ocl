@@ -106,8 +106,8 @@ class TestStuff(unittest.TestCase):
     #       then each kernel will do 1024/32=32 dot-products
     #       32 is optimal size on my GT650M
     def test_parallel_reduction_speed(self,
-            group_size=32,
-            runs=100):
+            group_size=128,
+            runs=1000):
         queue = cl.CommandQueue(
             ctx,
             properties=cl.command_queue_properties.PROFILING_ENABLE)
