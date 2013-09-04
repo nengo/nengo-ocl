@@ -236,7 +236,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
 
                 Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm];
 
-% if do_inner_products :
+    % if do_inner_products :
                 const int n_dot_products = A_js_shape0s[bb];
                 X_js_data += X_js_starts[bb];
                 A_js_data += A_js_starts[bb];
@@ -259,7 +259,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
                                  * A_data[a_offset + nn * lda_i + mm];
                 }
                 Y_data[y_offset + mm] += alpha * y_sum;
-% endif
+    % endif
             }
         }
     """
