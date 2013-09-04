@@ -70,6 +70,8 @@ class TestStuff(unittest.TestCase):
         L = 512  # -- length of each vector
         N = 1000 # -- number of vectors
 
+        np.random.seed(50)
+
         A = CLRA(queue, RA([np.random.randn(1, L) for i in range(N)]))
         X = CLRA(queue, RA([np.random.randn(L, 1) for i in range(N)]))
 
@@ -91,6 +93,10 @@ class TestStuff(unittest.TestCase):
         print 'avg. submit -> start  (ms)', (1000 * plan.btime / runs)
         print 'avg. start -> end     (ms)', (1000 * plan.ctime / runs)
 
+        print "Output: "
+        print Y.buf
+        print Y.buf.sum()
+
 
     # -- Using same data and number of runs as test_reduction_speed() performs
     #    dot-products #in groups within separate work-items.
@@ -100,7 +106,7 @@ class TestStuff(unittest.TestCase):
     #       then each kernel will do 1024/32=32 dot-products
     #       32 is optimal size on my GT650M
     def test_parallel_reduction_speed(self,
-            group_size=16,
+            group_size=32,
             runs=100):
         queue = cl.CommandQueue(
             ctx,
@@ -127,7 +133,7 @@ class TestStuff(unittest.TestCase):
         plan = plan_parallel_ragged_gather_gemv2(
             queue,
             1.0, A, A_js, X, X_js,
-            0.0, Y, group_size)
+            0.0, Y, group_size=group_size)
 
         for i in xrange(runs):
             plan(profiling=True)
@@ -137,8 +143,9 @@ class TestStuff(unittest.TestCase):
         print 'avg. submit -> start  (ms)', (1000 * plan.btime / runs)
         print 'avg. start -> end     (ms)', (1000 * plan.ctime / runs)
 
-        #print "Output: "
-        #print Y.buf
+        print "Output: "
+        print Y.buf
+        print Y.buf.sum()
 
 
 if __name__ == '__main__':

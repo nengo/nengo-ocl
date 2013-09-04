@@ -5,8 +5,10 @@ from mako.template import Template
 from clarray import to_device
 
 def plan_parallel_ragged_gather_gemv2(queue,
-        alpha, A, A_js, X, X_js,
-        beta, Y, group_size = 32, Y_in=None, tag=None):
+    alpha, A, A_js, X, X_js,
+    beta, Y, Y_in=None, tag=None,
+    group_size=32,
+    ):
     """
     """
 
@@ -27,10 +29,20 @@ def plan_parallel_ragged_gather_gemv2(queue,
             np.asarray([beta] * len(Y), Y.buf.dtype))
 
     if cl_alpha or cl_beta:
-        raise NotImplementedError()
+        raise NotImplementedError('alpha or beta non-homogeneous')
 
     if Y_in is None:
         Y_in = Y
+
+    # Make the global size the closest multiple of the group size (ceiling)
+    gsize = (group_size, len(Y))
+    lsize = (group_size, 1)
+
+    #print gsize
+    #print lsize
+
+    if not np.all(shp0 == 1 for shp0 in Y.shape0s):
+        raise NotImplementedError(Y.shape0s)
 
     # XXX check that all the ints are ints not longs
     textconf = {
@@ -50,6 +62,7 @@ def plan_parallel_ragged_gather_gemv2(queue,
             //const __global ${type_alpha} * alphas,
             const __global int *A_starts,
             const __global int *A_shape1s,
+            const __global int *A_ldas,
             const __global ${type_A} *A_data,
             const __global int *A_js_starts,
             const __global int *A_js_lens,
@@ -64,70 +77,62 @@ def plan_parallel_ragged_gather_gemv2(queue,
             const __global int *Y_starts,
             const __global int *Y_lens,
             __global ${type_Y} *Y_data)
+    {
+        __local ${type_Y} partialDotProduct[${lsize}]; //Scratch space for the dot products
+        for (int bb = get_global_id(1);
+                 bb < ${y_len};
+                 bb += get_global_size(1))
         {
-            //const int mm = get_global_id(1); //TODO
+            const int mm = 0; // TODO: SUPPORT M > 1
 
-            __local ${type_Y} partialDotProduct[${lsize}]; //Scratch space for the dot products
+            const int y_offset = Y_starts[bb];
 
-            //Y is divided into groups of size group_size. Each work-item does enough dot-products to cover one of the groups
-            for (uint yi = get_group_id(0); yi < ${y_len}; yi += get_num_groups(0)) {
+            % if beta != 0 :
+                Y_data[y_offset] = ${beta} * Y_in_data[Y_in_starts[bb]];
+            % else :
+                Y_data[y_offset] = 0;
+            % endif
 
-                const __global int* X_js_row = X_js_data + X_js_starts[yi];
-                const __global int* A_js_row = A_js_data + A_js_starts[yi];
+            ${type_Y} y_sum = 0;
+            const int n_dot_products = A_js_lens[bb];
+            const __global int* X_js_row = X_js_data + X_js_starts[bb];
+            const __global int* A_js_row = A_js_data + A_js_starts[bb];
 
-                //const ${type_alpha} alpha = alphas[yi];
-                //const ${type_beta} beta = betas[yi];
+            for(int ii = 0; ii < n_dot_products; ii++) {
+                const int x_ji = X_js_row[ii];
+                const int a_ji = A_js_row[ii];
+                const int N_i = A_shape1s[a_ji];
+                const int lda_i = A_ldas[a_ji];
 
-                int y_offset = Y_starts[yi];
-                int y_in_offset = Y_in_starts[yi];
-                % if beta != 0 :
-                    Y_data[y_offset] = ${beta} * Y_in_data[y_in_offset];
-                % else :
-                    Y_data[y_offset] = 0;
-                % endif
+                const __global ${type_A}* A_row = A_data + A_starts[a_ji];
+                const __global ${type_X}* X_row = X_data + X_starts[x_ji];
 
-                float sum = 0;
-                int n_dot_products = A_js_lens[yi]; //Do all of xjs dot products at same time
-                for(int j = 0; j < n_dot_products; j++) {
-                    const int x_ji = X_js_row[j];
-                    const int a_ji = A_js_row[j];
-                    const int N_i = A_shape1s[a_ji];
-
-                    const __global ${type_A}* A_row = A_data + A_starts[a_ji]; //Get the rows for the product
-                    const __global ${type_X}* X_row = X_data + X_starts[x_ji];
-
-                    //Each work item will do some fraction of the multiplications and store the result locally
-                    for (uint x = get_local_id(0); x < N_i; x += get_local_size(0)) {
-                        sum += A_row[x] * X_row[x];
-                    }
-                }
-                partialDotProduct[get_local_id(0)] = sum;
-
-                //Parallel reduction of locally stored sums
-                for (uint stride = 1; stride < get_local_size(0); stride *= 2) {
-                    barrier(CLK_LOCAL_MEM_FENCE);
-
-                    uint index = 2 * stride * get_local_id(0);
-                    if (index < get_local_size(0)) {
-                        partialDotProduct[index] += partialDotProduct[index + stride];
-                    }
-                }
-
-                //Multiply by alpha and store the result.
-                if (get_local_id(0) == 0) {
-                    Y_data[yi] += ${alpha} * partialDotProduct[0];
-                    barrier(CLK_LOCAL_MEM_FENCE);
+                for (int nn = get_local_id(0); nn < N_i; nn += get_local_size(0)) {
+                    y_sum += A_row[nn * lda_i + mm] * X_row[nn];
                 }
             }
+
+            // -- Parallel reduction within local group sum registers
+            barrier(CLK_LOCAL_MEM_FENCE);
+            partialDotProduct[get_local_id(0)] = y_sum;
+
+            for (uint stride = 1; stride < get_local_size(0); stride *= 2) {
+                // XXX not necessary IFF local_size(0) < warp size
+                barrier(CLK_LOCAL_MEM_FENCE);
+
+                uint index = 2 * stride * get_local_id(0);
+                if (index + stride < get_local_size(0)) {
+                    partialDotProduct[index] += partialDotProduct[index + stride];
+                }
+            }
+            if (get_local_id(0) == 0) {
+                Y_data[y_offset] += ${alpha} * partialDotProduct[0];
+            }
         }
+    }
         """
 
     text = Template(text, output_encoding='ascii').render(**textconf)
-
-    # Make the global size the closest multiple of the group size (ceiling)
-    y_size = int(np.ceil(len(Y) / float(group_size))) * group_size
-    gsize = (y_size,)
-    lsize = (group_size,)
 
     _fn = cl.Program(queue.context, text).build().fn
 
@@ -135,6 +140,7 @@ def plan_parallel_ragged_gather_gemv2(queue,
                  #cl_alpha,
                  A.cl_starts,
                  A.cl_shape1s,
+                 A.cl_ldas,
                  A.cl_buf,
                  A_js.cl_starts,
                  A_js.cl_shape0s,
