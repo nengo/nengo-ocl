@@ -40,8 +40,16 @@ class Simulator(sim_npy.Simulator):
         return plan_ragged_gather_gemv(
             self.queue, *args, **kwargs)
 
-    def plan_lif(self, *args, **kwargs):
-        return plan_lif(self.queue, *args, **kwargs)
+    def plan_lif(self, nls):
+        J = self.all_data[[self.sidx[nl.input_signal] for nl in nls]]
+        V = self.all_data[[self.sidx[self.lif_voltage[nl]] for nl in nls]]
+        W = self.all_data[[self.sidx[self.lif_reftime[nl]] for nl in nls]]
+        S = self.all_data[[self.sidx[nl.output_signal] for nl in nls]]
+        ref = self.RaggedArray([nl.tau_ref for nl in nls])
+        tau = self.RaggedArray([nl.tau_rc for nl in nls])
+        dt = self.model.dt
+        return plan_lif(self.queue, J, V, W, V, W, S,
+                        ref, tau, dt, tag="lif", upsample=1)
 
     def plan_direct(self, nls):
         ### TODO: this is sub-optimal, since it involves copying everything

@@ -6,10 +6,11 @@ from mako.template import Template
 from clarray import to_device
 from .clraggedarray import CLRaggedArray
 
-def equal_arrays(a, b):
+def all_equal(a, b):
     return (np.asarray(a) == np.asarray(b)).all()
 
-def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt, tag=None, upsample=1):
+def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt,
+             tag=None, n_elements=0, upsample=1):
     """
     """
     inputs = dict(j=J, v=V, w=W)
@@ -53,7 +54,8 @@ def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt, tag=None, upsample=1):
     text = Template(text, output_encoding='ascii').render(**textconf)
 
     return _plan_template(
-        queue, "lif_step", text, declares=declares, tag=tag, n_elements=0,
+        queue, "lif_step", text, declares=declares,
+        tag=tag, n_elements=n_elements,
         inputs=inputs, outputs=outputs, parameters=parameters)
 
 def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
@@ -79,7 +81,8 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         Outputs of the function. RaggedArrays must be a list of vectors.
 
     parameters: dictionary of CLRaggedArrays
-        Parameters to the function. RaggedArrays must be a list of vectors.
+        Parameters to the function. Each RaggedArray element must be a vector
+        of the same length of the inputs, or a scalar (to be broadcasted).
         Providing a float instead of a RaggedArray makes that parameter
         constant.
 
@@ -89,41 +92,51 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     N = len(base)
 
     ### split parameters into static and updated params
-    sparams = {}  # static params (hard-coded)
-    uparams = {}  # variable params (updated)
+    static_params = {}  # static params (hard-coded)
+    params = {}  # variable params (updated)
     for k, v in parameters.items():
         if isinstance(v, CLRaggedArray):
-            uparams[k] = v
+            params[k] = v
         else:
             try:
-                sparams[k] = ('float', float(v))
+                static_params[k] = ('float', float(v))
             except TypeError:
                 raise
 
-    ivars = dict(inputs.items() + uparams.items())
-    ovars = dict(outputs)
-    avars = ivars.items() + ovars.items()
-
-    variables = {}
-    for vname, v in avars:
-        assert vname not in variables, "Name clash"
+    avars = {}
+    for vname, v in inputs.items() + outputs.items():
+        assert vname not in avars, "Name clash"
         assert len(v) == N
-        assert equal_arrays(v.shape0s, base.shape0s)
+        assert all_equal(v.shape0s, base.shape0s)
 
         ### N.B. - we should be able to ignore ldas as long as all vectors
-        assert equal_arrays(v.shape1s, 1)
+        assert all_equal(v.shape1s, 1)
 
         dtype = v.cl_buf.ocldtype
         offset = '%(name)s_starts[n]' % {'name': vname}
-        variables[vname] = (dtype, offset)
+        avars[vname] = (dtype, offset)
 
-    ivariables = dict((k, variables[k]) for k in ivars.keys())
-    ovariables = dict((k, variables[k]) for k in ovars.keys())
+    for vname, v in params.items():
+        assert vname not in avars, "Name clash"
+        assert len(v) == N
+        for i in xrange(N):
+            assert v.shape0s[i] == base.shape0s[i] or v.shape0s[i] == 1, \
+                "%s.shape0s[%d] must be 1 or %d (not %d)" % \
+                (vname, i, base.shape0s[i], v.shape0s[i])
+            assert v.shape1s[i] == 1
+
+        dtype = v.cl_buf.ocldtype
+        offset = '%(name)s_starts[n]' % {'name': vname}
+        avars[vname] = (dtype, offset)
+
+    ivars = dict((k, avars[k]) for k in inputs.keys())
+    ovars = dict((k, avars[k]) for k in outputs.keys())
+    pvars = dict((k, avars[k]) for k in params.keys())
 
     textconf = dict(N=N, n_elements=n_elements, tag=str(tag),
                     declares=declares, core_text=core_text,
-                    variables=variables, sparams=sparams,
-                    ivariables=ivariables, ovariables=ovariables)
+                    ivars=ivars, ovars=ovars, pvars=pvars,
+                    static_params=static_params)
 
     if n_elements > 0:
         ### Allocate the exact number of required kernels in a vector
@@ -131,13 +144,18 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         text = """
         ////////// MAIN FUNCTION //////////
         __kernel void fn(
-% for name, [type, offset] in ivariables.items():
+% for name, [type, offset] in ivars.items():
             __global const int *${name}_starts,
             __global const ${type} *in_${name},
 % endfor
-% for name, [type, offset] in ovariables.items():
+% for name, [type, offset] in ovars.items():
             __global const int *${name}_starts,
             __global ${type} *in_${name},
+% endfor
+% for name, [type, offset] in pvars.items():
+            __global const int *${name}_starts,
+            __global const int *${name}_shape0s,
+            __global const ${type} *in_${name},
 % endfor
             __global const int *lengths
         )
@@ -150,16 +168,21 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             }
             if (n >= ${N}) return;
 
-% for name, [type, offset] in ivariables.items():
+% for name, [type, offset] in ivars.items():
             __global const ${type} *cur_${name} = in_${name} + ${offset} + m;
 % endfor
-% for name, [type, offset] in ovariables.items():
+% for name, [type, offset] in ovars.items():
             __global ${type} *cur_${name} = in_${name} + ${offset} + m;
 % endfor
-% for name, [type, offset] in variables.items():
+% for name, [type, offset] in pvars.items():
+            __global const ${type} *cur_${name} = in_${name} + ${offset};
+            int ${name}_isvector = ${name}_shape0s[n] > 1;
+            if (${name}_isvector) cur_${name} += m;
+% endfor
+% for name, [type, offset] in ivars.items() + ovars.items() + pvars.items():
             ${type} ${name};
 % endfor
-% for name, [type, value] in sparams.items():
+% for name, [type, value] in static_params.items():
             const ${type} ${name} = ${value};
 % endfor
             //////////////////////////////////////////////////
@@ -171,15 +194,18 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
 % for ii in range(n_elements):
             //////////////////////////////////////////////////
             ////////// LOOP ITERATION ${ii}
-  % for name, [type, offset] in ivariables.items():
+  % for name, [type, offset] in ivars.items():
             ${name} = *cur_${name};
+  % endfor
+  % for name, [type, offset] in pvars.items():
+            if ((${ii} == 0) || ${name}_isvector) ${name} = *cur_${name};
   % endfor
 
             /////vvvvv USER COMPUTATIONS BELOW vvvvv
             ${core_text}
             /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
 
-  % for name, [type, offset] in ovariables.items():
+  % for name, [type, offset] in ovars.items():
             *cur_${name} = ${name};
   % endfor
 
@@ -190,12 +216,19 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                 m = 0;
                 if (n >= ${N}) return;
 
-    % for name, [type, offset] in variables.items():
+    % for name, [type, offset] in ivars.items() + ovars.items() + pvars.items():
                 cur_${name} = in_${name} + ${offset};
     % endfor
+    % for name, [type, offset] in pvars.items():
+                ${name}_isvector = ${name}_shape0s[n] > 1;
+                if (!${name}_isvector) ${name} = *cur_${name};
+    % endfor
             } else {
-    % for name, [type, offset] in variables.items():
+    % for name, [type, offset] in ivars.items() + ovars.items():
                 cur_${name}++;
+    % endfor
+    % for name, [type, offset] in pvars.items():
+                if (${name}_isvector) cur_${name}++;
     % endfor
             }
   % endif
@@ -208,13 +241,18 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         text = """
         ////////// MAIN FUNCTION //////////
         __kernel void fn(
-% for name, [type, offset] in ivariables.items():
+% for name, [type, offset] in ivars.items():
             __global const int *${name}_starts,
             __global const ${type} *in_${name},
 % endfor
-% for name, [type, offset] in ovariables.items():
+% for name, [type, offset] in ovars.items():
             __global const int *${name}_starts,
             __global ${type} *in_${name},
+% endfor
+% for name, [type, offset] in pvars.items():
+            __global const int *${name}_starts,
+            __global const int *${name}_shape0s,
+            __global const ${type} *in_${name},
 % endfor
             __global const int *lengths
         )
@@ -224,13 +262,17 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             const int M = lengths[n];
             if (m >= M) return;
 
-% for name, [type, offset] in ivariables.items():
+% for name, [type, offset] in ivars.items():
             ${type} ${name} = in_${name}[${offset} + m];
 % endfor
-% for name, [type, offset] in ovariables.items():
+% for name, [type, offset] in ovars.items():
             ${type} ${name};
 % endfor
-% for name, [type, value] in sparams.items():
+% for name, [type, offset] in pvars.items():
+            const ${type} ${name} = (${name}_shape0s[n] > 1) ?
+                in_${name}[${offset} + m] : in_${name}[${offset}];
+% endfor
+% for name, [type, value] in static_params.items():
             const ${type} ${name} = ${value};
 % endfor
             //////////////////////////////////////////////////
@@ -243,7 +285,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             ${core_text}
             /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
 
-% for name, [type, offset] in ovariables.items():
+% for name, [type, offset] in ovars.items():
             in_${name}[${offset} + m] = ${name};
 % endfor
         }
@@ -255,8 +297,10 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             print "%3d %s" % (i + 1, line)
 
     full_args = []
-    for name, v in avars:
+    for name, v in inputs.items() + outputs.items():
         full_args.extend([v.cl_starts, v.cl_buf])
+    for name, v in params.items():
+        full_args.extend([v.cl_starts, v.cl_shape0s, v.cl_buf])
     full_args.append(base.cl_shape0s)
     full_args = tuple(full_args)
 

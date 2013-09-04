@@ -28,16 +28,20 @@ def test_lif_step2():
 
 def test_lif_step(upsample=1, n_elements=0):
     dt = 1e-3
-    # n_neurons = [3, 3, 3]
-    n_neurons = [12345, 23456, 34567]
+    n_neurons = [3, 3, 3]
+    # n_neurons = [12345, 23456, 34567]
+    N = len(n_neurons)
     J = RA([np.random.normal(scale=1.2, size=n) for n in n_neurons])
     V = RA([np.random.uniform(low=0, high=1, size=n) for n in n_neurons])
     W = RA([np.random.uniform(low=-5*dt, high=5*dt, size=n) for n in n_neurons])
     OS = RA([np.zeros(n) for n in n_neurons])
 
     ref = 2e-3
-    tau = 20e-3
+    # tau = 20e-3
     # tau_array = RA([tau*np.ones(n) for n in n_neurons])
+
+    # refs = list(np.random.uniform(low=1.7e-3, high=4.2e-3, size=len(n_neurons)))
+    taus = list(np.random.uniform(low=15e-3, high=80e-3, size=len(n_neurons)))
 
     queue = cl.CommandQueue(ctx)
     clJ = CLRA(queue, J)
@@ -46,8 +50,12 @@ def test_lif_step(upsample=1, n_elements=0):
     clOS = CLRA(queue, OS)
     # clTau = CLRA(queue, tau_array)
 
+    # clRef = CLRA(queue, RA(refs))
+    clTau = CLRA(queue, RA(taus))
+
     ### simulate host
-    nls = [LIF(n, tau_ref=ref, tau_rc=tau) for n in n_neurons]
+    nls = [LIF(n, tau_ref=ref, tau_rc=taus[i])
+           for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
         if upsample <= 1:
             nl.step_math0(dt, J[i], V[i], W[i], OS[i])
@@ -58,8 +66,8 @@ def test_lif_step(upsample=1, n_elements=0):
                 OS[i] = (OS[i] > 0.5) | (s > 0.5)
 
     ### simulate device
-    plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, tau, dt,
-                    upsample=upsample)
+    plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, clTau, dt,
+                    n_elements=n_elements, upsample=upsample)
     # plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, clTau, dt)
     plan()
 
@@ -107,13 +115,17 @@ def test_lif_speed():
     clW = CLRA(queue, W)
     clOS = CLRA(queue, OS)
 
-    plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, tau, dt)
+    n_elements = [0, 2, 5, 10]
+    for i, nel in enumerate(n_elements):
+        plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, tau, dt,
+                        n_elements=nel)
 
-    for i in range(1000):
-        plan(profiling=True)
+        for j in range(1000):
+            plan(profiling=True)
 
-    print 'n_calls         ', plan.n_calls
-    print 'queued -> submit', plan.atime
-    print 'submit -> start ', plan.btime
-    print 'start -> end    ', plan.ctime
+        print "plan %d: n_elements = %d" % (i, nel)
+        print 'n_calls         ', plan.n_calls
+        print 'queued -> submit', plan.atime
+        print 'submit -> start ', plan.btime
+        print 'start -> end    ', plan.ctime
 
