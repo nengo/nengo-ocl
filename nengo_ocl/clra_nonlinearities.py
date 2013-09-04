@@ -58,6 +58,20 @@ def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt,
         tag=tag, n_elements=n_elements,
         inputs=inputs, outputs=outputs, parameters=parameters)
 
+def plan_lif_rate(queue, J, R, ref, tau, tag=None, n_elements=0):
+    """
+    """
+    inputs = dict(j=J)
+    outputs = dict(r=R)
+    parameters = dict(tau=tau, ref=ref)
+    text = """
+            j = max(j - 1, 0.0f);
+            r = 1.0 / (ref + tau * log1p(1.0/j));
+            """
+    return _plan_template(
+        queue, "lif_rate", text, tag=tag, n_elements=n_elements,
+        inputs=inputs, outputs=outputs, parameters=parameters)
+
 def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                    inputs={}, outputs={}, parameters={}):
     """Template for making a plan for vector nonlinearities.

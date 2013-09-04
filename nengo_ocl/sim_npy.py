@@ -25,13 +25,11 @@ from raggedarray import RaggedArray
 def isview(obj):
     return obj.base is not None and obj.base is not obj
 
-
 def shape0(obj):
     try:
         return obj.shape[0]
     except IndexError:
         return 1
-
 
 def shape1(obj):
     try:
@@ -39,23 +37,9 @@ def shape1(obj):
     except IndexError:
         return 1
 
-
 def idxs(seq, offset):
     rval = dict((s, i + offset) for (i, s) in enumerate(seq))
     return rval, offset + len(rval)
-
-
-def islif(obj):
-    return isinstance(obj, LIF)
-
-
-def islifrate(obj):
-    return isinstance(obj, LIFRate)
-
-
-def ivalueof(sig):
-    return sig.value
-
 
 def stable_unique(seq):
     seen = set()
@@ -531,6 +515,13 @@ class Simulator(object):
                 nl.step_math0(dt, J, voltage, reftime, output,)
         return lif
 
+    def plan_lif_rate(self, nls):
+        def lif():
+            for nl in nls:
+                J = self.all_data[self.sidx[nl.input_signal]]
+                self.all_data[self.sidx[nl.output_signal]][:] = nl.math(J)
+        return lif
+
     def plan_nonlinearities(self):
         nl_fns = []
         nls = sorted(self.model.nonlinearities, key=type)
@@ -539,6 +530,8 @@ class Simulator(object):
                 nl_fns.append(self.plan_direct(list(nl_group)))
             elif nl_type == LIF:
                 nl_fns.append(self.plan_lif(list(nl_group)))
+            elif nl_type == LIFRate:
+                nl_fns.append(self.plan_lif_rate(list(nl_group)))
             else:
                 raise NotImplementedError(nl_type)
         return nl_fns
