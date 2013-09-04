@@ -47,9 +47,9 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
 
     text = """
         __kernel void fn(
-            __global int *A_shape1s,
             __global ${type_alpha} * alphas,
             __global int *A_starts,
+            __global int *A_shape1s,
             __global int *A_ldas,
             __global ${type_A} *A_data,
             __global int *A_js_starts,
@@ -118,9 +118,9 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     _fn = cl.Program(queue.context, text).build().fn
     dummy = A.cl_buf
     full_args = (
-        A.cl_shape1s,
         cl_alpha,
         A.cl_starts,
+        A.cl_shape1s,
         A.cl_ldas,
         A.cl_buf,
         A_js.cl_starts if A_js is not None else dummy,
@@ -128,35 +128,14 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
         A_js.cl_buf if A_js is not None else dummy,
         X.cl_starts,
         X.cl_buf,
-        X_js.cl_starts if A_js is not None else dummy,
-        X_js.cl_buf if A_js is not None else dummy,
+        X_js.cl_starts if X_js is not None else dummy,
+        X_js.cl_buf if X_js is not None else dummy,
         cl_beta,
         Y_in.cl_starts,
         Y_in.cl_buf,
         Y.cl_starts,
         Y.cl_shape0s,
         Y.cl_buf)
-    if 0:
-        full_args = (
-                 cl_alpha,
-                 A.cl_starts,
-                 A.cl_shape1s,
-                 A.cl_ldas,
-                 A.cl_buf,
-                 A_js.cl_starts if A_js is not None else dummy,
-                 A_js.cl_shape0s if A_js is not None else dummy,
-                 A_js.cl_buf if A_js is not None else dummy,
-                 X.cl_starts,
-                 X.cl_buf,
-                 X_js.cl_starts if X_js is not None else dummy,
-                 X_js.cl_buf if X_js is not None else dummy,
-                 cl_beta,
-                 Y_in.cl_starts,
-                 Y_in.cl_buf,
-                 Y.cl_starts,
-                 Y.cl_shape0s,
-                 Y.cl_buf,
-                )
 
     #print [str(arr.dtype)[0] for arr in full_args]
     _fn.set_args(*[arr.data for arr in full_args])

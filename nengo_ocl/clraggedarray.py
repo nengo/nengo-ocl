@@ -191,7 +191,7 @@ class CLRaggedArray(object):
                 offset=0,
                 strides=bytestrides)
             view[...] = new_value
-            print temp_buf.view('float32')
+            # print temp_buf.view('float32')
             cl.enqueue_copy(self.queue, self.cl_buf.data, temp_buf,
                             device_offset=bytestart, is_blocking=True)
 
