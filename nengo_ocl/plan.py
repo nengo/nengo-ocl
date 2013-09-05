@@ -1,4 +1,35 @@
+import time
 import pyopencl as cl
+
+class PythonPlan(object):
+    def __init__(self, function, **kwargs):
+        self.function = function
+        self.name = kwargs.get('name', "")
+        self.tag = kwargs.get('tag', "")
+        self.kwargs = kwargs
+        self.atime = 0.0
+        self.btime = 0.0
+        self.ctime = 0.0
+        self.n_calls = 0
+
+    def __call__(self, profiling=False):
+        if profiling:
+            timer = time.time()
+        self.function()
+        if profiling:
+            self.ctime += (time.time() - timer)
+            self.n_calls += 1
+
+    def enqueue(self):
+        pass
+
+    def __str__(self):
+        return '%s{%s %s %s}' % (
+            self.__class__.__name__,
+            self.name,
+            self.tag,
+            self.kwargs)
+
 
 class Plan(object):
 
@@ -7,6 +38,8 @@ class Plan(object):
         self.kern = kern
         self.gsize = gsize
         self.lsize = lsize
+        self.name = kwargs.get('name', "")
+        self.tag = kwargs.get('tag', "")
         self.kwargs = kwargs
         self.atime = 0.0
         self.btime = 0.0
@@ -34,6 +67,7 @@ class Plan(object):
             self.gsize,
             self.lsize,
             self.kwargs)
+
 
 class Prog(object):
     def __init__(self, plans):

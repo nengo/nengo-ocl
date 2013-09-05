@@ -26,6 +26,8 @@ from nengo import simulator as sim
 from .ra_gemv import ragged_gather_gemv
 from .raggedarray import RaggedArray as _RaggedArray
 
+from .plan import PythonPlan
+
 def is_op(op):
     return isinstance(op, sim.Operator)
 
@@ -716,9 +718,9 @@ class Simulator(object):
             X_js.append(X_js_i)
 
         if verbose:
-            print 'in sig_vemv'
-            print 'print A', A_js
-            print 'print X', X_js
+            print "in sig_vemv"
+            print "print A", A_js
+            print "print X", X_js
 
         A_js = self.RaggedArray(A_js)
         X_js = self.RaggedArray(X_js)
@@ -741,8 +743,11 @@ class Simulator(object):
             seq=seq,
             )]
 
-    def plan_ragged_gather_gemv(self, *args, **kwargs):
-        return (lambda: ragged_gather_gemv(*args, **kwargs))
+    def plan_ragged_gather_gemv(self, alpha, A, A_js, X, X_js,
+                                beta, Y, Y_in=None, tag=None):
+        fn = lambda: ragged_gather_gemv(alpha, A, A_js, X, X_js, beta, Y,
+                                        Y_in=Y_in, use_raw_fn=False)
+        return PythonPlan(fn, name="npy_ragged_gather_gemv", tag=tag)
 
     def __getitem__(self, item):
         """
@@ -837,7 +842,7 @@ class Simulator(object):
                 if self.sim_step % period == 0:
                     self.probe_outputs[probe].append(
                         self.signals[probe.sig].copy())
-        return [fn]
+        return [PythonPlan(fn, name="probes", tag="probes")]
 
     def step(self):
         for fn in self._plan:
