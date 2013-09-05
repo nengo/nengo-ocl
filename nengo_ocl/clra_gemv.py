@@ -328,7 +328,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     #print [str(arr.dtype)[0] for arr in full_args]
     _fn.set_args(*[arr.data for arr in full_args])
     rval = Plan(queue, _fn, gsize, lsize,
-                name='ref_ragged_gather_gemv',
+                name="ref_ragged_gather_gemv",
                 tag=tag,
                )
     # prevent garbage-collection

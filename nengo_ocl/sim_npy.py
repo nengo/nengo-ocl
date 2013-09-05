@@ -18,8 +18,10 @@ from nengo.core import Signal
 from nengo.core import SignalView
 from nengo.core import LIF, LIFRate, Direct
 
-from ra_gemv import ragged_gather_gemv
-from raggedarray import RaggedArray
+from .raggedarray import RaggedArray
+from .ra_gemv import ragged_gather_gemv
+
+from .plan import PythonPlan
 
 
 def isview(obj):
@@ -171,7 +173,7 @@ class Simulator(object):
                     X_js_i.append(aidx)
                 else:
                     if aN != xM:
-                        raise ValueError('shape mismatch in sig_gemv',
+                        raise ValueError("shape mismatch in sig_gemv",
                                          ((asig, aM, aN),
                                           (xsig, xM, xN),
                                           (ysig, yM, yN),
@@ -182,9 +184,9 @@ class Simulator(object):
             X_js.append(X_js_i)
 
         if verbose:
-            print 'in sig_vemv'
-            print 'print A', A_js
-            print 'print X', X_js
+            print "in sig_vemv"
+            print "print A", A_js
+            print "print X", X_js
 
         A_js = self.RaggedArray(A_js)
         X_js = self.RaggedArray(X_js)
@@ -206,9 +208,11 @@ class Simulator(object):
             tag=tag,
             )]
 
-    def plan_ragged_gather_gemv(self, *args, **kwargs):
-        kwargs.pop('tag') # -- only supported by ocl stuff at the moment
-        return (lambda: ragged_gather_gemv(*args, **kwargs))
+    def plan_ragged_gather_gemv(self, alpha, A, A_js, X, X_js,
+                                beta, Y, Y_in=None, tag=None):
+        fn = lambda: ragged_gather_gemv(alpha, A, A_js, X, X_js, beta, Y,
+                                        Y_in=Y_in, use_raw_fn=False)
+        return PythonPlan(fn, name="npy_ragged_gather_gemv", tag=tag)
 
     @staticmethod
     def orig_relevant_signals(model):
@@ -498,6 +502,7 @@ class Simulator(object):
             1.0,
             lambda pop: pop.input_signal,
             lambda pop: pop.bias_signal,
+            tag="encoders"
             )
 
     def plan_direct(self, nls):
@@ -507,7 +512,7 @@ class Simulator(object):
                 J = self.all_data[sidx[nl.input_signal]]
                 output = nl.fn(J)
                 self.all_data[sidx[nl.output_signal]][:] = output
-        return direct
+        return PythonPlan(direct, name="direct", tag="direct")
 
     def plan_lif(self, nls):
         dt = self.model.dt
@@ -519,14 +524,14 @@ class Simulator(object):
                 reftime = self.all_data[sidx[self.lif_reftime[nl]]]
                 output = self.all_data[sidx[nl.output_signal]]
                 nl.step_math0(dt, J, voltage, reftime, output,)
-        return lif
+        return PythonPlan(lif, name="lif", tag="lif")
 
     def plan_lif_rate(self, nls):
-        def lif():
+        def lif_rate():
             for nl in nls:
                 J = self.all_data[self.sidx[nl.input_signal]]
                 self.all_data[self.sidx[nl.output_signal]][:] = nl.math(J)
-        return lif
+        return PythonPlan(lif_rate, name="lif_rate", tag="lif_rate")
 
     def plan_nonlinearities(self):
         nl_fns = []
@@ -554,6 +559,7 @@ class Simulator(object):
                          for dec in decoders if dec.sig == sig],
             0.0,
             lambda sig: self.dec_outputs[sig],
+            tag="decoders"
             )
 
     def plan_transforms(self, verbose=0):
@@ -571,7 +577,7 @@ class Simulator(object):
             1.0,
             lambda sig: self.outbufs[sig],
             verbose=verbose,
-            tag='transforms',
+            tag="transforms",
             )
 
     def plan_filters(self, verbose=0):
@@ -591,7 +597,7 @@ class Simulator(object):
             0.0,
             lambda sig: self.outbufs[sig],
             verbose=verbose,
-            tag='filters',
+            tag="filters",
             )
 
     def plan_save_for_filters(self):
@@ -604,6 +610,7 @@ class Simulator(object):
             0.0,
             lambda item: saved[item],
             verbose=0,
+            tag="save_for_filters",
             )
 
     def plan_back_copy(self):
@@ -628,7 +635,7 @@ class Simulator(object):
             0.0,
             lambda sig_or_view: sig_or_view,
             verbose=0,
-            tag='back_copy_init'
+            tag="back_copy_init"
             )
 
         # -- now that outputs have been cleared
@@ -649,13 +656,13 @@ class Simulator(object):
                     1.0,
                     lambda base: by_base[base][-1][0],
                     verbose=0,
-                    tag='back_copy_%i' % (len(copy_fns) - 1)
+                    tag="back_copy_%i" % (len(copy_fns) - 1)
                     ))
             # -- pop last elements and remove empty lists
             by_base = OrderedDict((k, v[:-1])
                                   for k, v in by_base.items()
                                   if len(v) > 1)
-        info('back_copy required %i passes' % len(copy_fns))
+        info("back_copy required %i passes" % len(copy_fns))
         return copy_fns
 
     def plan_probes(self):
@@ -667,7 +674,7 @@ class Simulator(object):
                 if self.sim_step % period == 0:
                     self.probe_output[probe].append(
                         self.signals[probe.sig].copy())
-        return fn
+        return PythonPlan(fn, name="probes", tag="probes")
 
     def plan_all(self):
         self._plan = []

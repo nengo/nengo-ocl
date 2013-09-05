@@ -2,11 +2,12 @@ import os
 import pyopencl as cl
 
 import sim_npy
-from clraggedarray import CLRaggedArray
+from .raggedarray import RaggedArray
+from .clraggedarray import CLRaggedArray
+from .plan import Plan, PythonPlan
 
-from raggedarray import RaggedArray
-from clra_gemv import plan_ragged_gather_gemv
-from clra_nonlinearities import plan_lif, plan_lif_rate
+from .clra_gemv import plan_ragged_gather_gemv
+from .clra_nonlinearities import plan_lif, plan_lif_rate
 
 class Simulator(sim_npy.Simulator):
 
@@ -18,7 +19,7 @@ class Simulator(sim_npy.Simulator):
             return CLRaggedArray(self.queue, val)
 
     def __init__(self, context, model, n_prealloc_probes=1000,
-                profiling=None):
+                 profiling=False):
         if profiling is None:
             profiling = bool(int(os.getenv("NENGO_OCL_PROFILING", 0)))
         self.context = context
@@ -37,8 +38,7 @@ class Simulator(sim_npy.Simulator):
         self.all_data = CLRaggedArray(self.queue, self.all_data)
 
     def plan_ragged_gather_gemv(self, *args, **kwargs):
-        return plan_ragged_gather_gemv(
-            self.queue, *args, **kwargs)
+        return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
 
     def plan_direct(self, nls):
         ### TODO: this is sub-optimal, since it involves copying everything
@@ -49,7 +49,7 @@ class Simulator(sim_npy.Simulator):
                 J = self.all_data[sidx[nl.input_signal]]
                 output = nl.fn(J)
                 self.all_data[sidx[nl.output_signal]] = output
-        return direct
+        return PythonPlan(direct, name="direct", tag="direct")
 
     def plan_lif(self, nls):
         J = self.all_data[[self.sidx[nl.input_signal] for nl in nls]]
@@ -70,3 +70,11 @@ class Simulator(sim_npy.Simulator):
         return plan_lif_rate(self.queue, J, R, ref, tau,
                              tag="lif_rate", n_elements=10)
 
+    def step(self):
+        for fn in self._plan:
+            fn(profiling=self.profiling)
+        self.sim_step += 1
+
+    def run_steps(self, N, verbose=False):
+        for i in xrange(N):
+            self.step()
