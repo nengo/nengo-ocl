@@ -35,7 +35,7 @@ def plan_parallel_ragged_gather_gemv2(queue,
         Y_in = Y
 
     # Make the global size the closest multiple of the group size (ceiling)
-    gsize = (group_size, len(Y))
+    gsize = (group_size, 512)
     lsize = (group_size, 1)
 
     #print gsize
@@ -111,11 +111,16 @@ def plan_parallel_ragged_gather_gemv2(queue,
                     % endif
                 }
 
-                barrier(CLK_LOCAL_MEM_FENCE);
+                // a barrier here risks *deadlock*
+                // instead we assume that n_dot_products < warp size
+                // barrier(CLK_LOCAL_MEM_FENCE); // need A_js_offset to be loaded
                 A_js_row[get_local_id(0)] = A_js_data[A_js_offset + get_local_id(0)];
                 X_js_row[get_local_id(0)] = X_js_data[X_js_offset + get_local_id(0)];
             }
-            barrier(CLK_LOCAL_MEM_FENCE);
+            // This barrier cannot cause deadlock because
+            // the whole local work group is devoted to the same value of bb
+            // so they are all here, or none here.
+            barrier(CLK_LOCAL_MEM_FENCE); // need A_js_row to be loaded
             y_sum_post = 0;
 
             for(int ii = 0; ii < n_dot_products; ii++) {
@@ -150,7 +155,7 @@ def plan_parallel_ragged_gather_gemv2(queue,
             }
         }
     }
-        """
+    """
 
     text = Template(text, output_encoding='ascii').render(**textconf)
 
@@ -330,3 +335,174 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     rval.full_args = full_args
     return rval
 
+
+def plan_parallel_ragged_gather_gemv3(queue,
+    alpha, A, A_js, X, X_js,
+    beta, Y, Y_in=None, tag=None,
+    group_size=32,
+    ):
+    """
+    """
+
+    # TODO: if alpha or beta is a float
+    #       then render it into the kernel text.
+    try:
+        alpha = float(alpha)
+        cl_alpha = None
+    except TypeError:
+        cl_alpha = to_device(queue,
+            np.asarray([alpha] * len(Y), Y.buf.dtype))
+
+    try:
+        beta = float(beta)
+        cl_beta = None
+    except TypeError:
+        cl_beta = to_device(queue,
+            np.asarray([beta] * len(Y), Y.buf.dtype))
+
+    if cl_alpha or cl_beta:
+        raise NotImplementedError('alpha or beta non-homogeneous')
+
+    if Y_in is None:
+        Y_in = Y
+
+    # Make the global size the closest multiple of the group size (ceiling)
+    gsize = (group_size, 1024)
+    lsize = (group_size, 1)
+
+    if not np.all(shp0 == 1 for shp0 in Y.shape0s):
+        raise NotImplementedError(Y.shape0s)
+
+    max_n_dots = max(A_js.shape0s)
+    n_structure_vars = 4 * max_n_dots + 3;
+
+    gstructure = np.zeros((len(Y), n_structure_vars), dtype='int32')
+    A_starts = A.starts
+    A_ldas = A.ldas
+    A_shape1s = A.shape1s
+    X_starts = X.starts
+    Y_in_starts = Y_in.starts
+    Y_starts = Y.starts
+
+    for bb in range(len(Y)):
+        x_js_i = X_js[bb]
+        A_js_i = A_js[bb]
+        assert len(x_js_i) == len(A_js_i)
+        gstructure[bb, 4 * max_n_dots + 0] = Y_in.starts[bb]
+        gstructure[bb, 4 * max_n_dots + 1] = Y_starts[bb]
+        gstructure[bb, 4 * max_n_dots + 2] = len(A_js_i)
+        for ii, (xi, ai) in enumerate(zip(x_js_i, A_js_i)):
+            gstructure[bb, 0 * max_n_dots + ii] = X_starts[xi]
+            gstructure[bb, 1 * max_n_dots + ii] = A_starts[ai]
+            gstructure[bb, 2 * max_n_dots + ii] = A_ldas[ai]
+            gstructure[bb, 3 * max_n_dots + ii] = A_shape1s[ai]
+    cl_gstructure = to_device(queue, gstructure)
+
+    textconf = {
+        'alpha' : str(alpha),
+        'beta' : str(beta),
+        'type_alpha': None, #cl_alpha.ocldtype,
+        'type_beta': None, #cl_beta.ocldtype,
+        'type_A': A.cl_buf.ocldtype,
+        'type_X': X.cl_buf.ocldtype,
+        'type_Y': Y.cl_buf.ocldtype,
+        'y_len': len(Y),
+        'lsize': group_size,
+        'n_structure_vars': n_structure_vars,
+        'structure_stride': n_structure_vars,
+        'MAX_N_DOT_PRODUCTS': max_n_dots,
+        'x_starts': 'lstructure[0 * %s + ii]' % max_n_dots,
+        'a_starts': 'lstructure[1 * %s + ii]' % max_n_dots,
+        'a_lda'   : 'lstructure[2 * %s + ii]' % max_n_dots,
+        'N_i'     : 'lstructure[3 * %s + ii]' % max_n_dots,
+        'y_in_starts': 'lstructure[4 * %s + 0]' % max_n_dots,
+        'y_offset': 'lstructure[4 * %s + 1]' % max_n_dots,
+        'n_dot_products': 'lstructure[4 * %s + 2]' % max_n_dots,
+    }
+
+    text = """
+        __kernel void fn(
+            const __global int *gstructure,
+            const __global ${type_A} *A_data,
+            const __global ${type_X} *X_data,
+            const __global ${type_Y} *Y_in_data,
+            __global ${type_Y} *Y_data)
+    {
+        __local int lstructure[${n_structure_vars}];
+        __local ${type_Y} partialDotProduct[${lsize}]; //Scratch space for the dot products
+        __local ${type_Y} y_sum_pre;
+        ${type_Y} y_sum_post;
+
+        for (int bb = get_global_id(1);
+                 bb < ${y_len};
+                 bb += get_global_size(1))
+        {
+            const int mm = 0; // TODO: SUPPORT M > 1
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+            if (get_local_id(0) < ${n_structure_vars})
+            {
+                lstructure[get_local_id(0)] = gstructure[
+                    bb * ${structure_stride} + get_local_id(0)];
+            }
+            barrier(CLK_LOCAL_MEM_FENCE);
+
+            if (get_local_id(0) == 0)
+            {
+                % if beta != 0 :
+                    y_sum_pre = ${beta} * Y_in_data[${y_in_starts}];
+                % else :
+                    y_sum_pre = 0;
+                % endif
+            }
+            y_sum_post = 0;
+
+            for(int ii = 0; ii < ${n_dot_products}; ii++) {
+
+                for (int nn = get_local_id(0); nn < ${N_i}; nn += get_local_size(0)) {
+                    y_sum_post +=
+                        A_data[${a_starts} + nn * ${a_lda} + mm]
+                      * X_data[${x_starts} + nn];
+                }
+            }
+
+            // -- Parallel reduction within local group sum registers
+            partialDotProduct[get_local_id(0)] = y_sum_post;
+
+            for (uint stride = 1; stride < get_local_size(0); stride *= 2) {
+                // XXX not necessary IFF local_size(0) < warp size
+                barrier(CLK_LOCAL_MEM_FENCE);
+
+                uint index = 2 * stride * get_local_id(0);
+                if (index + stride < get_local_size(0)) {
+                    partialDotProduct[index] += partialDotProduct[index + stride];
+                }
+            }
+            if (get_local_id(0) == 0) {
+                Y_data[${y_offset}] = y_sum_pre + ${alpha} * partialDotProduct[0];
+            }
+        }
+    }
+        """
+
+    text = Template(text, output_encoding='ascii').render(**textconf)
+
+    _fn = cl.Program(queue.context, text).build().fn
+
+    full_args = (
+                 cl_gstructure,
+                 A.cl_buf,
+                 X.cl_buf,
+                 Y_in.cl_buf,
+                 Y.cl_buf,
+                )
+
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    rval = Plan(queue, _fn, gsize, lsize,
+                name='ref_parallel_ragged_gather_gemv',
+                tag=tag,
+               )
+    # prevent garbage-collection
+    rval.full_args = full_args
+    return rval
