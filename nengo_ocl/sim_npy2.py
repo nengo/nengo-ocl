@@ -6,6 +6,7 @@ from collections import defaultdict
 import itertools
 import logging
 import networkx
+from networkx import DiGraph
 from networkx import ancestors, topological_sort
 
 from tricky_imports import OrderedDict
@@ -25,6 +26,9 @@ from nengo import simulator as sim
 
 from ra_gemv import ragged_gather_gemv
 from raggedarray import RaggedArray
+
+def is_op(op):
+    return isinstance(op, sim.Operator)
 
 
 def exact_dependency_graph(operators):
@@ -122,22 +126,44 @@ def greedy_planner(dg, operators):
     calls, and  that function would need to be pretty fast.
     """
 
+    # -- filter Signals out of the dependency graph
+    op_dg = DiGraph()
+    for op in operators:
+        for pre in dg.predecessors(op):
+            if is_op(pre):
+                op_dg.add_edge(pre, op)
+
     # XXX: the `atable` can be built in linear rather than quadratic time
     atable = {}
-    for op in operators:
-        atable[op] = ancestors(dg, op)
+    for op in op_dg.nodes():
+        atable[op] = ancestors(op_dg, op)
 
-    ops_by_type = defaultdict(list)
-    for op in operators:
-        ops_by_type[type(op)].append(op)
+    ops_by_depth = defaultdict(list)
+    depth = {}
+    for op in topological_sort(op_dg):
+        preops = op_dg.predecessors(op)
+        if preops:
+            d = 1 + max(map(depth.__getitem__, preops))
+        else:
+            d = 0
+        depth[op] = d
+        ops_by_depth[d].append(op)
+    graph_depth = d + max(depth.values())
 
-    concurrent_groups = []
+    print 'Graph depth:', d
 
-    for op_type, ops in ops_by_type:
-        concurrent_group = [ops[0]]
-        #for other in ops[:]
-
-    raise NotImplementedError()
+    #if all ops had the same type we would be done
+    rval = []
+    for d in range(graph_depth):
+        ops = ops_by_depth[d]
+        ops_by_type = defaultdict(list)
+        for op in ops:
+            ops_by_type[type(op)].append(op)
+        for typ in ops_by_type:
+            rval.append((typ, ops_by_type[typ]))
+    assert len(operators) == sum(len(p[1]) for p in rval)
+    print 'Program len:', len(rval)
+    return rval
 
 
 def sequential_planner(dg, operators):
@@ -147,9 +173,6 @@ def sequential_planner(dg, operators):
     need a function to estimate the goodness (e.g. neg wall time) of kernel
     calls, and  that function would need to be pretty fast.
     """
-
-    def is_op(op):
-        return isinstance(op, sim.Operator)
 
     # list of pairs: (type, [ops_of_type], set_of_ancestors, set_of_descendants)
     op_groups = []
@@ -208,7 +231,9 @@ def signals_from_operators(operators):
 
 class Simulator(object):
 
-    def __init__(self, model):
+    def __init__(self, model,
+            planner=greedy_planner,
+            ):
 
         if not hasattr(model, 'dt'):
             raise ValueError("Model does not appear to be built. "
@@ -221,7 +246,9 @@ class Simulator(object):
         all_bases = [sig for sig in all_signals if not isview(sig)]
 
         dg = exact_dependency_graph(self.model._operators)
-        op_groups = sequential_planner(dg, self.model._operators)
+        op_groups = planner(dg, self.model._operators)
+        self.op_groups = op_groups # debug
+        #self.print_op_groups()
 
         # -- map from Signal.base -> ndarray
         sigdict = SignalDict()
@@ -248,7 +275,6 @@ class Simulator(object):
             self._plan.extend(self.plan_op_group(op_type, op_list))
         self._plan.extend(self.plan_probes())
         self.all_bases = all_bases
-        self.op_groups = op_groups # debug
 
     def print_op_groups(self):
         for op_type, op_list in self.op_groups:
@@ -330,9 +356,8 @@ class Simulator(object):
 
             else:
                 raise NotImplementedError()
-
-        map(view_builder.append_view, op.all_signals)
-        map(view_builder.append_view, self._DotInc_views[op])
+            map(view_builder.append_view, op.all_signals)
+            map(view_builder.append_view, self._DotInc_views[op])
 
     def plan_Reset(self, ops):
         if not all(op.value == 0 for op in ops):
