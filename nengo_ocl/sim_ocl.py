@@ -8,6 +8,7 @@ from clraggedarray import CLRaggedArray
 from raggedarray import RaggedArray
 from clra_gemv import plan_ragged_gather_gemv
 from clra_nonlinearities import plan_lif, plan_lif_rate
+from plan import Plan, Prog
 
 class Simulator(sim_npy.Simulator):
 
@@ -33,6 +34,17 @@ class Simulator(sim_npy.Simulator):
         sim_npy.Simulator.__init__(self,
                                    model,
                                    )
+
+    def run_steps(self, N, verbose=False):
+        import time
+        t0 = time.time()
+        if all(isinstance(p, Plan) for p in self._plan):
+            Prog(self._plan).call_n_times(N)
+        else:
+            for i in xrange(N):
+                self.step()
+        t1 = time.time()
+        print 'run_steps %i took %f' %  (N, t1 - t0)
 
     def _prep_all_data(self):
         # -- replace the numpy-allocated RaggedArray with OpenCL one

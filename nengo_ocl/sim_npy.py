@@ -2,6 +2,7 @@
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
 
+import time
 from collections import defaultdict
 import itertools
 import logging
@@ -28,13 +29,35 @@ from raggedarray import RaggedArray as _RaggedArray
 def is_op(op):
     return isinstance(op, sim.Operator)
 
+def startstop(f):
+    def rval(*args, **kwargs):
+        print 'starting', f.__name__
+        t0 = time.time()
+        foo = f(*args, **kwargs)
+        print '  .. done', f.__name__, (time.time() - t0)
+        return foo
+    rval.__name__ = f.__name__
+    return rval
 
+class Timer(object):
+    def __init__(self, msg):
+        self.msg = msg
+    def __enter__(self):
+        self.t0 = time.time()
+    def __exit__(self, *args):
+        self.t1 = time.time()
+        print 'Timer: "%s" took %f' % (self.msg,
+                self.t1 - self.t0)
+
+@startstop
 def exact_dependency_graph(operators):
     dg = nx.DiGraph()
 
     for op in operators:
         dg.add_edges_from(itertools.product(op.reads + op.updates, [op]))
         dg.add_edges_from(itertools.product([op], op.sets + op.incs))
+
+    print ' .. adding edges for %i nodes' % len(dg.nodes())
 
     # -- all views of a base object in a particular dictionary
     by_base_writes = defaultdict(list)
@@ -79,31 +102,34 @@ def exact_dependency_graph(operators):
                 pre_ops += sets[other]
         dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
 
-    # -- reads depend on writes (sets and incs)
-    for node, post_ops in reads.items():
-        pre_ops = []
-        for other in by_base_writes[node.base]:
-            if node.shares_memory_with(other):
-                pre_ops += sets[other] + incs[other]
-        dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
+    with Timer('writes'):
 
-    # -- assert that only one op updates any particular view
-    for node in ups:
-        assert len(ups[node]) == 1, (node, ups[node])
+        # -- reads depend on writes (sets and incs)
+        for node, post_ops in reads.items():
+            pre_ops = []
+            for other in by_base_writes[node.base]:
+                if node.shares_memory_with(other):
+                    pre_ops += sets[other] + incs[other]
+            dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
 
-    # -- assert that no two views are both updated and aliased
-    for node, other in itertools.combinations(ups, 2):
-        assert not node.shares_memory_with(other), (
-                node, other)
+        # -- assert that only one op updates any particular view
+        for node in ups:
+            assert len(ups[node]) == 1, (node, ups[node])
 
-    # -- updates depend on reads, sets, and incs.
-    for node, post_ops in ups.items():
-        pre_ops = []
-        others = by_base_writes[node.base] + by_base_reads[node.base]
-        for other in others:
-            if node.shares_memory_with(other):
-                pre_ops += sets[other] + incs[other] + reads[other]
-        dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
+    with Timer('updates'):
+        # -- assert that no two views are both updated and aliased
+        for node, other in itertools.combinations(ups, 2):
+            assert not node.shares_memory_with(other), (
+                    node, other)
+
+        # -- updates depend on reads, sets, and incs.
+        for node, post_ops in ups.items():
+            pre_ops = []
+            others = by_base_writes[node.base] + by_base_reads[node.base]
+            for other in others:
+                if node.shares_memory_with(other):
+                    pre_ops += sets[other] + incs[other] + reads[other]
+            dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
 
     for op in operators:
         assert op in dg
@@ -111,18 +137,19 @@ def exact_dependency_graph(operators):
     return dg
 
 
-def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0):
-    if len(ops) < 2:
-        return [ops]
+def gbcw_algo1_helper(ops, score_fn=lambda op_subset: 0):
+
     mods = dict((op, op.incs + op.sets) for op in ops)
     indep = nx.Graph()
     indep.add_nodes_from(ops)
     for aa, bb in itertools.combinations(ops, 2):
         for amod, bmod in itertools.product(mods[aa], mods[bb]):
             if amod.shares_memory_with(bmod):
+                #print 'shares memory:', amod, bmod
                 break
         else:
             indep.add_edge(aa, bb)
+    #print '  .. building indep graph took', (time.time() - t0)
 
     # -- Subsets of ops that can run concurrently correspond to cliques in the
     #    `indep` graph. We would ideally like to return a partitioning of
@@ -135,9 +162,67 @@ def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0):
         some_group = next(nx.find_cliques(indep))
         rval.append(some_group)
         indep.remove_nodes_from(some_group)
+    #print '  .. partitioning took', (time.time() - t0)
     assert sum(len(r) for r in rval) == len(ops), (
             ops, rval)
     return rval
+
+@startstop
+def gbcw_algo1(ops, score_fn=lambda op_subset: 0, chunksize=256):
+    t0 = time.time()
+    if len(ops) < 2:
+        return [ops]
+    rval = []
+    print '  .. grouping writes for', len(ops), 'ops'
+    # -- algorithms are too slow :(
+    #    just ignore the opportunity to make massive
+    #    groups
+    for ii in range(0, len(ops), chunksize):
+        rval.extend(gbcw_algo1_helper(
+            ops[ii:ii + chunksize],
+            score_fn))
+    #if len(rval) > 5:
+        #for grp in rval:
+            #print map(str, grp)
+    print '  .. grouping %i writes into %i groups' % (len(ops), len(rval))
+    return rval
+
+
+@startstop
+def gbcw_algo2(ops, score_fn=lambda op_subset: 0):
+    print 'grouping writes for', len(ops), 'ops'
+    t0 = time.time()
+    if len(ops) < 2:
+        return [ops]
+
+    mods = dict((op, op.incs + op.sets) for op in ops)
+    indep = nx.Graph()
+    indep.add_nodes_from(ops)
+    for aa, bb in itertools.combinations(ops, 2):
+        for amod, bmod in itertools.product(mods[aa], mods[bb]):
+            if amod.shares_memory_with(bmod):
+                break
+        else:
+            indep.add_edge(aa, bb)
+    print '  .. building indep graph took', (time.time() - t0)
+
+    # -- Subsets of ops that can run concurrently correspond to cliques in the
+    #    `indep` graph. We would ideally like to return a partitioning of
+    #    `ops` into cliques C0, C1, .., CN such that score_fn(C0) +
+    #    score_fn(C1) + ... + score_fn(CN) is minimized, but (a) I suspect
+    #    that is an NP-hard problem, and (b) the assumption of scheduling by
+    #    graph depth already ruins an attempt at optimal scheduling.
+    rval = []
+    while len(indep.nodes()):
+        some_group = next(nx.find_cliques(indep))
+        rval.append(some_group)
+        indep.remove_nodes_from(some_group)
+    print '  .. partitioning took', (time.time() - t0)
+    assert sum(len(r) for r in rval) == len(ops), (
+            ops, rval)
+    return rval
+
+group_by_concurrent_writes = gbcw_algo1
 
 
 
@@ -152,6 +237,7 @@ def greedy_planner(dg, operators):
     # -- filter Signals out of the dependency graph
     op_dg = nx.DiGraph()
     for op in operators:
+        op_dg.add_node(op)
         for pre in dg.predecessors(op):
             if is_op(pre):
                 op_dg.add_edge(pre, op)
@@ -173,7 +259,7 @@ def greedy_planner(dg, operators):
         ops_by_depth[d].append(op)
     graph_depth = d + max(depth.values())
 
-    #print 'Graph depth:', d
+    print 'greedy_planner: Graph depth:', d
 
     rval = []
     for d in range(graph_depth):
@@ -186,7 +272,7 @@ def greedy_planner(dg, operators):
                     ops_at_d_w_type):
                 rval.append((typ, concurrent_grp))
     assert len(operators) == sum(len(p[1]) for p in rval)
-    #print 'Program len:', len(rval)
+    print 'greedy_planner: Program len:', len(rval)
     return rval
 
 
