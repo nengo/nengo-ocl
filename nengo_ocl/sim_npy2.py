@@ -5,9 +5,7 @@ numpy Simulator in the style of the OpenCL one, to get design right.
 from collections import defaultdict
 import itertools
 import logging
-import networkx
-from networkx import DiGraph
-from networkx import ancestors, topological_sort
+import networkx as nx
 
 from tricky_imports import OrderedDict
 
@@ -32,7 +30,7 @@ def is_op(op):
 
 
 def exact_dependency_graph(operators):
-    dg = networkx.DiGraph()
+    dg = nx.DiGraph()
 
     for op in operators:
         dg.add_edges_from(itertools.product(op.reads + op.updates, [op]))
@@ -113,9 +111,34 @@ def exact_dependency_graph(operators):
     return dg
 
 
-def concurrent_ok(atable, op1, op2):
-    return op1 not in atable[op2]\
-            and op2 not in atable[op1]
+def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0):
+    if len(ops) < 2:
+        return [ops]
+    mods = dict((op, op.incs + op.sets) for op in ops)
+    indep = nx.Graph()
+    indep.add_nodes_from(ops)
+    for aa, bb in itertools.combinations(ops, 2):
+        for amod, bmod in itertools.product(mods[aa], mods[bb]):
+            if amod.shares_memory_with(bmod):
+                break
+        else:
+            indep.add_edge(aa, bb)
+
+    # -- Subsets of ops that can run concurrently correspond to cliques in the
+    #    `indep` graph. We would ideally like to return a partitioning of
+    #    `ops` into cliques C0, C1, .., CN such that score_fn(C0) +
+    #    score_fn(C1) + ... + score_fn(CN) is minimized, but (a) I suspect
+    #    that is an NP-hard problem, and (b) the assumption of scheduling by
+    #    graph depth already ruins an attempt at optimal scheduling.
+    rval = []
+    while len(indep.nodes()):
+        some_group = next(nx.find_cliques(indep))
+        rval.append(some_group)
+        indep.remove_nodes_from(some_group)
+    assert sum(len(r) for r in rval) == len(ops), (
+            ops, rval)
+    return rval
+
 
 
 def greedy_planner(dg, operators):
@@ -127,7 +150,7 @@ def greedy_planner(dg, operators):
     """
 
     # -- filter Signals out of the dependency graph
-    op_dg = DiGraph()
+    op_dg = nx.DiGraph()
     for op in operators:
         for pre in dg.predecessors(op):
             if is_op(pre):
@@ -136,11 +159,11 @@ def greedy_planner(dg, operators):
     # XXX: the `atable` can be built in linear rather than quadratic time
     atable = {}
     for op in op_dg.nodes():
-        atable[op] = ancestors(op_dg, op)
+        atable[op] = nx.ancestors(op_dg, op)
 
     ops_by_depth = defaultdict(list)
     depth = {}
-    for op in topological_sort(op_dg):
+    for op in nx.topological_sort(op_dg):
         preops = op_dg.predecessors(op)
         if preops:
             d = 1 + max(map(depth.__getitem__, preops))
@@ -152,15 +175,16 @@ def greedy_planner(dg, operators):
 
     #print 'Graph depth:', d
 
-    #if all ops had the same type we would be done
     rval = []
     for d in range(graph_depth):
-        ops = ops_by_depth[d]
+        ops_at_d = ops_by_depth[d]
         ops_by_type = defaultdict(list)
-        for op in ops:
+        for op in ops_at_d:
             ops_by_type[type(op)].append(op)
-        for typ in ops_by_type:
-            rval.append((typ, ops_by_type[typ]))
+        for typ, ops_at_d_w_type in ops_by_type.items():
+            for concurrent_grp in group_by_concurrent_writes(
+                    ops_at_d_w_type):
+                rval.append((typ, concurrent_grp))
     assert len(operators) == sum(len(p[1]) for p in rval)
     #print 'Program len:', len(rval)
     return rval
@@ -177,7 +201,7 @@ def sequential_planner(dg, operators):
     # list of pairs: (type, [ops_of_type], set_of_ancestors, set_of_descendants)
     op_groups = []
     topo_order = [op
-        for op in topological_sort(dg)
+        for op in nx.topological_sort(dg)
         if is_op(op)]
 
     return [(type(op), [op]) for op in topo_order]
@@ -248,6 +272,7 @@ class Simulator(object):
         dg = exact_dependency_graph(self.model._operators)
         op_groups = planner(dg, self.model._operators)
         self.op_groups = op_groups # debug
+        #print '-' * 80
         #self.print_op_groups()
 
         # -- map from Signal.base -> ndarray
