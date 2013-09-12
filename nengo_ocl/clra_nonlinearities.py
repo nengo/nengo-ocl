@@ -9,10 +9,58 @@ from .clraggedarray import CLRaggedArray
 def all_equal(a, b):
     return (np.asarray(a) == np.asarray(b)).all()
 
+def plan_direct(queue, code, init, Xname, X, Y, name=None, tag=None):
+    """TODO"""
+
+    from . import ast_conversion
+
+    assert len(X) == len(Y)
+    N = len(X)
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void fn(
+            __global const int *${IN}starts,
+            __global const ${INtype} *${IN}data,
+            __global const int *${OUT}starts,
+            __global ${OUTtype} *${OUT}data
+        )
+        {
+            const int n = get_global_id(0);
+            if (n >= ${N}) return;
+
+            __global const ${INtype} *${arg} = &(${IN}data[${IN}starts[n]]);
+            __global ${OUTtype} *${OUT} = &(${OUT}data[${OUT}starts[n]]);
+
+            //vvvvv USER DECLARATIONS BELOW vvvvv
+            ${init}
+            //^^^^^ USER DECLARATIONS ABOVE ^^^^^
+
+            /////vvvvv USER COMPUTATIONS BELOW vvvvv
+            ${code}
+            /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
+        }
+        """
+
+    textconf = dict(init=init, code=code, N=N, arg=Xname,
+                    IN=ast_conversion.INPUT_NAME, INtype=X.cl_buf.ocldtype,
+                    OUT=ast_conversion.OUTPUT_NAME, OUTtype=Y.cl_buf.ocldtype,
+                    )
+    text = Template(text, output_encoding='ascii').render(**textconf)
+    print text
+
+    full_args = (X.cl_starts, X.cl_buf, Y.cl_starts, Y.cl_buf)
+    _fn = cl.Program(queue.context, text).build().fn
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    gsize = (N,)
+    rval = Plan(queue, _fn, gsize, lsize=None, name="direct_mode", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
+
 def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt,
              tag=None, n_elements=0, upsample=1):
-    """
-    """
+    """TODO"""
     inputs = dict(j=J, v=V, w=W)
     outputs = dict(ov=OV, ow=OW, os=OS)
     parameters = dict(tau=tau, ref=ref)
@@ -311,9 +359,9 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             print "%3d %s" % (i + 1, line)
 
     full_args = []
-    for name, v in inputs.items() + outputs.items():
+    for vname, v in inputs.items() + outputs.items():
         full_args.extend([v.cl_starts, v.cl_buf])
-    for name, v in params.items():
+    for vname, v in params.items():
         full_args.extend([v.cl_starts, v.cl_shape0s, v.cl_buf])
     full_args.append(base.cl_shape0s)
     full_args = tuple(full_args)

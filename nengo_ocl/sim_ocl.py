@@ -1,16 +1,15 @@
 
 import os
+import numpy as np
 import pyopencl as cl
 
-import sim_npy
+from . import sim_npy
 from .raggedarray import RaggedArray
 from .clraggedarray import CLRaggedArray
-from .plan import Plan, PythonPlan
-
-from raggedarray import RaggedArray
-from clra_gemv import plan_ragged_gather_gemv
-from clra_nonlinearities import plan_lif, plan_lif_rate
-from plan import Plan, Prog
+from .clra_gemv import plan_ragged_gather_gemv
+from .clra_nonlinearities import plan_lif, plan_lif_rate, plan_direct
+from .plan import Plan, Prog, PythonPlan, HybridProg
+from .ast_conversion import OCL_Function
 
 class Simulator(sim_npy.Simulator):
 
@@ -56,15 +55,60 @@ class Simulator(sim_npy.Simulator):
         return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
 
     def plan_direct(self, nls):
-        ### TODO: this is sub-optimal, since it involves copying everything
-        ### off the device, running the nonlinearity, then copying back on
-        sidx = self.sidx
-        def direct():
-            for nl in nls:
-                J = self.all_data[sidx[nl.input_signal]]
-                output = nl.fn(J)
-                self.all_data[sidx[nl.output_signal]] = output
-        return PythonPlan(direct, name="direct", tag="direct")
+        print "planning direct"
+        ### group nonlinearities
+        unique_nls = {}
+        for nl in nls:
+            if nl.fn not in unique_nls:
+                unique_nls[nl.fn] = {'in': [], 'out': []}
+            unique_nls[nl.fn]['in'].append(nl.input_signal)
+            unique_nls[nl.fn]['out'].append(nl.output_signal)
+
+        ### make plans
+        py_plans = []
+        ocl_plans = []
+        for fn, signals in unique_nls.items():
+            fn_name = fn.__name__
+
+            # check signal input and output shape (implicitly checks
+            # for indexing errors)
+            vector_dims = lambda shape, dim: len(shape) == 1 and shape[0] == dim
+            unit_stride = lambda es: len(es) == 1 and es[0] == 1
+            in_dim = signals['in'][0].size
+            out_dim = signals['out'][0].size
+            for sig_in, sig_out in zip(signals['in'], signals['out']):
+                # assert sig_in. == in_dim and sig_out == out_dim
+                assert vector_dims(sig_in.shape, in_dim)
+                assert vector_dims(sig_out.shape, out_dim)
+                assert unit_stride(sig_in.elemstrides)
+                assert unit_stride(sig_out.elemstrides)
+
+            x = np.zeros(in_dim)
+            y = np.asarray(fn(x))
+            assert y.size == out_dim
+
+            ### try to get OCL code
+            if isinstance(fn, OCL_Function) and fn.can_translate:
+                Xname = fn.translator.arg_names[0]
+                X = self.all_data[[self.sidx[i] for i in signals['in']]]
+                Y = self.all_data[[self.sidx[i] for i in signals['out']]]
+                plan = plan_direct(self.queue, fn.ocl_code, fn.ocl_init,
+                                   Xname, X, Y, tag=fn_name)
+                ocl_plans.append(plan)
+            else:
+                py_plans.append(PythonPlan(fn, name=fn_name, tag=fn_name))
+
+        return HybridProg(py_plans, ocl_plans)
+
+        # ### TODO: this is sub-optimal, since it involves copying everything
+        # ### off the device, running the nonlinearity, then copying back on
+        # sidx = self.sidx
+        # def direct():
+        #     for nl in nls:
+        #         J = self.all_data[sidx[nl.input_signal]]
+        #         output = nl.fn(J)
+        #         self.all_data[sidx[nl.output_signal]] = output
+        # return PythonPlan(direct, name="direct", tag="direct")
 
     def plan_SimLIF(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
