@@ -23,8 +23,8 @@ from nengo.core import SignalView
 from nengo.core import LIF, LIFRate, Direct
 from nengo import simulator as sim
 
-from ra_gemv import ragged_gather_gemv
-from raggedarray import RaggedArray as _RaggedArray
+from .ra_gemv import ragged_gather_gemv
+from .raggedarray import RaggedArray as _RaggedArray
 
 def is_op(op):
     return isinstance(op, sim.Operator)
@@ -378,7 +378,7 @@ class ViewBuilder(object):
 
     def append_view(self, obj):
         if obj in self.sidx:
-            return 
+            return
             #raise KeyError('sidx already contains object', obj)
 
         if obj in self.bases:
@@ -561,6 +561,15 @@ class Simulator(object):
             map(view_builder.append_view, op.all_signals)
             map(view_builder.append_view, self._DotInc_views[op])
 
+    def setup_views_ProdUpdate(self, view_builder, ops):
+        self.setup_views_DotInc(view_builder, ops)
+        for op in ops:
+            B = op.B
+            if B.shape != self._DotInc_views[op][2].shape:
+                B = B.reshape(self._DotInc_views[op][2].shape)
+            assert B.shape == self._DotInc_views[op][2].shape
+            self._DotInc_views[op] = self._DotInc_views[op] + (B,)
+
     def plan_Reset(self, ops):
         if not all(op.value == 0 for op in ops):
             raise NotImplementedError()
@@ -583,6 +592,18 @@ class Simulator(object):
             lambda op: [self._DotInc_views[op][0]],
             lambda op: [self._DotInc_views[op][1]],
             1.0,
+            lambda op: self._DotInc_views[op][2],
+            verbose=0,
+            tag='DotInc'
+            )
+
+    def plan_ProdUpdate(self, ops):
+        return self.sig_gemv(
+            ops,
+            1.0,
+            lambda op: [self._DotInc_views[op][0]],
+            lambda op: [self._DotInc_views[op][1]],
+            lambda op: self._DotInc_views[op][3],
             lambda op: self._DotInc_views[op][2],
             verbose=0,
             tag='DotInc'
@@ -634,6 +655,10 @@ class Simulator(object):
                 ):
         if len(seq) == 0:
             return []
+
+        if callable(beta):
+            beta = map(beta, seq)
+            raise NotImplementedError("The previous line does not work!")
 
         sidx = self.sidx
         Y_sigs = [Y_sig_fn(item) for item in seq]
