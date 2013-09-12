@@ -71,15 +71,17 @@ class ViewBuilder(object):
         #self.base_starts = self.all_data_A.starts
 
     def append_view(self, obj):
+        if obj in self.sidx:
+            return 
+            #raise KeyError('sidx already contains object', obj)
+
         if obj in self.bases:
             # -- it is not a view, but OK
             return
+
         if not isview(obj):
             # -- it is not a view, and not OK
             raise ValueError('can only append views of known signals', obj)
-
-        if obj in self.sidx:
-            raise KeyError('sidx already contains object', obj)
 
         idx = self.sidx[obj.base]
         self.starts.append(self.rarray.starts[idx] + obj.offset)

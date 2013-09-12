@@ -113,6 +113,7 @@ def concurrent_ok(atable, op1, op2):
     return op1 not in atable[op2]\
             and op2 not in atable[op1]
 
+
 def greedy_planner(dg, operators):
     """
     I feel like there might e a dynamic programming solution here, but I can't
@@ -219,6 +220,9 @@ class Simulator(object):
         all_signals = signals_from_operators(operators)
         all_bases = [sig for sig in all_signals if not isview(sig)]
 
+        dg = exact_dependency_graph(self.model._operators)
+        op_groups = sequential_planner(dg, self.model._operators)
+
         # -- map from Signal.base -> ndarray
         sigdict = SignalDict()
         for op in model._operators:
@@ -233,12 +237,12 @@ class Simulator(object):
                 )
 
         builder = ViewBuilder(all_bases, self.all_data)
-        map(builder.append_view, all_signals)
+        self._DotInc_views = {}
+        for op_type, op_list in op_groups:
+            self.setup_views(builder, op_type, op_list)
         builder.add_views_to(self.all_data)
         self.sidx = builder.sidx
 
-        dg = exact_dependency_graph(self.model._operators)
-        op_groups = sequential_planner(dg, self.model._operators)
         self._plan = []
         for op_type, op_list in op_groups:
             self._plan.extend(self.plan_op_group(op_type, op_list))
@@ -253,6 +257,68 @@ class Simulator(object):
 
     def plan_op_group(self, op_type, ops):
         return getattr(self, 'plan_' + op_type.__name__)(ops)
+
+    def setup_views(self, view_builder, op_type, ops):
+        if hasattr(self, 'setup_views_' + op_type.__name__):
+            getattr(self, 'setup_views_' + op_type.__name__)(view_builder, ops)
+        else:
+            for op in ops:
+                map(view_builder.append_view, op.all_signals)
+
+    def setup_views_DotInc(self, view_builder, ops):
+        # -- this is some ugly workarounding because
+        #    sig_gemv expects all arguments to be matrices at the moment.
+        #    In particular, it expects A to be a matrix, and for X and Y to be
+        #    column vectors. Numpy's dot function is more accommodating
+        #    in terms of dealing with vectors, and this function makes up for
+        #    that.
+        for op in ops:
+            A, X, Y = op.A, op.X, op.Y
+            if A.ndim == 0:
+                if X.shape != Y.shape:
+                    raise ValueError('shape mismach in DotInc',
+                        (A.shape, X.shape, Y.shape))
+                Aview = A.reshape((1, 1))
+                if X.ndim == 1:
+                    Xview = X.reshape(X.shape[0], 1)
+                    Yview = Y.reshape(X.shape[0], 1)
+                else:
+                    if op.xT:
+                        Xview = X.T
+                    else:
+                        Xview = X
+                    Yview = Y
+                # -- scalar views can be done as reverse multiplication
+                self._DotInc_views[op] = (Xview, Aview, Yview)
+            elif A.ndim == 1:
+                if X.ndim == 0:
+                    raise NotImplementedError()
+                elif X.ndim == 1:
+                    raise NotImplementedError()
+                elif X.ndim == 2:
+                    if op.xT:
+                        # -- dot(vecA, matX.T) -> vecY
+                        #    = dot(mat, vecA) -> vecY
+                        Xview = X
+                        Aview = A.reshape((A.shape[0], 1))
+                        self._DotInc_views[op] = (Xview, Aview, Y)
+                    else:
+                        # -- dot(vecA, matX) -> vecY
+                        #    = dot(matX.T, vecA) -> vecY
+                        Xview = X.T
+                        Aview = A.reshape((A.shape[0], 1))
+                        self._DotInc_views[op] = (Xview, Aview, Y)
+                else:
+                    raise NotImplementedError()
+
+            elif A.ndim == 2:
+                raise NotImplementedError()
+
+            else:
+                raise NotImplementedError()
+
+        map(view_builder.append_view, op.all_signals)
+        map(view_builder.append_view, self._DotInc_views[op])
 
     def plan_Reset(self, ops):
         if not all(op.value == 0 for op in ops):
@@ -273,10 +339,10 @@ class Simulator(object):
         return self.sig_gemv(
             ops,
             1.0,
-            lambda op: [op.A],
-            lambda op: [op.X],
+            lambda op: [self._DotInc_views[op][0]],
+            lambda op: [self._DotInc_views[op][1]],
             1.0,
-            lambda op: op.Y,
+            lambda op: self._DotInc_views[op][2],
             verbose=0,
             tag='DotInc'
             )
@@ -351,31 +417,8 @@ class Simulator(object):
             yM = self.all_data.shape0s[yidx]
             yN = self.all_data.shape1s[yidx]
             for asig, xsig in zip(A_sigs_i, X_sigs_i):
-                aidx = sidx[asig]
-                xidx = sidx[xsig]
-                aM = self.all_data.shape0s[aidx]
-                aN = self.all_data.shape1s[aidx]
-                xM = self.all_data.shape0s[xidx]
-                xN = self.all_data.shape1s[xidx]
-                if aN == aM == 1:
-                    # -- X must be column vector for this trick
-                    if xN != 1 or xM != yM or xN != yN:
-                        raise ValueError('shape mismatch in sig_gemv',
-                                         ((asig, aM, aN),
-                                          (xsig, xM, xN),
-                                          (ysig, yM, yN),
-                                         ))
-                    A_js_i.append(xidx)
-                    X_js_i.append(aidx)
-                else:
-                    if aN != xM or aM != yM or xN != yN:
-                        raise ValueError('shape mismatch in sig_gemv',
-                                         ((asig, aM, aN),
-                                          (xsig, xM, xN),
-                                          (ysig, yM, yN),
-                                         ))
-                    A_js_i.append(aidx)
-                    X_js_i.append(xidx)
+                A_js_i.append(sidx[asig])
+                X_js_i.append(sidx[xsig])
             A_js.append(A_js_i)
             X_js.append(X_js_i)
 
