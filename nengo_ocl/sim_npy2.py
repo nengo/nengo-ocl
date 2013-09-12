@@ -241,9 +241,95 @@ class SignalDict(dict):
         else:
             raise KeyError(obj)
 
-from sim_npy import stable_unique
-from sim_npy import isview
-from sim_npy import ViewBuilder
+
+def isview(obj):
+    return obj.base is not None and obj.base is not obj
+
+
+def shape0(obj):
+    try:
+        return obj.shape[0]
+    except IndexError:
+        return 1
+
+
+def shape1(obj):
+    try:
+        return obj.shape[1]
+    except IndexError:
+        return 1
+
+
+def idxs(seq, offset):
+    rval = dict((s, i + offset) for (i, s) in enumerate(seq))
+    return rval, offset + len(rval)
+
+
+def stable_unique(seq):
+    seen = set()
+    rval = []
+    for item in seq:
+        if item not in seen:
+            seen.add(item)
+            rval.append(item)
+    return rval
+
+
+class ViewBuilder(object):
+    def __init__(self, bases, rarray):
+        self.bases = bases
+        self.sidx = dict((bb, ii) for ii, bb in enumerate(bases))
+        assert len(self.bases) == len(self.sidx)
+        self.rarray = rarray
+
+        self.starts = []
+        self.shape0s = []
+        self.shape1s = []
+        self.ldas = []
+        self.names = []
+        #self.orig_len = len(self.all_signals)
+        #self.base_starts = self.all_data_A.starts
+
+    def append_view(self, obj):
+        if obj in self.sidx:
+            return 
+            #raise KeyError('sidx already contains object', obj)
+
+        if obj in self.bases:
+            # -- it is not a view, but OK
+            return
+
+        if not isview(obj):
+            # -- it is not a view, and not OK
+            raise ValueError('can only append views of known signals', obj)
+
+        idx = self.sidx[obj.base]
+        self.starts.append(self.rarray.starts[idx] + obj.offset)
+        self.shape0s.append(shape0(obj))
+        self.shape1s.append(shape1(obj))
+        if obj.ndim == 0:
+            self.ldas.append(0)
+        elif obj.ndim == 1:
+            self.ldas.append(obj.shape[0])
+        elif obj.ndim == 2:
+            # -- N.B. the original indexing was
+            #    based on ROW-MAJOR storage, and
+            #    this simulator uses COL-MAJOR storage
+            self.ldas.append(obj.elemstrides[0])
+        else:
+            raise NotImplementedError()
+        self.names.append(getattr(obj, 'name', ''))
+        self.sidx[obj] = len(self.sidx)
+
+    def add_views_to(self, rarray):
+        rarray.add_views(
+            starts=self.starts,
+            shape0s=self.shape0s,
+            shape1s=self.shape1s,
+            ldas=self.ldas,
+            names=self.names)
+
+
 
 def signals_from_operators(operators):
     def all_with_dups():
