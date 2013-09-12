@@ -9,6 +9,9 @@ from .clraggedarray import CLRaggedArray
 def all_equal(a, b):
     return (np.asarray(a) == np.asarray(b)).all()
 
+def _indent(s, i):
+    return '\n'.join([(' ' * i) + line for line in s.split('\n')])
+
 def plan_direct(queue, code, init, Xname, X, Y, name=None, tag=None):
     """TODO"""
 
@@ -29,20 +32,21 @@ def plan_direct(queue, code, init, Xname, X, Y, name=None, tag=None):
             const int n = get_global_id(0);
             if (n >= ${N}) return;
 
-            __global const ${INtype} *${arg} = &(${IN}data[${IN}starts[n]]);
-            __global ${OUTtype} *${OUT} = &(${OUT}data[${OUT}starts[n]]);
+            __global const ${INtype} *${arg} = ${IN}data + ${IN}starts[n];
+            __global ${OUTtype} *${OUT} = ${OUT}data + ${OUT}starts[n];
 
             //vvvvv USER DECLARATIONS BELOW vvvvv
-            ${init}
+${init}
             //^^^^^ USER DECLARATIONS ABOVE ^^^^^
 
             /////vvvvv USER COMPUTATIONS BELOW vvvvv
-            ${code}
+${code}
             /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
         }
         """
 
-    textconf = dict(init=init, code=code, N=N, arg=Xname,
+    textconf = dict(init=_indent(init, 12),
+                    code=_indent(code, 12), N=N, arg=Xname,
                     IN=ast_conversion.INPUT_NAME, INtype=X.cl_buf.ocldtype,
                     OUT=ast_conversion.OUTPUT_NAME, OUTtype=Y.cl_buf.ocldtype,
                     )

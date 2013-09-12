@@ -54,20 +54,21 @@ class Simulator(sim_npy.Simulator):
     def plan_ragged_gather_gemv(self, *args, **kwargs):
         return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
 
-    def plan_direct(self, nls):
-        print "planning direct"
+    def plan_SimDirect(self, ops):
+        ### TOOD: test with a hybrid program (Python and OCL)
+
         ### group nonlinearities
-        unique_nls = {}
-        for nl in nls:
-            if nl.fn not in unique_nls:
-                unique_nls[nl.fn] = {'in': [], 'out': []}
-            unique_nls[nl.fn]['in'].append(nl.input_signal)
-            unique_nls[nl.fn]['out'].append(nl.output_signal)
+        unique_ops = {}
+        for op in ops:
+            if op.fn not in unique_ops:
+                unique_ops[op.fn] = {'in': [], 'out': []}
+            unique_ops[op.fn]['in'].append(op.J)
+            unique_ops[op.fn]['out'].append(op.output)
 
         ### make plans
         py_plans = []
         ocl_plans = []
-        for fn, signals in unique_nls.items():
+        for fn, signals in unique_ops.items():
             fn_name = fn.__name__
 
             # check signal input and output shape (implicitly checks
@@ -98,7 +99,7 @@ class Simulator(sim_npy.Simulator):
             else:
                 py_plans.append(PythonPlan(fn, name=fn_name, tag=fn_name))
 
-        return HybridProg(py_plans, ocl_plans)
+        return [HybridProg(py_plans, ocl_plans)]
 
         # ### TODO: this is sub-optimal, since it involves copying everything
         # ### off the device, running the nonlinearity, then copying back on
@@ -132,7 +133,8 @@ class Simulator(sim_npy.Simulator):
 
     def step(self):
         for fn in self._plan:
-            fn(profiling=self.profiling)
+            # fn(profiling=self.profiling) # TODO: add profiling back in
+            fn()
         self.sim_step += 1
 
     def run_steps(self, N, verbose=False):

@@ -315,14 +315,16 @@ class OCL_Translator(ast.NodeVisitor):
         if (len(expr.values) == 1
             and isinstance(expr.values[0], ast.BinOp)
             and isinstance(expr.values[0].op, ast.Mod)
-            and isinstance(expr.values[0].left, ast.Str)
-            and isinstance(expr.values[0].right, ast.Tuple)):
+            and isinstance(expr.values[0].left, ast.Str)):
             # we're using string formatting
-            stmt = self.visit(expr.values[0].left)
-            args = [self.visit(arg) for arg in expr.values[0].right.elts]
+            stmt = self.visit(expr.values[0].left)[:-1] + '\\n"'
+            if isinstance(expr.values[0].right, ast.Tuple):
+                args = [self.visit(arg) for arg in expr.values[0].right.elts]
+            else:
+                args = [self.visit(expr.values[0].right)]
             return ["printf(%s);" % ', '.join([stmt] + args)]
         else:
-            stmt = '"' + ' '.join(['%s' for arg in expr.values]) + '"'
+            stmt = '"' + ' '.join(['%s' for arg in expr.values]) + '\\n"'
             args = ', '.join([self.visit(arg) for arg in expr.values])
             return ["printf(%s, %s);" % (stmt, args)]
 
@@ -333,6 +335,7 @@ class OCL_Translator(ast.NodeVisitor):
                 raise ValueError("Cannot assign to arg or global")
             else:
                 if name not in self.init:
+                    # TODO: make new variables of types other than float?
                     self.init[name] = "float %s;" % name  # make a new variable
                 return name
         else:
