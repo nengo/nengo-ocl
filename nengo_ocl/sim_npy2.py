@@ -510,6 +510,8 @@ class Simulator(object):
                     raise NotImplementedError()
 
             def __setitem__(_, item, val):
+                if item not in self.sidx:
+                    item = self.copied(item)
                 raw = self.all_data[self.sidx[item]]
                 assert raw.ndim == 2
                 incoming = np.asarray(val)
