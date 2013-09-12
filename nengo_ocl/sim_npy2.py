@@ -25,7 +25,7 @@ from nengo.core import LIF, LIFRate, Direct
 from nengo import simulator as sim
 
 from ra_gemv import ragged_gather_gemv
-from raggedarray import RaggedArray
+from raggedarray import RaggedArray as _RaggedArray
 
 def is_op(op):
     return isinstance(op, sim.Operator)
@@ -150,7 +150,7 @@ def greedy_planner(dg, operators):
         ops_by_depth[d].append(op)
     graph_depth = d + max(depth.values())
 
-    print 'Graph depth:', d
+    #print 'Graph depth:', d
 
     #if all ops had the same type we would be done
     rval = []
@@ -162,7 +162,7 @@ def greedy_planner(dg, operators):
         for typ in ops_by_type:
             rval.append((typ, ops_by_type[typ]))
     assert len(operators) == sum(len(p[1]) for p in rval)
-    print 'Program len:', len(rval)
+    #print 'Program len:', len(rval)
     return rval
 
 
@@ -258,7 +258,7 @@ class Simulator(object):
         self.sim_step = 0
         self.probe_outputs = dict((probe, []) for probe in model.probes)
 
-        self.all_data = RaggedArray(
+        self.all_data = _RaggedArray(
                 [sigdict[sb] for sb in all_bases],
                 [getattr(sb, 'name', '') for ss in all_bases]
                 )
@@ -270,11 +270,16 @@ class Simulator(object):
         builder.add_views_to(self.all_data)
         self.sidx = builder.sidx
 
+        self._prep_all_data()
+
         self._plan = []
         for op_type, op_list in op_groups:
             self._plan.extend(self.plan_op_group(op_type, op_list))
         self._plan.extend(self.plan_probes())
         self.all_bases = all_bases
+
+    def _prep_all_data(self):
+        pass
 
     def print_op_groups(self):
         for op_type, op_list in self.op_groups:
@@ -423,7 +428,7 @@ class Simulator(object):
         return [lif]
 
     def RaggedArray(self, *args, **kwargs):
-        return RaggedArray(*args, **kwargs)
+        return _RaggedArray(*args, **kwargs)
 
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
                  Y_in_sig_fn=None,

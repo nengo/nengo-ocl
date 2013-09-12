@@ -19,7 +19,7 @@ from nengo.core import SignalView
 from nengo.core import LIF, LIFRate, Direct
 
 from ra_gemv import ragged_gather_gemv
-from raggedarray import RaggedArray
+from raggedarray import RaggedArray as _RaggedArray
 
 
 def isview(obj):
@@ -113,7 +113,7 @@ class ViewBuilder(object):
 class Simulator(object):
 
     def RaggedArray(self, *args, **kwargs):
-        return RaggedArray(*args, **kwargs)
+        return _RaggedArray(*args, **kwargs)
 
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
                  Y_in_sig_fn=None,
@@ -431,7 +431,7 @@ class Simulator(object):
 
         ### N.B. we're allocating on the host in the constructor. The OCL
         ### version transfers to the device in its constructor.
-        self.all_data = RaggedArray(
+        self.all_data = _RaggedArray(
             [np.zeros(ss.shape) + getattr(ss, 'value', np.zeros(ss.shape))
                 for ss in self.bases],
             names=[getattr(ss, 'name', '') for ss in self.bases])

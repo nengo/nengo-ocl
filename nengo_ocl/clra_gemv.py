@@ -194,7 +194,7 @@ def plan_parallel_ragged_gather_gemv2(queue,
 
 
 def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
-                            beta, Y, Y_in=None, tag=None):
+                            beta, Y, Y_in=None, tag=None, seq=None):
     """
     """
 
