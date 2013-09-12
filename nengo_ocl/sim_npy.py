@@ -14,9 +14,9 @@ critical = logger.critical
 
 import numpy as np
 
-from nengo.objects import Signal
-from nengo.objects import SignalView
-from nengo.objects import LIF, LIFRate, Direct
+from nengo.core import Signal
+from nengo.core import SignalView
+from nengo.core import LIF, LIFRate, Direct
 
 from ra_gemv import ragged_gather_gemv
 from raggedarray import RaggedArray
@@ -25,11 +25,13 @@ from raggedarray import RaggedArray
 def isview(obj):
     return obj.base is not None and obj.base is not obj
 
+
 def shape0(obj):
     try:
         return obj.shape[0]
     except IndexError:
         return 1
+
 
 def shape1(obj):
     try:
@@ -37,9 +39,11 @@ def shape1(obj):
     except IndexError:
         return 1
 
+
 def idxs(seq, offset):
     rval = dict((s, i + offset) for (i, s) in enumerate(seq))
     return rval, offset + len(rval)
+
 
 def stable_unique(seq):
     seen = set()

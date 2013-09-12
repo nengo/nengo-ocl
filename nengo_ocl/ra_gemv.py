@@ -50,6 +50,7 @@ def raw_ragged_gather_gemv(
 def ragged_gather_gemv(alpha, A, A_js, X, X_js,
                        beta, Y, Y_in=None,
                        use_raw_fn=False,
+                       tag=None, seq=None,
                       ):
     """
     """
@@ -114,8 +115,14 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
                 try:
                     y_i += alpha_i * np.dot(A_ij, x_ij)
                 except:
+                    print tag, seq[i]
                     print i, xi, ai, A_ij, x_ij
-                    print y_i.shape, x_ij.shape, A_ij.shape
+                    print y_i.shape, A_ij.shape, x_ij.shape
                     raise
+            if 0:
+                if 'ai' in locals():
+                    print 'Gemv writing', tag, A_ij, x_ij, y_i
+                else:
+                    print 'Gemv writing', tag, y_i
             Y[i] = y_i
 
