@@ -359,11 +359,16 @@ class Simulator(object):
                 xN = self.all_data.shape1s[xidx]
                 if aN == aM == 1:
                     # -- X must be column vector for this trick
-                    assert xN == 1
+                    if xN != 1 or xM != yM or xN != yN:
+                        raise ValueError('shape mismatch in sig_gemv',
+                                         ((asig, aM, aN),
+                                          (xsig, xM, xN),
+                                          (ysig, yM, yN),
+                                         ))
                     A_js_i.append(xidx)
                     X_js_i.append(aidx)
                 else:
-                    if aN != xM:
+                    if aN != xM or aM != yM or xN != yN:
                         raise ValueError('shape mismatch in sig_gemv',
                                          ((asig, aM, aN),
                                           (xsig, xM, xN),
