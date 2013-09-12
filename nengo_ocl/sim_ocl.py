@@ -2,14 +2,14 @@
 import os
 import pyopencl as cl
 
-import sim_npy2
+import sim_npy
 from clraggedarray import CLRaggedArray
 
 from raggedarray import RaggedArray
 from clra_gemv import plan_ragged_gather_gemv
 from clra_nonlinearities import plan_lif, plan_lif_rate
 
-class Simulator(sim_npy2.Simulator):
+class Simulator(sim_npy.Simulator):
 
     def RaggedArray(self, *args, **kwargs):
         val = RaggedArray(*args, **kwargs)
@@ -30,7 +30,7 @@ class Simulator(sim_npy2.Simulator):
                 properties=cl.command_queue_properties.PROFILING_ENABLE)
         else:
             self.queue = cl.CommandQueue(context)
-        sim_npy2.Simulator.__init__(self,
+        sim_npy.Simulator.__init__(self,
                                    model,
                                    )
 

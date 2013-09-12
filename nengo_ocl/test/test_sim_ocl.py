@@ -1,11 +1,11 @@
 """
-Black-box testing of the sim_npy Simulator.
+Black-box testing of the sim_ocl Simulator.
 
 TestCase classes are added automatically from
 nengo.tests.helpers.simulator_test_cases, but
 you can still run individual test files like this:
 
-    nosetests -sv test/test_sim_npy.py:TestSimulator.test_simple_direct_mode
+    nosetests -sv test/test_sim_ocl.py:TestSimulator.test_simple_direct_mode
 
 """
 
@@ -18,12 +18,11 @@ import pyopencl as cl
 
 ctx = cl.create_some_context()
 
-def OclSimulator(*args, **kwargs):
-    rval = sim_ocl.Simulator(ctx, *args, **kwargs)
-    rval.plan_all()
-    return rval
+def Ocl2Simulator(model):
+    return sim_ocl.Simulator(ctx, model)
 
-load_tests = load_nengo_tests(OclSimulator)
+load_tests = load_nengo_tests(Ocl2Simulator)
 
 if __name__ == '__main__':
-   unittest.main(testLoader=NengoTestLoader(OclSimulator))
+   unittest.main(testLoader=NengoTestLoader(Ocl2Simulator))
+
