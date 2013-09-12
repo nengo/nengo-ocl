@@ -18,7 +18,7 @@ critical = logger.critical
 
 import numpy as np
 
-from nengo.core import Signal
+from nengo.core import Signal, Probe
 from nengo.core import SignalView
 from nengo.core import LIF, LIFRate, Direct
 from nengo import simulator as sim
@@ -246,6 +246,7 @@ class Simulator(object):
         self._plan = []
         for op_type, op_list in op_groups:
             self._plan.extend(self.plan_op_group(op_type, op_list))
+        self._plan.extend(self.plan_probes())
         self.all_bases = all_bases
         self.op_groups = op_groups # debug
 
@@ -310,9 +311,22 @@ class Simulator(object):
                         self._DotInc_views[op] = (Xview, Aview, Y)
                 else:
                     raise NotImplementedError()
-
             elif A.ndim == 2:
-                raise NotImplementedError()
+                if X.ndim == 0:
+                    raise NotImplementedError()
+                elif X.ndim == 1:
+                    Xview = X.reshape(X.shape[0], 1)
+                    self._DotInc_views[op] = (A, Xview, Y)
+                elif X.ndim == 2:
+                    if op.xT:
+                        Xview = X.T
+                        self._DotInc_views[op] = (A, Xview, Y)
+                    else:
+                        # -- dot(vecA, matX) -> vecY
+                        #    = dot(matX.T, vecA) -> vecY
+                        self._DotInc_views[op] = (A, X, Y)
+                else:
+                    raise NotImplementedError()
 
             else:
                 raise NotImplementedError()
@@ -370,6 +384,18 @@ class Simulator(object):
                 #print op.J, self.all_data[sidx[op.J]],
                 #print op.output, self.all_data[sidx[op.output]]
         return [direct]
+
+    def plan_SimLIF(self, ops):
+        dt = self.model.dt
+        sidx = self.sidx
+        def lif():
+            for op in ops:
+                J = self.all_data[sidx[op.J]]
+                voltage = self.all_data[sidx[op.voltage]]
+                reftime = self.all_data[sidx[op.refractory_time]]
+                output = self.all_data[sidx[op.output]]
+                op.nl.step_math0(dt, J, voltage, reftime, output,)
+        return [lif]
 
     def RaggedArray(self, *args, **kwargs):
         return RaggedArray(*args, **kwargs)
@@ -540,15 +566,22 @@ class Simulator(object):
             for probe in probes:
                 period = int(probe.dt // self.model.dt)
                 if self.sim_step % period == 0:
-                    self.probe_output[probe].append(
+                    self.probe_outputs[probe].append(
                         self.signals[probe.sig].copy())
-        return fn
+        return [fn]
 
     def step(self):
         for fn in self._plan:
             fn()
         # print self.signals
         self.sim_step += 1
+
+    def run(self, time_in_seconds):
+        """Simulate for the given length of time."""
+        steps = int(time_in_seconds // self.model.dt)
+        logger.debug("Running %s for %f seconds, or %d steps",
+                     self.model.name, time_in_seconds, steps)
+        self.run_steps(steps)
 
     def run_steps(self, N, verbose=False):
         for i in xrange(N):
@@ -565,4 +598,25 @@ class Simulator(object):
             return self.signal_probe_output(probes[0])
 
     def probe_data(self, probe):
-        return np.asarray(self.probe_output[probe])
+        return np.asarray(self.probe_outputs[probe])
+
+    def data(self, probe):
+        """Get data from signals that have been probed.
+
+        Parameters
+        ----------
+        probe : Probe
+            TODO
+
+        Returns
+        -------
+        data : ndarray
+            TODO: what are the dimensions?
+        """
+        if not isinstance(probe, Probe):
+            if isinstance(probe, str):
+                probe = self.model.probed[probe]
+            else:
+                probe = self.model.probed[self.model.memo[id(probe)]]
+        return np.asarray(self.probe_outputs[probe])
+
