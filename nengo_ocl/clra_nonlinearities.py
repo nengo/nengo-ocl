@@ -12,9 +12,87 @@ def all_equal(a, b):
 def _indent(s, i):
     return '\n'.join([(' ' * i) + line for line in s.split('\n')])
 
-def plan_direct(queue, code, init, Xname, X, Y, name=None, tag=None):
-    """TODO"""
+def plan_probes(queue, sim_step, P, X, Y, tag=None):
+    """
+    Parameters
+    ----------
+    P : raggedarray of ints
+        The period (in time-steps) of each probe
+    """
 
+    assert len(X) == len(Y)
+    assert len(X) == len(P)
+    N = len(X)
+
+    assert len(sim_step) == 1
+    assert sim_step.shape0s[0] == 1 and sim_step.shape1s[0] == 1
+    assert sim_step.ldas[0] == 1
+
+    assert P.cl_buf.ocldtype == 'int'
+    assert X.cl_buf.ocldtype == Y.cl_buf.ocldtype
+
+    ### N.B.  X[i].shape = (ndims[i], )
+    ###       Y[i].shape = (buf_ndims[i], buf_len)
+    for i in xrange(N):
+        assert X.shape0s[i] == Y.shape0s[i]
+        assert X.shape1s[i] == 1
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void fn(
+            __global const ${Stype} *step_data,
+            __global const int *Pstarts,
+            __global const int *Pdata,
+            __global const int *Xstarts,
+            __global const int *Xshape0s,
+            __global const ${Xtype} *Xdata,
+            __global const int *Ystarts,
+            __global const int *Yshape1s,
+            __global const int *Yldas,
+            __global ${Ytype} *Ydata
+        )
+        {
+            const int n = get_global_id(0);
+            if (n >= ${N}) return;
+
+            const int sim_step = (int)step_data[${step_start}];
+            const int period = Pdata[Pstarts[n]];
+
+            if ((sim_step % period) == 0) {
+                const int n_dims = Xshape0s[n];
+                __global const ${Xtype} *x = Xdata + Xstarts[n];
+
+                const int probe_step = sim_step / period;
+                const int buf_len = Yshape1s[n];
+                __global ${Ytype} *y = Ydata + Ystarts[n]
+                                     + Yldas[n] * (probe_step % buf_len);
+
+                for (int i = 0; i < n_dims; i++)
+                    y[i] = x[i];
+            }
+        }
+        """
+
+    textconf = dict(N=N, step_start=sim_step.starts[0],
+                    Stype=sim_step.cl_buf.ocldtype,
+                    Xtype=X.cl_buf.ocldtype, Ytype=Y.cl_buf.ocldtype)
+    text = Template(text, output_encoding='ascii').render(**textconf)
+
+    full_args = (
+        sim_step.cl_buf,
+        P.cl_starts, P.cl_buf,
+        X.cl_starts, X.cl_shape0s, X.cl_buf,
+        Y.cl_starts, Y.cl_shape1s, Y.cl_ldas, Y.cl_buf,
+        )
+    _fn = cl.Program(queue.context, text).build().fn
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    gsize = (N,)
+    rval = Plan(queue, _fn, gsize, lsize=None, name="probes", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
+
+def plan_direct(queue, code, init, Xname, X, Y, tag=None):
     from . import ast_conversion
 
     assert len(X) == len(Y)
@@ -64,7 +142,6 @@ ${code}
 
 def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt,
              tag=None, n_elements=0, upsample=1):
-    """TODO"""
     inputs = dict(j=J, v=V, w=W)
     outputs = dict(ov=OV, ow=OW, os=OS)
     parameters = dict(tau=tau, ref=ref)
@@ -111,8 +188,6 @@ def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt,
         inputs=inputs, outputs=outputs, parameters=parameters)
 
 def plan_lif_rate(queue, J, R, ref, tau, tag=None, n_elements=0):
-    """
-    """
     inputs = dict(j=J)
     outputs = dict(r=R)
     parameters = dict(tau=tau, ref=ref)

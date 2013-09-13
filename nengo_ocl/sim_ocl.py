@@ -1,5 +1,6 @@
 
 import os
+import time
 import numpy as np
 import pyopencl as cl
 
@@ -7,7 +8,7 @@ from . import sim_npy
 from .raggedarray import RaggedArray
 from .clraggedarray import CLRaggedArray
 from .clra_gemv import plan_ragged_gather_gemv
-from .clra_nonlinearities import plan_lif, plan_lif_rate, plan_direct
+from .clra_nonlinearities import plan_lif, plan_lif_rate, plan_direct, plan_probes
 from .plan import Plan, Prog, PythonPlan, HybridProg
 from .ast_conversion import OCL_Function
 
@@ -40,34 +41,6 @@ class Simulator(sim_npy.Simulator):
             self._prog = Prog(self._plan)
         else:
             self._prog = None
-
-    def print_profiling(self):
-        print '-' * 80
-        print '%s\t%s\t%s\t%s' % (
-            'n_calls', 'runtime', 'q-time', 'subtime')
-        time_running_kernels = 0.0
-        for p in self._plan:
-            if isinstance(p, Plan):
-                print '%i\t%2.3f\t%2.3f\t%2.3f\t%s' % (
-                    p.n_calls, sum(p.ctimes), sum(p.btimes), sum(p.atimes), p)
-                time_running_kernels += sum(p.ctimes)
-            else:
-                print p, getattr(p, 'cumtime', '<unknown>')
-        print '-' * 80
-        print 'totals:\t%2.3f\t%2.3f\t%2.3f' % (
-            time_running_kernels, 0.0, 0.0)
-        import matplotlib.pyplot as plt
-        for p in self._plan:
-            plt.plot(p.btimes)
-            #print p.btimes
-        plt.show()
-
-    def run_steps(self, N, verbose=False):
-        if self._prog is None:
-            for i in xrange(N):
-                self.step(self.profiling)
-        else:
-            self._prog.call_n_times(N, self.profiling)
 
     def _prep_all_data(self):
         # -- replace the numpy-allocated RaggedArray with OpenCL one
@@ -154,12 +127,68 @@ class Simulator(sim_npy.Simulator):
         return plan_lif_rate(self.queue, J, R, ref, tau,
                              tag="lif_rate", n_elements=10)
 
-    def step(self):
-        for fn in self._plan:
-            # fn(profiling=self.profiling) # TODO: add profiling back in
-            fn()
-        self.sim_step += 1
+    def plan_probes(self):
+        # return sim_npy.Simulator.plan_probes(self)
+
+        if len(self.model.probes) > 0:
+            print self.model.probes
+
+            buf_len = 10
+
+            probes = self.model.probes
+            periods = [int(probe.dt // self.model.dt) for probe in probes]
+
+            sim_step = self.all_data[[self.sidx[self.model.steps]]]
+            P = self.RaggedArray(periods)
+            X = self.all_data[[self.sidx[p.sig] for p in probes]]
+            Y = self.RaggedArray(
+                [np.zeros((p.sig.shape[0], buf_len)) for p in probes])
+
+            cl_plan = plan_probes(self.queue, sim_step, P, X, Y, tag="probes")
+
+            def probe_copy_fn(profiling=False):
+                t0 = time.time()
+                for i, period in enumerate(periods):
+                    length = period * buf_len
+                    ### use (sim_step + 1), since device sim_step is updated
+                    ### at start of time step, and self.sim_step at end
+                    if self.sim_step + 1 % length == length - 1:
+                        self.probe_outputs[probes[i]].append(Y[i])
+                t1 = time.time()
+                probe_copy_fn.cumtime += t1 - t0
+            probe_copy_fn.cumtime = 0.0
+
+            ### TODO: something to copy any remaining probe data off device
+            ### at end of simulation. Also, concat probe_outputs at this time.
+            return [cl_plan, probe_copy_fn]
+        else:
+            return []
+
+    def print_profiling(self):
+        print '-' * 80
+        print '%s\t%s\t%s\t%s' % (
+            'n_calls', 'runtime', 'q-time', 'subtime')
+        time_running_kernels = 0.0
+        for p in self._plan:
+            if isinstance(p, Plan):
+                print '%i\t%2.3f\t%2.3f\t%2.3f\t<%s, tag=%s>' % (
+                    p.n_calls, sum(p.ctimes), sum(p.btimes), sum(p.atimes),
+                    p.name, p.tag)
+                time_running_kernels += sum(p.ctimes)
+            else:
+                print p, getattr(p, 'cumtime', '<unknown>')
+        print '-' * 80
+        print 'totals:\t%2.3f\t%2.3f\t%2.3f' % (
+            time_running_kernels, 0.0, 0.0)
+        import matplotlib.pyplot as plt
+        for p in self._plan:
+            plt.plot(p.btimes)
+            #print p.btimes
+        plt.show()
 
     def run_steps(self, N, verbose=False):
-        for i in xrange(N):
-            self.step()
+        if self._prog is None:
+            for i in xrange(N):
+                self.step()
+        else:
+            self._prog.call_n_times(N, self.profiling)
