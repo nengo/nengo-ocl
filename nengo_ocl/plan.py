@@ -1,4 +1,44 @@
+import time
 import pyopencl as cl
+
+class PythonPlan(object):
+    def __init__(self, function, **kwargs):
+        self.function = function
+        self.name = kwargs.get('name', "")
+        self.tag = kwargs.get('tag', "")
+        self.kwargs = kwargs
+        self.atime = 0.0
+        self.btime = 0.0
+        self.ctime = 0.0
+        self.n_calls = 0
+
+    def __call__(self, profiling=False):
+        if profiling:
+            timer = time.time()
+        self.function()
+        if profiling:
+            self.ctime += (time.time() - timer)
+            self.n_calls += 1
+
+    def enqueue(self):
+        pass
+
+    def __str__(self):
+        return '%s{%s %s %s}' % (
+            self.__class__.__name__,
+            self.name,
+            self.tag,
+            self.kwargs)
+
+
+class PythonProg(object):
+    def __init__(self, plans):
+        self.plans = plans
+
+    def __call__(self, profiling=False):
+        for p in self.plans:
+            p(profiling=profiling)
+
 
 class Plan(object):
 
@@ -7,6 +47,8 @@ class Plan(object):
         self.kern = kern
         self.gsize = gsize
         self.lsize = lsize
+        self.name = kwargs.get('name', "")
+        self.tag = kwargs.get('tag', "")
         self.kwargs = kwargs
         self.atimes = []
         self.btimes = []
@@ -37,6 +79,7 @@ class Plan(object):
             self.gsize,
             self.lsize,
             self.kwargs)
+
 
 class Prog(object):
     def __init__(self, plans):
@@ -77,3 +120,13 @@ class Prog(object):
             if profiling:
                 all_evs.append(evs)
         return all_evs
+
+
+class HybridProg(object):
+    def __init__(self, python_plans, ocl_plans):
+        self.py_prog = PythonProg(python_plans)
+        self.ocl_prog = Prog(ocl_plans)
+
+    def __call__(self, profiling=False):
+        self.py_prog(profiling=profiling)
+        self.ocl_prog(profiling=profiling)
