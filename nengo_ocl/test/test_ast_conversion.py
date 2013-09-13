@@ -2,7 +2,9 @@
 import numpy as np
 
 import nengo
-from nengo.core import Signal, Direct
+import nengo.core
+import nengo.simulator
+from nengo.core import Signal
 
 import nengo_ocl
 from nengo_ocl.tricky_imports import unittest
@@ -23,28 +25,28 @@ class TestAstConversion(unittest.TestCase):
         def product(x):
             return x[0] * x[1]
 
+        FunctionObject = lambda: None
+        FunctionObject.fn = product
+
         n = 100
         x = np.random.randn(n, 2)
         y = map(product, x)
 
         model = nengo.Model("Product")
 
-        directs = []
-        for i in xrange(n):
-            d = model.add(Direct(n_in=2, n_out=1, fn=product))
-            directs.append(d)
+        output_signals = []
+        for i, xx in enumerate(x):
+            s = model.add(Signal(n=1, name="output_%d" % i))
+            model._operators.append(nengo.simulator.SimDirect(
+                    s, nengo.core.Constant(xx, name="input_%d" % i), FunctionObject))
+            output_signals.append(s)
 
         sim = model.simulator(sim_class=OclSimulator)
-        for d, xx in zip(directs, x):
-            sim.signals[sim.copied(d.input_signal)] = xx
-
         sim.step()
 
-        for d, yy in zip(directs, y):
-            out = sim.signals[sim.copied(d.output_signal)]
+        for s, yy in zip(output_signals, y):
+            out = sim.signals[sim.copied(s)]
+            print yy
+            print out
             assert np.allclose(out, yy, rtol=1e-5, atol=1e-8)
 
-
-if __name__ == '__main__':
-    test = TestAstConversion()
-    test.test_product()

@@ -97,7 +97,8 @@ class Simulator(sim_npy.Simulator):
                                    Xname, X, Y, tag=fn_name)
                 ocl_plans.append(plan)
             else:
-                py_plans.append(PythonPlan(fn, name=fn_name, tag=fn_name))
+                raise Exception("Testing to make sure everything is OCL")
+                # py_plans.append(PythonPlan(fn, name=fn_name, tag=fn_name))
 
         return [HybridProg(py_plans, ocl_plans)]
 
