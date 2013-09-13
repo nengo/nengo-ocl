@@ -62,7 +62,7 @@ class Timer(object):
                     _TimerCalls[self.msg])
 
 @startstop
-def exact_dependency_graph(operators):
+def exact_dependency_graph(operators, share_memory):
     dg = nx.DiGraph()
 
     for op in operators:
@@ -105,13 +105,13 @@ def exact_dependency_graph(operators):
     # -- assert that no two views are both set and aliased
     if len(sets) >= 2:
         for node, other in itertools.combinations(sets, 2):
-            assert not node.shares_memory_with(other)
+            assert not share_memory(node, other)
 
     # -- incs depend on sets
     for node, post_ops in incs.items():
         pre_ops = []
         for other in by_base_writes[node.base]:
-            if node.shares_memory_with(other):
+            if share_memory(node, other):
                 pre_ops += sets[other]
         dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
 
@@ -121,7 +121,7 @@ def exact_dependency_graph(operators):
         for node, post_ops in reads.items():
             pre_ops = []
             for other in by_base_writes[node.base]:
-                if node.shares_memory_with(other):
+                if share_memory(node, other):
                     pre_ops += sets[other] + incs[other]
             dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
 
@@ -133,7 +133,7 @@ def exact_dependency_graph(operators):
         # -- assert that no two views are both updated and aliased
         if len(ups) >= 2:
             for node, other in itertools.combinations(ups, 2):
-                assert not node.shares_memory_with(other), (
+                assert not share_memory(node, other), (
                         node, other)
 
         # -- updates depend on reads, sets, and incs.
@@ -141,7 +141,7 @@ def exact_dependency_graph(operators):
             pre_ops = []
             others = by_base_writes[node.base] + by_base_reads[node.base]
             for other in others:
-                if node.shares_memory_with(other):
+                if share_memory(node, other):
                     pre_ops += sets[other] + incs[other] + reads[other]
             dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
 
@@ -204,13 +204,14 @@ def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0, chunksize=256)
     return rval
 
 
-def greedy_planner(dg, operators):
+def greedy_planner(operators, share_memory):
     """
     I feel like there might e a dynamic programming solution here, but I can't
     work it out, and I'm not sure. Even if a DP solution existed, we would
     need a function to estimate the goodness (e.g. neg wall time) of kernel
     calls, and  that function would need to be pretty fast.
     """
+    dg = exact_dependency_graph(operators, share_memory)
 
     # -- filter Signals out of the dependency graph
     op_dg = nx.DiGraph()
@@ -252,16 +253,16 @@ def greedy_planner(dg, operators):
     return rval
 
 
-def sequential_planner(dg, operators):
+def sequential_planner(operators, share_memory):
     """
     I feel like there might e a dynamic programming solution here, but I can't
     work it out, and I'm not sure. Even if a DP solution existed, we would
     need a function to estimate the goodness (e.g. neg wall time) of kernel
     calls, and  that function would need to be pretty fast.
     """
+    dg = exact_dependency_graph(operators, share_memory)
 
     # list of pairs: (type, [ops_of_type], set_of_ancestors, set_of_descendants)
-    op_groups = []
     topo_order = [op
         for op in nx.topological_sort(dg)
         if is_op(op)]
@@ -416,13 +417,32 @@ class Simulator(object):
                              "See Model.prep_for_simulation.")
 
         self.model = model
-        dt = model.dt
+        #dt = model.dt
         operators = model._operators
         all_signals = signals_from_operators(operators)
         all_bases = stable_unique([sig.base for sig in all_signals])
 
-        dg = exact_dependency_graph(self.model._operators)
-        op_groups = planner(dg, self.model._operators)
+        _shares_memory_with = model._shares_memory_with
+        def share_memory(a, b):
+            if a.base is not b.base:
+                return False
+            astruct = a.structure
+            bstruct = b.structure
+            key0 = (a.base, astruct, bstruct)
+            key1 = (a.base, bstruct, astruct)
+            try:
+                return _shares_memory_with[key0]
+            except KeyError:
+                try:
+                    return _shares_memory_with[key1]
+                except KeyError:
+                    pass
+                rval = a.shares_memory_with(b)
+                _shares_memory_with[key0] = rval
+                _shares_memory_with[key1] = rval
+                return rval
+
+        op_groups = planner(self.model._operators, share_memory)
         self.op_groups = op_groups # debug
         #print '-' * 80
         #self.print_op_groups()
