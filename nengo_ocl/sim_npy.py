@@ -39,15 +39,25 @@ def startstop(f):
     rval.__name__ = f.__name__
     return rval
 
+
+_TimerCumulative = defaultdict(float)
+_TimerCalls = defaultdict(int)
 class Timer(object):
-    def __init__(self, msg):
+    def __init__(self, msg, print_freq=0):
         self.msg = msg
+        self.print_freq = print_freq
     def __enter__(self):
         self.t0 = time.time()
     def __exit__(self, *args):
         self.t1 = time.time()
-        print 'Timer: "%s" took %f' % (self.msg,
-                self.t1 - self.t0)
+        _TimerCumulative[self.msg] += self.t1 - self.t0
+        _TimerCalls[self.msg] += 1
+        if self.print_freq == 0 or _TimerCalls[self.msg] % self.print_freq == 0:
+            print 'Timer: "%s" took %f (cumulative: %f, calls: %i)' % (
+                    self.msg,
+                    self.t1 - self.t0,
+                    _TimerCumulative[self.msg],
+                    _TimerCalls[self.msg])
 
 @startstop
 def exact_dependency_graph(operators):
@@ -91,8 +101,9 @@ def exact_dependency_graph(operators):
         assert len(sets[node]) == 1, (node, sets[node])
 
     # -- assert that no two views are both set and aliased
-    for node, other in itertools.combinations(sets, 2):
-        assert not node.shares_memory_with(other)
+    if len(sets) >= 2:
+        for node, other in itertools.combinations(sets, 2):
+            assert not node.shares_memory_with(other)
 
     # -- incs depend on sets
     for node, post_ops in incs.items():
@@ -118,9 +129,10 @@ def exact_dependency_graph(operators):
 
     with Timer('updates'):
         # -- assert that no two views are both updated and aliased
-        for node, other in itertools.combinations(ups, 2):
-            assert not node.shares_memory_with(other), (
-                    node, other)
+        if len(ups) >= 2:
+            for node, other in itertools.combinations(ups, 2):
+                assert not node.shares_memory_with(other), (
+                        node, other)
 
         # -- updates depend on reads, sets, and incs.
         for node, post_ops in ups.items():
@@ -142,13 +154,14 @@ def gbcw_algo1_helper(ops, score_fn=lambda op_subset: 0):
     mods = dict((op, op.incs + op.sets) for op in ops)
     indep = nx.Graph()
     indep.add_nodes_from(ops)
-    for aa, bb in itertools.combinations(ops, 2):
-        for amod, bmod in itertools.product(mods[aa], mods[bb]):
-            if amod.shares_memory_with(bmod):
-                #print 'shares memory:', amod, bmod
-                break
-        else:
-            indep.add_edge(aa, bb)
+    if len(ops) >= 2:
+        for aa, bb in itertools.combinations(ops, 2):
+            for amod, bmod in itertools.product(mods[aa], mods[bb]):
+                if amod.shares_memory_with(bmod):
+                    #print 'shares memory:', amod, bmod
+                    break
+            else:
+                indep.add_edge(aa, bb)
     #print '  .. building indep graph took', (time.time() - t0)
 
     # -- Subsets of ops that can run concurrently correspond to cliques in the
@@ -168,10 +181,10 @@ def gbcw_algo1_helper(ops, score_fn=lambda op_subset: 0):
     return rval
 
 @startstop
-def gbcw_algo1(ops, score_fn=lambda op_subset: 0, chunksize=256):
+def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0, chunksize=256):
     t0 = time.time()
     if len(ops) < 2:
-        return [ops]
+        return [list(ops)]
     rval = []
     print '  .. grouping writes for', len(ops), 'ops'
     # -- algorithms are too slow :(
@@ -185,45 +198,8 @@ def gbcw_algo1(ops, score_fn=lambda op_subset: 0, chunksize=256):
         #for grp in rval:
             #print map(str, grp)
     print '  .. grouping %i writes into %i groups' % (len(ops), len(rval))
+    assert sum(len(r) for r in rval) == len(ops)
     return rval
-
-
-@startstop
-def gbcw_algo2(ops, score_fn=lambda op_subset: 0):
-    print 'grouping writes for', len(ops), 'ops'
-    t0 = time.time()
-    if len(ops) < 2:
-        return [ops]
-
-    mods = dict((op, op.incs + op.sets) for op in ops)
-    indep = nx.Graph()
-    indep.add_nodes_from(ops)
-    for aa, bb in itertools.combinations(ops, 2):
-        for amod, bmod in itertools.product(mods[aa], mods[bb]):
-            if amod.shares_memory_with(bmod):
-                break
-        else:
-            indep.add_edge(aa, bb)
-    print '  .. building indep graph took', (time.time() - t0)
-
-    # -- Subsets of ops that can run concurrently correspond to cliques in the
-    #    `indep` graph. We would ideally like to return a partitioning of
-    #    `ops` into cliques C0, C1, .., CN such that score_fn(C0) +
-    #    score_fn(C1) + ... + score_fn(CN) is minimized, but (a) I suspect
-    #    that is an NP-hard problem, and (b) the assumption of scheduling by
-    #    graph depth already ruins an attempt at optimal scheduling.
-    rval = []
-    while len(indep.nodes()):
-        some_group = next(nx.find_cliques(indep))
-        rval.append(some_group)
-        indep.remove_nodes_from(some_group)
-    print '  .. partitioning took', (time.time() - t0)
-    assert sum(len(r) for r in rval) == len(ops), (
-            ops, rval)
-    return rval
-
-group_by_concurrent_writes = gbcw_algo1
-
 
 
 def greedy_planner(dg, operators):
@@ -242,11 +218,6 @@ def greedy_planner(dg, operators):
             if is_op(pre):
                 op_dg.add_edge(pre, op)
 
-    # XXX: the `atable` can be built in linear rather than quadratic time
-    atable = {}
-    for op in op_dg.nodes():
-        atable[op] = nx.ancestors(op_dg, op)
-
     ops_by_depth = defaultdict(list)
     depth = {}
     for op in nx.topological_sort(op_dg):
@@ -257,12 +228,13 @@ def greedy_planner(dg, operators):
             d = 0
         depth[op] = d
         ops_by_depth[d].append(op)
-    graph_depth = d + max(depth.values())
+    graph_depth = 1 + max(depth.values())
 
-    print 'greedy_planner: Graph depth:', d
+    print 'greedy_planner: Graph depth:', graph_depth
+    assert len(operators) == sum(len(lst) for lst in ops_by_depth.values())
 
     rval = []
-    for d in range(graph_depth):
+    for d in sorted(ops_by_depth):
         ops_at_d = ops_by_depth[d]
         ops_by_type = defaultdict(list)
         for op in ops_at_d:
@@ -270,7 +242,9 @@ def greedy_planner(dg, operators):
         for typ, ops_at_d_w_type in ops_by_type.items():
             for concurrent_grp in group_by_concurrent_writes(
                     ops_at_d_w_type):
-                rval.append((typ, concurrent_grp))
+                rval.append((typ, list(concurrent_grp)))
+    print len(operators)
+    print sum(len(p[1]) for p in rval)
     assert len(operators) == sum(len(p[1]) for p in rval)
     print 'greedy_planner: Program len:', len(rval)
     return rval
@@ -396,11 +370,13 @@ class ViewBuilder(object):
         if obj.ndim == 0:
             self.ldas.append(0)
         elif obj.ndim == 1:
+            assert obj.elemstrides[0] == 1
             self.ldas.append(obj.shape[0])
         elif obj.ndim == 2:
             # -- N.B. the original indexing was
             #    based on ROW-MAJOR storage, and
             #    this simulator uses COL-MAJOR storage
+            assert obj.elemstrides[1] == 1
             self.ldas.append(obj.elemstrides[0])
         else:
             raise NotImplementedError()
@@ -439,7 +415,7 @@ class Simulator(object):
         dt = model.dt
         operators = model._operators
         all_signals = signals_from_operators(operators)
-        all_bases = [sig for sig in all_signals if not isview(sig)]
+        all_bases = stable_unique([sig.base for sig in all_signals])
 
         dg = exact_dependency_graph(self.model._operators)
         op_groups = planner(dg, self.model._operators)
@@ -489,7 +465,8 @@ class Simulator(object):
 
     def setup_views(self, view_builder, op_type, ops):
         if hasattr(self, 'setup_views_' + op_type.__name__):
-            getattr(self, 'setup_views_' + op_type.__name__)(view_builder, ops)
+            getattr(self, 'setup_views_' + op_type.__name__)(
+                view_builder, ops)
         else:
             for op in ops:
                 map(view_builder.append_view, op.all_signals)
@@ -523,7 +500,9 @@ class Simulator(object):
                 if X.ndim == 0:
                     raise NotImplementedError()
                 elif X.ndim == 1:
-                    raise NotImplementedError()
+                    Aview = A.reshape((1, A.shape[0]))
+                    Xview = X.reshape((X.shape[0], 1))
+                    self._DotInc_views[op] = (Aview, Xview, Y)
                 elif X.ndim == 2:
                     if op.xT:
                         # -- dot(vecA, matX.T) -> vecY
@@ -565,10 +544,21 @@ class Simulator(object):
         self.setup_views_DotInc(view_builder, ops)
         for op in ops:
             B = op.B
-            if B.shape != self._DotInc_views[op][2].shape:
-                B = B.reshape(self._DotInc_views[op][2].shape)
-            assert B.shape == self._DotInc_views[op][2].shape
+            #if B.ndim == 0:
+                #B = SignalView(
+                    #base=B.base,
+                    #shape=self._DotInc_views[op][2].shape,
+                    #elemstrides=(0,) * self._DotInc_views[op][2].ndim,
+                    #offset=B.offset,
+                    #name=B.name + '-broadcastview')
+                #Bndim = 0
+            #elif B.ndim == 1 and Y.ndim == 1:
+                #if B.shape != self._DotInc_views[op][2].shape:
+                    #print B.shape, self._DotInc_views[op][2].shape, op, B
+                    #B = B.reshape(self._DotInc_views[op][2].shape)
+            #assert B.shape == self._DotInc_views[op][2].shape
             self._DotInc_views[op] = self._DotInc_views[op] + (B,)
+            #view_builder.append_view(B)
 
     def plan_Reset(self, ops):
         if not all(op.value == 0 for op in ops):
@@ -598,16 +588,39 @@ class Simulator(object):
             )
 
     def plan_ProdUpdate(self, ops):
-        return self.sig_gemv(
-            ops,
+        scalar_bs = [op
+            for op in ops
+            if op.B.ndim == 0 and not hasattr(op.B, 'value')]
+        if scalar_bs:
+            raise NotImplementedError()
+        # XXX VERIFY THAT op.B is actually constant in this graph
+        constant_bs = [op
+            for op in ops
+            if op.B.ndim == 0 and hasattr(op.B, 'value')]
+        vector_bs = [op for op in ops if op.B.ndim == 1]
+
+        constant_b_gemvs = self.sig_gemv(
+            constant_bs,
+            1.0,
+            lambda op: [self._DotInc_views[op][0]],
+            lambda op: [self._DotInc_views[op][1]],
+            [float(op.B.value) for op in constant_bs],
+            lambda op: self._DotInc_views[op][2],
+            verbose=0,
+            tag='ProdUpdate-scalar-constant-beta'
+            )
+
+        vector_b_gemvs = self.sig_gemv(
+            vector_bs,
             1.0,
             lambda op: [self._DotInc_views[op][0]],
             lambda op: [self._DotInc_views[op][1]],
             lambda op: self._DotInc_views[op][3],
             lambda op: self._DotInc_views[op][2],
             verbose=0,
-            tag='DotInc'
+            tag='ProdUpdate-vector-beta'
             )
+        return constant_b_gemvs + vector_b_gemvs
 
     def plan_Copy(self, ops):
         return self.sig_gemv(
@@ -624,13 +637,14 @@ class Simulator(object):
     def plan_SimDirect(self, ops):
         sidx = self.sidx
         def direct():
-            for op in ops:
-                J = self.all_data[sidx[op.J]]
-                output = op.fn(J)
-                self.all_data[sidx[op.output]] = output
-                #print 'direct',
-                #print op.J, self.all_data[sidx[op.J]],
-                #print op.output, self.all_data[sidx[op.output]]
+            with Timer('simdirect', 1000):
+                for op in ops:
+                    J = self.all_data[sidx[op.J]]
+                    output = op.fn(J)
+                    self.all_data[sidx[op.output]] = output
+                    #print 'direct',
+                    #print op.J, self.all_data[sidx[op.J]],
+                    #print op.output, self.all_data[sidx[op.output]]
         return [direct]
 
     def plan_SimLIF(self, ops):
@@ -655,12 +669,13 @@ class Simulator(object):
                 ):
         if len(seq) == 0:
             return []
+        sidx = self.sidx
 
         if callable(beta):
-            beta = map(beta, seq)
-            raise NotImplementedError("The previous line does not work!")
+            beta_sigs = map(beta, seq)
+            beta = self.RaggedArray(
+                map(sidx.__getitem__, beta_sigs))
 
-        sidx = self.sidx
         Y_sigs = [Y_sig_fn(item) for item in seq]
         if Y_in_sig_fn is None:
             Y_in_sigs = Y_sigs

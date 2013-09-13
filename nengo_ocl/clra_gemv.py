@@ -3,6 +3,7 @@ import pyopencl as cl
 from plan import Plan
 from mako.template import Template
 from clarray import to_device
+from clraggedarray import CLRaggedArray
 
 def plan_parallel_ragged_gather_gemv2(queue,
     alpha, A, A_js, X, X_js,
@@ -211,11 +212,14 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     cl_beta = None
     if isinstance(beta, CLRaggedArray):
         clra_beta = beta
-    elif isinstance(float, beta):
+        type_beta = beta.cl_buf.ocldtype
+    elif isinstance(beta, float):
         float_beta = beta
+        type_beta = Y.cl_buf.ocldtype
     else:
         vec_beta = np.asarray(beta, dtype=Y.dtype)
         cl_beta = to_device(queue, np.asarray(beta, Y.buf.dtype))
+        type_beta = Y.cl_buf.ocldtype
 
     cl_alpha = to_device(queue, np.asarray(alpha, Y.buf.dtype))
 
@@ -229,7 +233,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     # XXX check that all the ints are ints not longs
     textconf = {
         'type_alpha': cl_alpha.ocldtype,
-        'type_beta': cl_beta.ocldtype,
+        'type_beta': type_beta,
         'type_A': A.cl_buf.ocldtype,
         'type_X': X.cl_buf.ocldtype,
         'type_Y': Y.cl_buf.ocldtype,
@@ -278,7 +282,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
                 const int y_in_offset = Y_in_starts[bb];
 
                 % if float_beta is not None:
-                const ${type_beta} beta = ${float_beta}
+                const ${type_beta} beta = ${float_beta};
                 % endif
                 % if cl_beta is not None:
                 const ${type_beta} beta = betas[bb];
