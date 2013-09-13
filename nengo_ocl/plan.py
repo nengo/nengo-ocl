@@ -31,6 +31,15 @@ class PythonPlan(object):
             self.kwargs)
 
 
+class PythonProg(object):
+    def __init__(self, plans):
+        self.plans = plans
+
+    def __call__(self, profiling=False):
+        for p in self.plans:
+            p(profiling=profiling)
+
+
 class Plan(object):
 
     def __init__(self, queue, kern, gsize, lsize, **kwargs):
@@ -97,3 +106,13 @@ class Prog(object):
     def enqueue_n_times(self, n):
         for ii in range(n):
             map(*self.map_args)
+
+
+class HybridProg(object):
+    def __init__(self, python_plans, ocl_plans):
+        self.py_prog = PythonProg(python_plans)
+        self.ocl_prog = Prog(ocl_plans)
+
+    def __call__(self, profiling=False):
+        self.py_prog(profiling=profiling)
+        self.ocl_prog(profiling=profiling)

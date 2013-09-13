@@ -1,8 +1,12 @@
 """
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
+
+import time
+from collections import defaultdict
 import itertools
 import logging
+import networkx as nx
 
 from tricky_imports import OrderedDict
 
@@ -14,14 +18,290 @@ critical = logger.critical
 
 import numpy as np
 
-from nengo.core import Signal
+from nengo.core import Signal, Probe
 from nengo.core import SignalView
 from nengo.core import LIF, LIFRate, Direct
+from nengo import simulator as sim
 
-from .raggedarray import RaggedArray
 from .ra_gemv import ragged_gather_gemv
+from .raggedarray import RaggedArray as _RaggedArray
 
 from .plan import PythonPlan
+
+def is_op(op):
+    return isinstance(op, sim.Operator)
+
+def startstop(f):
+    def rval(*args, **kwargs):
+        print 'starting', f.__name__
+        t0 = time.time()
+        foo = f(*args, **kwargs)
+        print '  .. done', f.__name__, (time.time() - t0)
+        return foo
+    rval.__name__ = f.__name__
+    return rval
+
+
+_TimerCumulative = defaultdict(float)
+_TimerCalls = defaultdict(int)
+class Timer(object):
+    def __init__(self, msg, print_freq=0):
+        self.msg = msg
+        self.print_freq = print_freq
+    def __enter__(self):
+        self.t0 = time.time()
+    def __exit__(self, *args):
+        self.t1 = time.time()
+        _TimerCumulative[self.msg] += self.t1 - self.t0
+        _TimerCalls[self.msg] += 1
+        if self.print_freq == 0 or _TimerCalls[self.msg] % self.print_freq == 0:
+            print 'Timer: "%s" took %f (cumulative: %f, calls: %i)' % (
+                    self.msg,
+                    self.t1 - self.t0,
+                    _TimerCumulative[self.msg],
+                    _TimerCalls[self.msg])
+
+@startstop
+def exact_dependency_graph(operators):
+    dg = nx.DiGraph()
+
+    for op in operators:
+        dg.add_edges_from(itertools.product(op.reads + op.updates, [op]))
+        dg.add_edges_from(itertools.product([op], op.sets + op.incs))
+
+    print ' .. adding edges for %i nodes' % len(dg.nodes())
+
+    # -- all views of a base object in a particular dictionary
+    by_base_writes = defaultdict(list)
+    by_base_reads = defaultdict(list)
+    reads = defaultdict(list)
+    sets = defaultdict(list)
+    incs = defaultdict(list)
+    ups = defaultdict(list)
+
+    for op in operators:
+        for node in op.sets + op.incs:
+            by_base_writes[node.base].append(node)
+
+        for node in op.reads:
+            by_base_reads[node.base].append(node)
+
+        for node in op.reads:
+            reads[node].append(op)
+
+        for node in op.sets:
+            sets[node].append(op)
+
+        for node in op.incs:
+            incs[node].append(op)
+
+        for node in op.updates:
+            ups[node].append(op)
+
+    # -- assert that only one op sets any particular view
+    for node in sets:
+        assert len(sets[node]) == 1, (node, sets[node])
+
+    # -- assert that no two views are both set and aliased
+    if len(sets) >= 2:
+        for node, other in itertools.combinations(sets, 2):
+            assert not node.shares_memory_with(other)
+
+    # -- incs depend on sets
+    for node, post_ops in incs.items():
+        pre_ops = []
+        for other in by_base_writes[node.base]:
+            if node.shares_memory_with(other):
+                pre_ops += sets[other]
+        dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
+
+    with Timer('writes'):
+
+        # -- reads depend on writes (sets and incs)
+        for node, post_ops in reads.items():
+            pre_ops = []
+            for other in by_base_writes[node.base]:
+                if node.shares_memory_with(other):
+                    pre_ops += sets[other] + incs[other]
+            dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
+
+        # -- assert that only one op updates any particular view
+        for node in ups:
+            assert len(ups[node]) == 1, (node, ups[node])
+
+    with Timer('updates'):
+        # -- assert that no two views are both updated and aliased
+        if len(ups) >= 2:
+            for node, other in itertools.combinations(ups, 2):
+                assert not node.shares_memory_with(other), (
+                        node, other)
+
+        # -- updates depend on reads, sets, and incs.
+        for node, post_ops in ups.items():
+            pre_ops = []
+            others = by_base_writes[node.base] + by_base_reads[node.base]
+            for other in others:
+                if node.shares_memory_with(other):
+                    pre_ops += sets[other] + incs[other] + reads[other]
+            dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
+
+    for op in operators:
+        assert op in dg
+
+    return dg
+
+
+def gbcw_algo1_helper(ops, score_fn=lambda op_subset: 0):
+
+    mods = dict((op, op.incs + op.sets) for op in ops)
+    indep = nx.Graph()
+    indep.add_nodes_from(ops)
+    if len(ops) >= 2:
+        for aa, bb in itertools.combinations(ops, 2):
+            for amod, bmod in itertools.product(mods[aa], mods[bb]):
+                if amod.shares_memory_with(bmod):
+                    #print 'shares memory:', amod, bmod
+                    break
+            else:
+                indep.add_edge(aa, bb)
+    #print '  .. building indep graph took', (time.time() - t0)
+
+    # -- Subsets of ops that can run concurrently correspond to cliques in the
+    #    `indep` graph. We would ideally like to return a partitioning of
+    #    `ops` into cliques C0, C1, .., CN such that score_fn(C0) +
+    #    score_fn(C1) + ... + score_fn(CN) is minimized, but (a) I suspect
+    #    that is an NP-hard problem, and (b) the assumption of scheduling by
+    #    graph depth already ruins an attempt at optimal scheduling.
+    rval = []
+    while len(indep.nodes()):
+        some_group = next(nx.find_cliques(indep))
+        rval.append(some_group)
+        indep.remove_nodes_from(some_group)
+    #print '  .. partitioning took', (time.time() - t0)
+    assert sum(len(r) for r in rval) == len(ops), (
+            ops, rval)
+    return rval
+
+@startstop
+def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0, chunksize=256):
+    t0 = time.time()
+    if len(ops) < 2:
+        return [list(ops)]
+    rval = []
+    print '  .. grouping writes for', len(ops), 'ops'
+    # -- algorithms are too slow :(
+    #    just ignore the opportunity to make massive
+    #    groups
+    for ii in range(0, len(ops), chunksize):
+        rval.extend(gbcw_algo1_helper(
+            ops[ii:ii + chunksize],
+            score_fn))
+    #if len(rval) > 5:
+        #for grp in rval:
+            #print map(str, grp)
+    print '  .. grouping %i writes into %i groups' % (len(ops), len(rval))
+    assert sum(len(r) for r in rval) == len(ops)
+    return rval
+
+
+def greedy_planner(dg, operators):
+    """
+    I feel like there might e a dynamic programming solution here, but I can't
+    work it out, and I'm not sure. Even if a DP solution existed, we would
+    need a function to estimate the goodness (e.g. neg wall time) of kernel
+    calls, and  that function would need to be pretty fast.
+    """
+
+    # -- filter Signals out of the dependency graph
+    op_dg = nx.DiGraph()
+    for op in operators:
+        op_dg.add_node(op)
+        for pre in dg.predecessors(op):
+            if is_op(pre):
+                op_dg.add_edge(pre, op)
+
+    ops_by_depth = defaultdict(list)
+    depth = {}
+    for op in nx.topological_sort(op_dg):
+        preops = op_dg.predecessors(op)
+        if preops:
+            d = 1 + max(map(depth.__getitem__, preops))
+        else:
+            d = 0
+        depth[op] = d
+        ops_by_depth[d].append(op)
+    graph_depth = 1 + max(depth.values())
+
+    print 'greedy_planner: Graph depth:', graph_depth
+    assert len(operators) == sum(len(lst) for lst in ops_by_depth.values())
+
+    rval = []
+    for d in sorted(ops_by_depth):
+        ops_at_d = ops_by_depth[d]
+        ops_by_type = defaultdict(list)
+        for op in ops_at_d:
+            ops_by_type[type(op)].append(op)
+        for typ, ops_at_d_w_type in ops_by_type.items():
+            for concurrent_grp in group_by_concurrent_writes(
+                    ops_at_d_w_type):
+                rval.append((typ, list(concurrent_grp)))
+    print len(operators)
+    print sum(len(p[1]) for p in rval)
+    assert len(operators) == sum(len(p[1]) for p in rval)
+    print 'greedy_planner: Program len:', len(rval)
+    return rval
+
+
+def sequential_planner(dg, operators):
+    """
+    I feel like there might e a dynamic programming solution here, but I can't
+    work it out, and I'm not sure. Even if a DP solution existed, we would
+    need a function to estimate the goodness (e.g. neg wall time) of kernel
+    calls, and  that function would need to be pretty fast.
+    """
+
+    # list of pairs: (type, [ops_of_type], set_of_ancestors, set_of_descendants)
+    op_groups = []
+    topo_order = [op
+        for op in nx.topological_sort(dg)
+        if is_op(op)]
+
+    return [(type(op), [op]) for op in topo_order]
+
+
+class SignalDict(dict):
+    """
+    Map from Signal -> ndarray
+
+    SignalDict overrides __getitem__ for two reasons:
+    1. so that scalars are returned as 0-d ndarrays
+    2. so that a SignalView lookup returns a views of its base
+
+    """
+    def __getitem__(self, obj):
+        if obj in self:
+            return dict.__getitem__(self, obj)
+        elif obj.base in self:
+            # look up views as a fallback
+            # --work around numpy's special case behaviour for scalars
+            base_array = self[obj.base]
+            try:
+                # for some installations, this works
+                itemsize = int(obj.dtype.itemsize)
+            except TypeError:
+                # other installations, this...
+                itemsize = int(obj.dtype().itemsize)
+            byteoffset = itemsize * obj.offset
+            bytestrides = [itemsize * s for s in obj.elemstrides]
+            view = np.ndarray(shape=obj.shape,
+                              dtype=obj.dtype,
+                              buffer=base_array.data,
+                              offset=byteoffset,
+                              strides=bytestrides,
+                             )
+            return view
+        else:
+            raise KeyError(obj)
 
 
 def isview(obj):
@@ -74,7 +354,7 @@ class ViewBuilder(object):
 
     def append_view(self, obj):
         if obj in self.sidx:
-            return 
+            return
             #raise KeyError('sidx already contains object', obj)
 
         if obj in self.bases:
@@ -92,11 +372,13 @@ class ViewBuilder(object):
         if obj.ndim == 0:
             self.ldas.append(0)
         elif obj.ndim == 1:
+            assert obj.elemstrides[0] == 1
             self.ldas.append(obj.shape[0])
         elif obj.ndim == 2:
             # -- N.B. the original indexing was
             #    based on ROW-MAJOR storage, and
             #    this simulator uses COL-MAJOR storage
+            assert obj.elemstrides[1] == 1
             self.ldas.append(obj.elemstrides[0])
         else:
             raise NotImplementedError()
@@ -112,10 +394,275 @@ class ViewBuilder(object):
             names=self.names)
 
 
+
+def signals_from_operators(operators):
+    def all_with_dups():
+        for op in operators:
+            for sig in op.all_signals:
+                yield sig
+    return stable_unique(all_with_dups())
+
+
 class Simulator(object):
 
+    def __init__(self, model,
+            planner=greedy_planner,
+            ):
+
+        if not hasattr(model, 'dt'):
+            raise ValueError("Model does not appear to be built. "
+                             "See Model.prep_for_simulation.")
+
+        self.model = model
+        dt = model.dt
+        operators = model._operators
+        all_signals = signals_from_operators(operators)
+        all_bases = stable_unique([sig.base for sig in all_signals])
+
+        dg = exact_dependency_graph(self.model._operators)
+        op_groups = planner(dg, self.model._operators)
+        self.op_groups = op_groups # debug
+        #print '-' * 80
+        #self.print_op_groups()
+
+        # -- map from Signal.base -> ndarray
+        sigdict = SignalDict()
+        for op in model._operators:
+            op.init_sigdict(sigdict, model.dt)
+
+        self.sim_step = 0
+        self.probe_outputs = dict((probe, []) for probe in model.probes)
+
+        self.all_data = _RaggedArray(
+                [sigdict[sb] for sb in all_bases],
+                [getattr(sb, 'name', '') for ss in all_bases]
+                )
+
+        builder = ViewBuilder(all_bases, self.all_data)
+        self._DotInc_views = {}
+        for op_type, op_list in op_groups:
+            self.setup_views(builder, op_type, op_list)
+        builder.add_views_to(self.all_data)
+        self.sidx = builder.sidx
+
+        self._prep_all_data()
+
+        self._plan = []
+        for op_type, op_list in op_groups:
+            self._plan.extend(self.plan_op_group(op_type, op_list))
+        self._plan.extend(self.plan_probes())
+        self.all_bases = all_bases
+
+    def _prep_all_data(self):
+        pass
+
+    def print_op_groups(self):
+        for op_type, op_list in self.op_groups:
+            print 'op_type', op_type.__name__
+            for op in op_list:
+                print '  ', op
+
+    def plan_op_group(self, op_type, ops):
+        return getattr(self, 'plan_' + op_type.__name__)(ops)
+
+    def setup_views(self, view_builder, op_type, ops):
+        if hasattr(self, 'setup_views_' + op_type.__name__):
+            getattr(self, 'setup_views_' + op_type.__name__)(
+                view_builder, ops)
+        else:
+            for op in ops:
+                map(view_builder.append_view, op.all_signals)
+
+    def setup_views_DotInc(self, view_builder, ops):
+        # -- this is some ugly workarounding because
+        #    sig_gemv expects all arguments to be matrices at the moment.
+        #    In particular, it expects A to be a matrix, and for X and Y to be
+        #    column vectors. Numpy's dot function is more accommodating
+        #    in terms of dealing with vectors, and this function makes up for
+        #    that.
+        for op in ops:
+            A, X, Y = op.A, op.X, op.Y
+            if A.ndim == 0:
+                if X.shape != Y.shape:
+                    raise ValueError('shape mismach in DotInc',
+                        (A.shape, X.shape, Y.shape))
+                Aview = A.reshape((1, 1))
+                if X.ndim == 1:
+                    Xview = X.reshape(X.shape[0], 1)
+                    Yview = Y.reshape(X.shape[0], 1)
+                else:
+                    if op.xT:
+                        Xview = X.T
+                    else:
+                        Xview = X
+                    Yview = Y
+                # -- scalar views can be done as reverse multiplication
+                self._DotInc_views[op] = (Xview, Aview, Yview)
+            elif A.ndim == 1:
+                if X.ndim == 0:
+                    raise NotImplementedError()
+                elif X.ndim == 1:
+                    Aview = A.reshape((1, A.shape[0]))
+                    Xview = X.reshape((X.shape[0], 1))
+                    self._DotInc_views[op] = (Aview, Xview, Y)
+                elif X.ndim == 2:
+                    if op.xT:
+                        # -- dot(vecA, matX.T) -> vecY
+                        #    = dot(mat, vecA) -> vecY
+                        Xview = X
+                        Aview = A.reshape((A.shape[0], 1))
+                        self._DotInc_views[op] = (Xview, Aview, Y)
+                    else:
+                        # -- dot(vecA, matX) -> vecY
+                        #    = dot(matX.T, vecA) -> vecY
+                        Xview = X.T
+                        Aview = A.reshape((A.shape[0], 1))
+                        self._DotInc_views[op] = (Xview, Aview, Y)
+                else:
+                    raise NotImplementedError()
+            elif A.ndim == 2:
+                if X.ndim == 0:
+                    raise NotImplementedError()
+                elif X.ndim == 1:
+                    Xview = X.reshape(X.shape[0], 1)
+                    self._DotInc_views[op] = (A, Xview, Y)
+                elif X.ndim == 2:
+                    if op.xT:
+                        Xview = X.T
+                        self._DotInc_views[op] = (A, Xview, Y)
+                    else:
+                        # -- dot(vecA, matX) -> vecY
+                        #    = dot(matX.T, vecA) -> vecY
+                        self._DotInc_views[op] = (A, X, Y)
+                else:
+                    raise NotImplementedError()
+
+            else:
+                raise NotImplementedError()
+            map(view_builder.append_view, op.all_signals)
+            map(view_builder.append_view, self._DotInc_views[op])
+
+    def setup_views_ProdUpdate(self, view_builder, ops):
+        self.setup_views_DotInc(view_builder, ops)
+        for op in ops:
+            B = op.B
+            #if B.ndim == 0:
+                #B = SignalView(
+                    #base=B.base,
+                    #shape=self._DotInc_views[op][2].shape,
+                    #elemstrides=(0,) * self._DotInc_views[op][2].ndim,
+                    #offset=B.offset,
+                    #name=B.name + '-broadcastview')
+                #Bndim = 0
+            #elif B.ndim == 1 and Y.ndim == 1:
+                #if B.shape != self._DotInc_views[op][2].shape:
+                    #print B.shape, self._DotInc_views[op][2].shape, op, B
+                    #B = B.reshape(self._DotInc_views[op][2].shape)
+            #assert B.shape == self._DotInc_views[op][2].shape
+            self._DotInc_views[op] = self._DotInc_views[op] + (B,)
+            #view_builder.append_view(B)
+
+    def plan_Reset(self, ops):
+        if not all(op.value == 0 for op in ops):
+            raise NotImplementedError()
+
+        return self.sig_gemv(
+            ops,
+            0.0,
+            lambda op: [],
+            lambda op: [],
+            0.0,
+            lambda op: op.dst,
+            verbose=0,
+            tag='Reset'
+            )
+
+    def plan_DotInc(self, ops):
+        return self.sig_gemv(
+            ops,
+            1.0,
+            lambda op: [self._DotInc_views[op][0]],
+            lambda op: [self._DotInc_views[op][1]],
+            1.0,
+            lambda op: self._DotInc_views[op][2],
+            verbose=0,
+            tag='DotInc'
+            )
+
+    def plan_ProdUpdate(self, ops):
+        scalar_bs = [op
+            for op in ops
+            if op.B.ndim == 0 and not hasattr(op.B, 'value')]
+        if scalar_bs:
+            raise NotImplementedError()
+        # XXX VERIFY THAT op.B is actually constant in this graph
+        constant_bs = [op
+            for op in ops
+            if op.B.ndim == 0 and hasattr(op.B, 'value')]
+        vector_bs = [op for op in ops if op.B.ndim == 1]
+
+        constant_b_gemvs = self.sig_gemv(
+            constant_bs,
+            1.0,
+            lambda op: [self._DotInc_views[op][0]],
+            lambda op: [self._DotInc_views[op][1]],
+            [float(op.B.value) for op in constant_bs],
+            lambda op: self._DotInc_views[op][2],
+            verbose=0,
+            tag='ProdUpdate-scalar-constant-beta'
+            )
+
+        vector_b_gemvs = self.sig_gemv(
+            vector_bs,
+            1.0,
+            lambda op: [self._DotInc_views[op][0]],
+            lambda op: [self._DotInc_views[op][1]],
+            lambda op: self._DotInc_views[op][3],
+            lambda op: self._DotInc_views[op][2],
+            verbose=0,
+            tag='ProdUpdate-vector-beta'
+            )
+        return constant_b_gemvs + vector_b_gemvs
+
+    def plan_Copy(self, ops):
+        return self.sig_gemv(
+            ops,
+            1.0,
+            lambda op: [op.src],
+            lambda op: [self.model.one],
+            0.0,
+            lambda op: op.dst,
+            verbose=0,
+            tag='Copy'
+            )
+
+    def plan_SimDirect(self, ops):
+        sidx = self.sidx
+        def direct():
+            with Timer('simdirect', 1000):
+                for op in ops:
+                    J = self.all_data[sidx[op.J]]
+                    output = op.fn(J)
+                    self.all_data[sidx[op.output]] = output
+                    #print 'direct',
+                    #print op.J, self.all_data[sidx[op.J]],
+                    #print op.output, self.all_data[sidx[op.output]]
+        return [direct]
+
+    def plan_SimLIF(self, ops):
+        dt = self.model.dt
+        sidx = self.sidx
+        def lif():
+            for op in ops:
+                J = self.all_data[sidx[op.J]]
+                voltage = self.all_data[sidx[op.voltage]]
+                reftime = self.all_data[sidx[op.refractory_time]]
+                output = self.all_data[sidx[op.output]]
+                op.nl.step_math0(dt, J, voltage, reftime, output,)
+        return [lif]
+
     def RaggedArray(self, *args, **kwargs):
-        return RaggedArray(*args, **kwargs)
+        return _RaggedArray(*args, **kwargs)
 
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
                  Y_in_sig_fn=None,
@@ -124,8 +671,13 @@ class Simulator(object):
                 ):
         if len(seq) == 0:
             return []
-
         sidx = self.sidx
+
+        if callable(beta):
+            beta_sigs = map(beta, seq)
+            beta = self.RaggedArray(
+                map(sidx.__getitem__, beta_sigs))
+
         Y_sigs = [Y_sig_fn(item) for item in seq]
         if Y_in_sig_fn is None:
             Y_in_sigs = Y_sigs
@@ -160,26 +712,8 @@ class Simulator(object):
             yM = self.all_data.shape0s[yidx]
             yN = self.all_data.shape1s[yidx]
             for asig, xsig in zip(A_sigs_i, X_sigs_i):
-                aidx = sidx[asig]
-                xidx = sidx[xsig]
-                aM = self.all_data.shape0s[aidx]
-                aN = self.all_data.shape1s[aidx]
-                xM = self.all_data.shape0s[xidx]
-                xN = self.all_data.shape1s[xidx]
-                if aN == aM == 1:
-                    # -- X must be column vector for this trick
-                    assert xN == 1
-                    A_js_i.append(xidx)
-                    X_js_i.append(aidx)
-                else:
-                    if aN != xM:
-                        raise ValueError("shape mismatch in sig_gemv",
-                                         ((asig, aM, aN),
-                                          (xsig, xM, xN),
-                                          (ysig, yM, yN),
-                                         ))
-                    A_js_i.append(aidx)
-                    X_js_i.append(xidx)
+                A_js_i.append(sidx[asig])
+                X_js_i.append(sidx[xsig])
             A_js.append(A_js_i)
             X_js.append(X_js_i)
 
@@ -206,6 +740,7 @@ class Simulator(object):
             Y=Y,
             Y_in=Y_in,
             tag=tag,
+            seq=seq,
             )]
 
     def plan_ragged_gather_gemv(self, alpha, A, A_js, X, X_js,
@@ -214,254 +749,28 @@ class Simulator(object):
                                         Y_in=Y_in, use_raw_fn=False)
         return PythonPlan(fn, name="npy_ragged_gather_gemv", tag=tag)
 
-    @staticmethod
-    def orig_relevant_signals(model):
-        for enc in model.encoders:
-            yield (enc.weights_signal)
-            yield (enc.sig)
-            yield (enc.pop.input_signal)
-
-        for nl in model.nonlinearities:
-            yield nl.bias_signal
-            yield nl.input_signal
-            yield nl.output_signal
-
-        for dec in model.decoders:
-            yield (dec.weights_signal)
-            yield (dec.sig)
-            yield (dec.pop.input_signal)
-
-        for filt in model.filters:
-            yield (filt.alpha_signal)
-            yield (filt.oldsig)
-            yield (filt.newsig)
-
-        for tf in model.transforms:
-            yield (tf.alpha_signal)
-            yield (tf.insig)
-            yield (tf.outsig)
-
-
-    def signals_iter(self):
-        model = self.model
-
-        for nl in model.nonlinearities:
-            yield nl.bias_signal
-            yield nl.input_signal
-            yield nl.output_signal
-            if isinstance(nl, Direct):
-                pass
-            elif isinstance(nl, LIF):
-                yield self.lif_voltage[nl]
-                yield self.lif_reftime[nl]
-            elif isinstance(nl, LIFRate):
-                pass
-
-        for filt in model.filters:
-            yield (filt.alpha_signal)
-            yield (filt.oldsig)
-            yield (filt.newsig)
-
-        for tf in model.transforms:
-            yield (tf.alpha_signal)
-            yield (tf.insig)
-            yield (tf.outsig)
-
-        for enc in model.encoders:
-            yield (enc.weights_signal)
-            yield (enc.sig)
-            yield (enc.pop.input_signal)
-
-        for dec in model.decoders:
-            yield dec.weights_signal
-            yield dec.sig
-            yield dec.pop.input_signal
-        for sig in self.dec_outputs:
-            yield sig
-            yield self.dec_outputs[sig]
-
-        for sig in self.outbufs:
-            yield self.outbufs[sig]
-
-    def __init__(self, model, n_prealloc_probes=1000, dtype='float32'):
-        self.model = model
-        self.n_prealloc_probes = n_prealloc_probes
-        self.dtype = dtype
-        self.bases = []
-        self.sidx = []
-        self.sim_step = 0
-
-        self.lif_voltage = {}
-        self.lif_reftime = {}
-        self.dec_outputs = {}
-        self.outbufs = {}
-        self.filter_outputs = {}    # -- values also in outbufs
-        self.transform_outputs = {} # -- values also in outbufs
-
-        self.probe_output = dict((probe, []) for probe in model.probes)
-
-        # create at least one buffer for every signal
-        bases = stable_unique(sig.base for sig in
-                    self.orig_relevant_signals(model))
-
-        # -- the following bases cannot be modified during the simulator
-        #    loop, because we need their old values at the end.
-        self.filtered_bases_set = set(filt.oldsig.base for filt in model.filters)
-
-        self.saved_for_filtering = OrderedDict()
-        def save_for_filtering(sig):
-            try:
-                return self.saved_for_filtering[sig]
-            except KeyError:
-                newbase = add_base_like(sig, 'saved')
-                self.saved_for_filtering[sig] = newbase
-                return newbase
-
-
-        def add_base_like(sig, suffix):
-            N, = sig.shape
-            a = Signal(N, name=sig.name + suffix)
-            bases.append(a)
-            return a
-
-        def add_view_like(sig, newbase, suffix):
-            return SignalView(newbase,
-                shape=sig.shape,
-                elemstrides=sig.elemstrides,
-                offset=sig.offset,
-                name=sig.name + suffix)
-
-        # -- add some extra buffers for some signals:
-        #    reset bias -> input current can be done in-place
-        #    encoders -> input current can be done in-place
-        #    nl outputs -> generally needs buffer
-        for enc in model.encoders:
-            if enc.pop.input_signal.base in self.filtered_bases_set:
-                save_for_filtering(enc.pop.input_signal)
-
-        for nl in model.nonlinearities:
-            if nl.output_signal.base in self.filtered_bases_set:
-                save_for_filtering(nl.output_signal)
-
-            # -- also some neuron models need a few extra buffers
-            if isinstance(nl, Direct):
-                pass
-            elif isinstance(nl, LIF):
-                self.lif_voltage[nl] = add_base_like(nl.output_signal,
-                                                     '.voltage')
-                self.lif_reftime[nl] = add_base_like(nl.output_signal,
-                                                     '.reftime')
-            elif isinstance(nl, LIFRate):
-                pass
-            else:
-                raise NotImplementedError()
-
-
-        if any(isview(dec.sig) for dec in model.decoders):
-            # TODO: check for overlap
-            warn("decoding to views without checking for overlap")
-
-        #    decoder outputs -> also generally needs copy
-        #    N.B. technically many decoders can decode the same signal
-        #         this is defined to mean that we add together the several
-        #         decoder outputs as if it were a large sparsely connected
-        #         decoder
-        decoder_output_bases = stable_unique(
-            [dec.sig.base for dec in model.decoders])
-
-        # XXX: confusing to have both
-        #            self.decoder_outputs
-        #      *and* self.dec_outputs
-        self.decoder_outputs = stable_unique(
-            [dec.sig for dec in model.decoders])
-
-        for base in decoder_output_bases:
-            self.dec_outputs[base] = add_base_like(base, '.dec_output')
-        for sig in self.decoder_outputs:
-            if sig not in self.dec_outputs:
-                assert isview(sig)
-                self.dec_outputs[sig] = add_view_like(
-                    sig,
-                    self.dec_outputs[sig.base],
-                    '.dec_output')
-
-        if 1:
-            # -- sanity check
-            #    Ensure that all decoder outputs are actually used, but more
-            #    importantly that all transform inputs are decoder outputs.
-            #    If you think you want to use a transform on something that
-            #    isn't a decoder output, then you actually want a filter.
-            #    A filter draws data from the original buffers. A transform
-            #    draws from the decoder output buffers, and that's all the
-            #    cases.
-            pop_outputs_set = set(
-                nl.output_signal for nl in model.nonlinearities)
-            transform_inputs_set = set(
-                tf.insig.base for tf in model.transforms)
-            valid_transformable_things = pop_outputs_set
-            valid_transformable_things.update(decoder_output_bases)
-            if not transform_inputs_set.issubset(valid_transformable_things):
-                print "Model error: Transform inputs != valid transformable"
-                print "Decoder outputs:         ", decoder_output_bases
-                print "Population outputs:      ", pop_outputs_set
-                print "Transform inputs (bases):", transform_inputs_set
-                assert 0
-            del transform_inputs_set
-            del valid_transformable_things
-            del pop_outputs_set
-
-        #    generally, filters and transforms are meant to
-        #    write into a fresh "output buffer"
-        #    which is then copied back over top of the old values
-        #    There are cases where more can be done in-place, but we'll
-        #    just do the general case for now.
-        #
-        #    -- N.B. that each of view of some common base gets its own
-        #       allocated space in outbufs
-        filt_and_tf_outputs = (
-            [filt.newsig for filt in model.filters]
-            + [tf.outsig for tf in model.transforms])
-        for sig in stable_unique(filt_and_tf_outputs):
-            self.outbufs[sig] = add_base_like(sig, '.outbuf')
-
-        for filt in self.model.filters:
-            self.filter_outputs[filt] = self.outbufs[filt.newsig]
-        for tf in self.model.transforms:
-            self.transform_outputs[tf] = self.outbufs[tf.outsig]
-
-        # -- Choose a layout order for the constants.
-        bases = stable_unique(sorted(bases, key=lambda bb: bb.size))
-        self.bases[:] = bases
-
-        ### N.B. we're allocating on the host in the constructor. The OCL
-        ### version transfers to the device in its constructor.
-        self.all_data = RaggedArray(
-            [np.zeros(ss.shape) + getattr(ss, 'value', np.zeros(ss.shape))
-                for ss in self.bases],
-            names=[getattr(ss, 'name', '') for ss in self.bases])
-
-        builder = ViewBuilder(self.bases, self.all_data)
-        for sig in stable_unique(self.signals_iter()):
-            builder.append_view(sig)
-        builder.add_views_to(self.all_data)
-        self.sidx = builder.sidx
-
     def __getitem__(self, item):
         """
         Return internally shaped signals, which are always 2d
         """
-        return self.all_data[self.sidx[item]]
+        try:
+            return self.all_data[self.sidx[item]]
+        except KeyError:
+            return self.all_data[self.sidx[self.copied(item)]]
 
     @property
     def signals(self):
         """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)
         """
-        class Cls(object):
+        class Accessor(object):
             def __iter__(_):
-                return iter(stable_unique(self.signals_iter()))
+                return iter(self.all_bases)
 
             def __getitem__(_, item):
-                raw = self.all_data[self.sidx[item]]
+                try:
+                    raw = self.all_data[self.sidx[item]]
+                except KeyError:
+                    raw = self.all_data[self.sidx[self.copied(item)]]
                 assert raw.ndim == 2
                 if item.ndim == 0:
                     return raw[0, 0]
@@ -473,6 +782,8 @@ class Simulator(object):
                     raise NotImplementedError()
 
             def __setitem__(_, item, val):
+                if item not in self.sidx:
+                    item = self.copied(item)
                 raw = self.all_data[self.sidx[item]]
                 assert raw.ndim == 2
                 incoming = np.asarray(val)
@@ -487,183 +798,40 @@ class Simulator(object):
                     self.all_data[self.sidx[item]] = incoming
                 else:
                     raise NotImplementedError()
-        return Cls()
 
-    def plan_encoders(self):
-        encoders = self.model.encoders
+            def __str__(self_):
+                import StringIO
+                sio = StringIO.StringIO()
+                for k in self_:
+                    print >> sio, k, self_[k]
+                return sio.getvalue()
 
-        return self.sig_gemv(
-            self.model.nonlinearities,
-            1.0,
-            lambda pop: [enc.weights_signal
-                         for enc in encoders if enc.pop == pop],
-            lambda pop: [enc.sig
-                         for enc in encoders if enc.pop == pop],
-            1.0,
-            lambda pop: pop.input_signal,
-            lambda pop: pop.bias_signal,
-            tag="encoders"
-            )
+        return Accessor()
 
-    def plan_direct(self, nls):
-        sidx = self.sidx
-        def direct():
-            for nl in nls:
-                J = self.all_data[sidx[nl.input_signal]]
-                output = nl.fn(J)
-                self.all_data[sidx[nl.output_signal]][:] = output
-        return PythonPlan(direct, name="direct", tag="direct")
+    def copied(self, obj):
+        """Get the simulator's copy of a model object.
 
-    def plan_lif(self, nls):
-        dt = self.model.dt
-        sidx = self.sidx
-        def lif():
-            for nl in nls:
-                J = self.all_data[sidx[nl.input_signal]]
-                voltage = self.all_data[sidx[self.lif_voltage[nl]]]
-                reftime = self.all_data[sidx[self.lif_reftime[nl]]]
-                output = self.all_data[sidx[nl.output_signal]]
-                nl.step_math0(dt, J, voltage, reftime, output,)
-        return PythonPlan(lif, name="lif", tag="lif")
+        Parameters
+        ----------
+        obj : Nengo object
+            A model from the original model
 
-    def plan_lif_rate(self, nls):
-        def lif_rate():
-            for nl in nls:
-                J = self.all_data[self.sidx[nl.input_signal]]
-                self.all_data[self.sidx[nl.output_signal]][:] = nl.math(J)
-        return PythonPlan(lif_rate, name="lif_rate", tag="lif_rate")
+        Returns
+        -------
+        sim_obj : Nengo object
+            The simulator's copy of `obj`.
 
-    def plan_nonlinearities(self):
-        nl_fns = []
-        nls = sorted(self.model.nonlinearities, key=type)
-        for nl_type, nl_group in itertools.groupby(nls, type):
-            if nl_type == Direct:
-                nl_fns.append(self.plan_direct(list(nl_group)))
-            elif nl_type == LIF:
-                nl_fns.append(self.plan_lif(list(nl_group)))
-            elif nl_type == LIFRate:
-                nl_fns.append(self.plan_lif_rate(list(nl_group)))
-            else:
-                raise NotImplementedError(nl_type)
-        return nl_fns
+        Examples
+        --------
+        Manually set a raw signal value to ``5`` in the simulator
+        (advanced usage). [TODO: better example]
 
-    def plan_decoders(self):
-        decoders = self.model.decoders
-
-        return self.sig_gemv(
-            self.decoder_outputs,
-            1.0,
-            lambda sig: [dec.weights_signal
-                         for dec in decoders if dec.sig == sig],
-            lambda sig: [dec.pop.output_signal
-                         for dec in decoders if dec.sig == sig],
-            0.0,
-            lambda sig: self.dec_outputs[sig],
-            tag="decoders"
-            )
-
-    def plan_transforms(self, verbose=0):
+        >>> model = nengo.Model()
+        >>> foo = m.add(Signal(n=1))
+        >>> sim = model.simulator()
+        >>> sim.signals[sim.copied(foo)] = np.asarray([5])
         """
-        Combine the elements of input accumulator buffer (sigs_ic)
-        into *add* them into sigs
-        """
-        transforms = self.model.transforms
-        return self.sig_gemv(self.outbufs.keys(),
-            1.0,
-            lambda sig: [tf.alpha_signal
-                         for tf in transforms if tf.outsig == sig],
-            lambda sig: [self.dec_outputs.get(tf.insig, tf.insig)
-                         for tf in transforms if tf.outsig == sig],
-            1.0,
-            lambda sig: self.outbufs[sig],
-            verbose=verbose,
-            tag="transforms",
-            )
-
-    def plan_filters(self, verbose=0):
-        """
-        Recombine the elements of previous signal buffer (sigs)
-        and write them back to `sigs`
-        """
-        filters = self.model.filters
-        saved = self.saved_for_filtering
-        return self.sig_gemv(
-            self.outbufs.keys(),
-            1.0,
-            lambda sig: [filt.alpha_signal
-                         for filt in filters if filt.newsig == sig],
-            lambda sig: [saved.get(filt.oldsig, filt.oldsig)
-                         for filt in filters if filt.newsig == sig],
-            0.0,
-            lambda sig: self.outbufs[sig],
-            verbose=verbose,
-            tag="filters",
-            )
-
-    def plan_save_for_filters(self):
-        saved = self.saved_for_filtering
-        return self.sig_gemv(
-            saved,
-            1.0,
-            lambda item: [self.model.one],
-            lambda item: [item],
-            0.0,
-            lambda item: saved[item],
-            verbose=0,
-            tag="save_for_filters",
-            )
-
-    def plan_back_copy(self):
-        # -- here we may have to serialize a little bit so that
-        #    updates to views are copied back incrementally into
-        #    any original signals
-
-        # -- by_base: map original base -> (view of base, outbuf for view)
-        by_base = OrderedDict((sig_or_view.base, [])
-                       for sig_or_view in self.outbufs.keys())
-
-        for sig_or_view in self.outbufs:
-            by_base[sig_or_view.base].append(
-                (sig_or_view, self.outbufs[sig_or_view]))
-
-        # -- run a first call just to initialize outputs to 0
-        copy_fns = self.sig_gemv(
-            self.outbufs,
-            0.0,
-            lambda sig_or_view: [],
-            lambda sig_or_view: [],
-            0.0,
-            lambda sig_or_view: sig_or_view,
-            verbose=0,
-            tag="back_copy_init"
-            )
-
-        # -- now that outputs have been cleared
-        #    increment into each base one view at a time
-        #
-        # XXX This function could be more sophisticated, if sets
-        #     of views are shown to be non-overlapping, then they
-        #     can be updated at the same time.
-
-        while by_base:
-            bases = by_base.keys()
-            copy_fns.extend(
-                self.sig_gemv(
-                    bases,
-                    1.0,
-                    lambda base: [self.model.one],
-                    lambda base: [by_base[base][-1][1]],
-                    1.0,
-                    lambda base: by_base[base][-1][0],
-                    verbose=0,
-                    tag="back_copy_%i" % (len(copy_fns) - 1)
-                    ))
-            # -- pop last elements and remove empty lists
-            by_base = OrderedDict((k, v[:-1])
-                                  for k, v in by_base.items()
-                                  if len(v) > 1)
-        info("back_copy required %i passes" % len(copy_fns))
-        return copy_fns
+        return self.model.memo[id(obj)]
 
     def plan_probes(self):
         def fn():
@@ -672,25 +840,22 @@ class Simulator(object):
             for probe in probes:
                 period = int(probe.dt // self.model.dt)
                 if self.sim_step % period == 0:
-                    self.probe_output[probe].append(
+                    self.probe_outputs[probe].append(
                         self.signals[probe.sig].copy())
-        return PythonPlan(fn, name="probes", tag="probes")
-
-    def plan_all(self):
-        self._plan = []
-        self._plan.extend(self.plan_save_for_filters())
-        self._plan.extend(self.plan_encoders())
-        self._plan.extend(self.plan_nonlinearities())
-        self._plan.extend(self.plan_decoders())
-        self._plan.extend(self.plan_filters())
-        self._plan.extend(self.plan_transforms())
-        self._plan.extend(self.plan_back_copy())
-        self._plan.append(self.plan_probes())
+        return [PythonPlan(fn, name="probes", tag="probes")]
 
     def step(self):
         for fn in self._plan:
             fn()
+        # print self.signals
         self.sim_step += 1
+
+    def run(self, time_in_seconds):
+        """Simulate for the given length of time."""
+        steps = int(time_in_seconds // self.model.dt)
+        logger.debug("Running %s for %f seconds, or %d steps",
+                     self.model.name, time_in_seconds, steps)
+        self.run_steps(steps)
 
     def run_steps(self, N, verbose=False):
         for i in xrange(N):
@@ -707,5 +872,25 @@ class Simulator(object):
             return self.signal_probe_output(probes[0])
 
     def probe_data(self, probe):
-        return np.asarray(self.probe_output[probe])
+        return np.asarray(self.probe_outputs[probe])
+
+    def data(self, probe):
+        """Get data from signals that have been probed.
+
+        Parameters
+        ----------
+        probe : Probe
+            TODO
+
+        Returns
+        -------
+        data : ndarray
+            TODO: what are the dimensions?
+        """
+        if not isinstance(probe, Probe):
+            if isinstance(probe, str):
+                probe = self.model.probed[probe]
+            else:
+                probe = self.model.probed[self.model.memo[id(probe)]]
+        return np.asarray(self.probe_outputs[probe])
 

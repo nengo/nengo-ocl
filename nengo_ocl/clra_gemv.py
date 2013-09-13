@@ -3,6 +3,7 @@ import pyopencl as cl
 from plan import Plan
 from mako.template import Template
 from clarray import to_device
+from clraggedarray import CLRaggedArray
 
 def plan_parallel_ragged_gather_gemv2(queue,
     alpha, A, A_js, X, X_js,
@@ -194,7 +195,7 @@ def plan_parallel_ragged_gather_gemv2(queue,
 
 
 def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
-                            beta, Y, Y_in=None, tag=None):
+                            beta, Y, Y_in=None, tag=None, seq=None):
     """
     """
 
@@ -206,14 +207,21 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     except TypeError:
         pass
 
-    try:
-        float(beta)
-        beta = [beta] * len(Y)
-    except TypeError:
-        pass
+    clra_beta = None
+    float_beta = None
+    cl_beta = None
+    if isinstance(beta, CLRaggedArray):
+        clra_beta = beta
+        type_beta = beta.cl_buf.ocldtype
+    elif isinstance(beta, float):
+        float_beta = beta
+        type_beta = Y.cl_buf.ocldtype
+    else:
+        vec_beta = np.asarray(beta, dtype=Y.dtype)
+        cl_beta = to_device(queue, np.asarray(beta, Y.buf.dtype))
+        type_beta = Y.cl_buf.ocldtype
 
     cl_alpha = to_device(queue, np.asarray(alpha, Y.buf.dtype))
-    cl_beta = to_device(queue, np.asarray(beta, Y.buf.dtype))
 
     if Y_in is None:
         Y_in = Y
@@ -225,12 +233,15 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     # XXX check that all the ints are ints not longs
     textconf = {
         'type_alpha': cl_alpha.ocldtype,
-        'type_beta': cl_beta.ocldtype,
+        'type_beta': type_beta,
         'type_A': A.cl_buf.ocldtype,
         'type_X': X.cl_buf.ocldtype,
         'type_Y': Y.cl_buf.ocldtype,
         'tag': str(tag),
         'do_inner_products': (A_js is not None),
+        'clra_beta': clra_beta,
+        'float_beta': float_beta,
+        'cl_beta': cl_beta,
     }
 
     text = """
@@ -247,7 +258,13 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
             __global ${type_X} *X_data,
             __global int *X_js_starts,
             __global int *X_js_data,
+            % if cl_beta is not None:
             __global ${type_beta} * betas,
+            % endif
+            % if clra_beta is not None:
+            __global int *beta_starts,
+            __global int *beta_data,
+            % endif
             __global int *Y_in_starts,
             __global ${type_Y} *Y_in_data,
             __global int *Y_starts,
@@ -260,10 +277,20 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
             if (mm < M)
             {
                 const ${type_alpha} alpha = alphas[bb];
-                const ${type_beta} beta = betas[bb];
 
                 const int y_offset = Y_starts[bb];
                 const int y_in_offset = Y_in_starts[bb];
+
+                % if float_beta is not None:
+                const ${type_beta} beta = ${float_beta};
+                % endif
+                % if cl_beta is not None:
+                const ${type_beta} beta = betas[bb];
+                % endif
+                % if clra_beta is not None:
+                const int beta_offset = beta_starts[bb];
+                const ${type_beta} beta = beta_data[beta_offset + mm];
+                % endif
 
                 Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm];
 
@@ -305,7 +332,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     lsize = None
     _fn = cl.Program(queue.context, text).build().fn
     dummy = A.cl_buf
-    full_args = (
+    full_args = [
         cl_alpha,
         A.cl_starts,
         A.cl_shape1s,
@@ -318,12 +345,17 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
         X.cl_buf,
         X_js.cl_starts if X_js is not None else dummy,
         X_js.cl_buf if X_js is not None else dummy,
-        cl_beta,
+        ]
+    if cl_beta is not None:
+        full_args += [cl_beta]
+    elif clra_beta is not None:
+        full_args += [clra_beta.cl_starts, clra_beta.cl_buf]
+    full_args += [
         Y_in.cl_starts,
         Y_in.cl_buf,
         Y.cl_starts,
         Y.cl_shape0s,
-        Y.cl_buf)
+        Y.cl_buf]
 
     #print [str(arr.dtype)[0] for arr in full_args]
     _fn.set_args(*[arr.data for arr in full_args])
