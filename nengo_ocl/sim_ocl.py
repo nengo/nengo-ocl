@@ -36,17 +36,38 @@ class Simulator(sim_npy.Simulator):
         sim_npy.Simulator.__init__(self,
                                    model,
                                    )
+        if all(isinstance(p, Plan) for p in self._plan):
+            self._prog = Prog(self._plan)
+        else:
+            self._prog = None
+
+    def print_profiling(self):
+        print '-' * 80
+        print '%s\t%s\t%s\t%s' % (
+            'n_calls', 'runtime', 'q-time', 'subtime')
+        time_running_kernels = 0.0
+        for p in self._plan:
+            if isinstance(p, Plan):
+                print '%i\t%2.3f\t%2.3f\t%2.3f\t%s' % (
+                    p.n_calls, sum(p.ctimes), sum(p.btimes), sum(p.atimes), p)
+                time_running_kernels += sum(p.ctimes)
+            else:
+                print p, getattr(p, 'cumtime', '<unknown>')
+        print '-' * 80
+        print 'totals:\t%2.3f\t%2.3f\t%2.3f' % (
+            time_running_kernels, 0.0, 0.0)
+        import matplotlib.pyplot as plt
+        for p in self._plan:
+            plt.plot(p.btimes)
+            #print p.btimes
+        plt.show()
 
     def run_steps(self, N, verbose=False):
-        import time
-        t0 = time.time()
-        if all(isinstance(p, Plan) for p in self._plan):
-            Prog(self._plan).call_n_times(N)
-        else:
+        if self._prog is None:
             for i in xrange(N):
-                self.step()
-        t1 = time.time()
-        print 'run_steps %i took %f' %  (N, t1 - t0)
+                self.step(self.profiling)
+        else:
+            self._prog.call_n_times(N, self.profiling)
 
     def _prep_all_data(self):
         # -- replace the numpy-allocated RaggedArray with OpenCL one
@@ -126,12 +147,12 @@ class Simulator(sim_npy.Simulator):
 
     def plan_SimLIFRate(self, nls):
         raise NotImplementedError()
-        #J = self.all_data[[self.sidx[nl.input_signal] for nl in nls]]
-        #R = self.all_data[[self.sidx[nl.output_signal] for nl in nls]]
-        #ref = self.RaggedArray([nl.tau_ref for nl in nls])
-        #tau = self.RaggedArray([nl.tau_rc for nl in nls])
-        #return plan_lif_rate(self.queue, J, R, ref, tau,
-                             #tag="lif_rate", n_elements=10)
+        J = self.all_data[[self.sidx[nl.input_signal] for nl in nls]]
+        R = self.all_data[[self.sidx[nl.output_signal] for nl in nls]]
+        ref = self.RaggedArray([nl.tau_ref for nl in nls])
+        tau = self.RaggedArray([nl.tau_rc for nl in nls])
+        return plan_lif_rate(self.queue, J, R, ref, tau,
+                             tag="lif_rate", n_elements=10)
 
     def step(self):
         for fn in self._plan:

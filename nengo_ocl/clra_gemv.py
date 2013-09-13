@@ -217,8 +217,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
         float_beta = beta
         type_beta = Y.cl_buf.ocldtype
     else:
-        vec_beta = np.asarray(beta, dtype=Y.dtype)
-        cl_beta = to_device(queue, np.asarray(beta, Y.buf.dtype))
+        cl_beta = to_device(queue, np.asarray(beta, Y.dtype))
         type_beta = Y.cl_buf.ocldtype
 
     cl_alpha = to_device(queue, np.asarray(alpha, Y.buf.dtype))
@@ -276,8 +275,6 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
             const int M = Y_shape0s[bb];
             if (mm < M)
             {
-                const ${type_alpha} alpha = alphas[bb];
-
                 const int y_offset = Y_starts[bb];
                 const int y_in_offset = Y_in_starts[bb];
 
@@ -295,6 +292,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
                 Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm];
 
     % if do_inner_products :
+
                 const int n_dot_products = A_js_shape0s[bb];
                 X_js_data += X_js_starts[bb];
                 A_js_data += A_js_starts[bb];
@@ -316,6 +314,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
                         y_sum += X_data[x_offset + nn]
                                  * A_data[a_offset + nn * lda_i + mm];
                 }
+                const ${type_alpha} alpha = alphas[bb];
                 Y_data[y_offset + mm] += alpha * y_sum;
     % endif
             }

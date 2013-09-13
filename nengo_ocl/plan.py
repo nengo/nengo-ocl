@@ -50,19 +50,22 @@ class Plan(object):
         self.name = kwargs.get('name', "")
         self.tag = kwargs.get('tag', "")
         self.kwargs = kwargs
-        self.atime = 0.0
-        self.btime = 0.0
-        self.ctime = 0.0
+        self.atimes = []
+        self.btimes = []
+        self.ctimes = []
         self.n_calls = 0
 
     def __call__(self, profiling=False):
         ev = self.enqueue()
         self.queue.finish()
         if profiling:
-            self.atime += 1e-9 * (ev.profile.submit - ev.profile.queued)
-            self.btime += 1e-9 * (ev.profile.start - ev.profile.submit)
-            self.ctime += 1e-9 * (ev.profile.end - ev.profile.start)
-            self.n_calls += 1
+            self.update_from_event(ev)
+
+    def update_from_event(self, ev):
+        self.atimes.append(1e-9 * (ev.profile.submit - ev.profile.queued))
+        self.btimes.append(1e-9 * (ev.profile.start - ev.profile.submit))
+        self.ctimes.append(1e-9 * (ev.profile.end - ev.profile.start))
+        self.n_calls += 1
 
     def enqueue(self):
         return cl.enqueue_nd_range_kernel(
@@ -99,13 +102,24 @@ class Prog(object):
     def enqueue(self):
         return map(*self.map_args)
 
-    def call_n_times(self, n):
-        self.enqueue_n_times(n)
+    def call_n_times(self, n, profiling=False):
+        all_evs = self.enqueue_n_times(n, profiling)
         self.queues[-1].finish()
+        if profiling:
+            for evs in all_evs:
+                for ev, plan in zip(evs, self.plans):
+                    plan.update_from_event(ev)
 
-    def enqueue_n_times(self, n):
+    def enqueue_n_times(self, n, profiling=False):
+        map_args = self.map_args
+        flush = self.queues[-1].flush
+        all_evs = []
         for ii in range(n):
-            map(*self.map_args)
+            evs = map(*map_args)
+            flush()
+            if profiling:
+                all_evs.append(evs)
+        return all_evs
 
 
 class HybridProg(object):

@@ -405,6 +405,8 @@ def signals_from_operators(operators):
 
 class Simulator(object):
 
+    profiling = False
+
     def __init__(self, model,
             planner=greedy_planner,
             ):
@@ -638,7 +640,7 @@ class Simulator(object):
 
     def plan_SimDirect(self, ops):
         sidx = self.sidx
-        def direct():
+        def direct(profiling=False):
             with Timer('simdirect', 1000):
                 for op in ops:
                     J = self.all_data[sidx[op.J]]
@@ -652,7 +654,7 @@ class Simulator(object):
     def plan_SimLIF(self, ops):
         dt = self.model.dt
         sidx = self.sidx
-        def lif():
+        def lif(profiling=False):
             for op in ops:
                 J = self.all_data[sidx[op.J]]
                 voltage = self.all_data[sidx[op.voltage]]
@@ -834,20 +836,28 @@ class Simulator(object):
         return self.model.memo[id(obj)]
 
     def plan_probes(self):
-        def fn():
-            probes = self.model.probes
-            #sidx = self.sidx
-            for probe in probes:
-                period = int(probe.dt // self.model.dt)
-                if self.sim_step % period == 0:
-                    self.probe_outputs[probe].append(
-                        self.signals[probe.sig].copy())
-        return [PythonPlan(fn, name="probes", tag="probes")]
+        if self.model.probes:
+            print self.model.probes
+            def fn(profiling=False):
+                t0 = time.time()
+                probes = self.model.probes
+                #sidx = self.sidx
+                for probe in probes:
+                    period = int(probe.dt // self.model.dt)
+                    if self.sim_step % period == 0:
+                        self.probe_outputs[probe].append(
+                            self.signals[probe.sig].copy())
+                t1 = time.time()
+                fn.cumtime += t1 - t0
+            fn.cumtime = 0.0
+            return [fn]
+        else:
+            return []
 
     def step(self):
+        profiling = self.profiling
         for fn in self._plan:
-            fn()
-        # print self.signals
+            fn(profiling)
         self.sim_step += 1
 
     def run(self, time_in_seconds):
