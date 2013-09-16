@@ -858,19 +858,18 @@ class Simulator(object):
     def plan_probes(self):
         if self.model.probes:
             print self.model.probes
-            def fn(profiling=False):
+            def probe_fn(profiling=False):
                 t0 = time.time()
                 probes = self.model.probes
-                #sidx = self.sidx
                 for probe in probes:
                     period = int(probe.dt // self.model.dt)
                     if self.sim_step % period == 0:
                         self.probe_outputs[probe].append(
                             self.signals[probe.sig].copy())
                 t1 = time.time()
-                fn.cumtime += t1 - t0
-            fn.cumtime = 0.0
-            return [fn]
+                probe_fn.cumtime += t1 - t0
+            probe_fn.cumtime = 0.0
+            return [probe_fn]
         else:
             return []
 
