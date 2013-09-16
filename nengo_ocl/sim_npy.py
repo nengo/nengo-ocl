@@ -422,7 +422,7 @@ class Simulator(object):
         all_signals = signals_from_operators(operators)
         all_bases = stable_unique([sig.base for sig in all_signals])
 
-        _shares_memory_with = model._shares_memory_with
+        _shares_memory_with = getattr(model, '_shares_memory_with', {})
         def share_memory(a, b):
             if a.base is not b.base:
                 return False
@@ -766,7 +766,7 @@ class Simulator(object):
             )]
 
     def plan_ragged_gather_gemv(self, alpha, A, A_js, X, X_js,
-                                beta, Y, Y_in=None, tag=None):
+                                beta, Y, Y_in=None, tag=None, seq=None):
         fn = lambda: ragged_gather_gemv(alpha, A, A_js, X, X_js, beta, Y,
                                         Y_in=Y_in, use_raw_fn=False)
         return PythonPlan(fn, name="npy_ragged_gather_gemv", tag=tag)
