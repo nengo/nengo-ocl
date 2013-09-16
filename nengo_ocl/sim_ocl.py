@@ -128,15 +128,12 @@ class Simulator(sim_npy.Simulator):
                              tag="lif_rate", n_elements=10)
 
     def plan_probes(self):
-        # return sim_npy.Simulator.plan_probes(self)
-
         if len(self.model.probes) > 0:
-            print self.model.probes
-
-            buf_len = 10
+            buf_len = 1000
 
             probes = self.model.probes
-            periods = [int(probe.dt // self.model.dt) for probe in probes]
+            periods = [int(np.round(float(p.dt) / self.model.dt))
+                       for p in probes]
 
             sim_step = self.all_data[[self.sidx[self.model.steps]]]
             P = self.RaggedArray(periods)
@@ -146,23 +143,39 @@ class Simulator(sim_npy.Simulator):
 
             cl_plan = plan_probes(self.queue, sim_step, P, X, Y, tag="probes")
 
+            lengths = [period * buf_len for period in periods]
             def probe_copy_fn(profiling=False):
-                t0 = time.time()
-                for i, period in enumerate(periods):
-                    length = period * buf_len
+                if profiling: t0 = time.time()
+                for i, length in enumerate(lengths):
                     ### use (sim_step + 1), since device sim_step is updated
                     ### at start of time step, and self.sim_step at end
-                    if self.sim_step + 1 % length == length - 1:
-                        self.probe_outputs[probes[i]].append(Y[i])
-                t1 = time.time()
-                probe_copy_fn.cumtime += t1 - t0
+                    if (self.sim_step + 1) % length == length - 1:
+                        self.probe_outputs[probes[i]].append(Y[i].T)
+                if profiling:
+                    t1 = time.time()
+                    probe_copy_fn.cumtime += t1 - t0
             probe_copy_fn.cumtime = 0.0
 
-            ### TODO: something to copy any remaining probe data off device
-            ### at end of simulation. Also, concat probe_outputs at this time.
+            self._probe_periods = periods
+            self._probe_buffers = Y
             return [cl_plan, probe_copy_fn]
         else:
             return []
+
+    def post_run(self):
+        """Perform cleanup tasks after a run"""
+
+        ### Copy any remaining probe data off device
+        for i, probe in enumerate(self.model.probes):
+            period = self._probe_periods[i]
+            buffer = self._probe_buffers[i]
+            pos = ((self.sim_step + 1) / period) % buffer.shape[1]
+            if pos > 0:
+                self.probe_outputs[probe].append(buffer[:,:pos].T)
+
+        ### concatenate probe buffers
+        for probe in self.model.probes:
+            self.probe_outputs[probe] = np.vstack(self.probe_outputs[probe])
 
     def print_profiling(self):
         print '-' * 80
@@ -180,10 +193,11 @@ class Simulator(sim_npy.Simulator):
         print '-' * 80
         print 'totals:\t%2.3f\t%2.3f\t%2.3f' % (
             time_running_kernels, 0.0, 0.0)
+
         import matplotlib.pyplot as plt
         for p in self._plan:
-            plt.plot(p.btimes)
-            #print p.btimes
+            if isinstance(p, Plan):
+                plt.plot(p.btimes)
         plt.show()
 
     def run_steps(self, N, verbose=False):
@@ -192,3 +206,4 @@ class Simulator(sim_npy.Simulator):
                 self.step()
         else:
             self._prog.call_n_times(N, self.profiling)
+        self.post_run()

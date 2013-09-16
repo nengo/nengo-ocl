@@ -15,7 +15,7 @@ from nengo_ocl.plan import Plan
 
 import pyopencl as cl
 
-model = nengo.Model("Product")
+model = nengo.Model("Dummy")
 model.prep_for_simulation(model, 0.001)
 
 ctx = cl.create_some_context()
@@ -24,13 +24,16 @@ if 1:
     sim = sim_ocl.Simulator(ctx, model, profiling=True)
 
     t0 = time.time()
-    sim.run(10.0)
+    # sim.run(0.2)
+    # sim.run(10.0)
+    sim.run(9.9985)
     t1 = time.time()
     print "Done in %s seconds" % (t1 - t0)
 
-    t_out = sim.probe_outputs[sim.model.probed[sim.model.t]]
-    t = np.concatenate(t_out).flatten()
-    t_diff = np.diff(t)
+    t = sim.probe_outputs[sim.model.probed[sim.model.t]]
+    t_diff = np.diff(t, axis=0)
+
+    print "t: %f, %f" % (len(t) * sim.model.dt, t[-1])
     print "t_diff: mean %s, std %s, min %s, max %s" % (
         t_diff.mean(), t_diff.std(), t_diff.min(), t_diff.max())
 
