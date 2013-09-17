@@ -195,7 +195,7 @@ def plan_parallel_ragged_gather_gemv2(queue,
 
 
 def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
-                            beta, Y, Y_in=None, tag=None, seq=None):
+                            beta, Y, Y_in=None, tag=None, seq=None, gamma=0.0):
     """
     """
 
@@ -206,6 +206,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
         alpha = [alpha] * len(Y)
     except TypeError:
         pass
+    cl_alpha = to_device(queue, np.asarray(alpha, Y.buf.dtype))
 
     clra_beta = None
     float_beta = None
@@ -216,11 +217,41 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     elif isinstance(beta, float):
         float_beta = beta
         type_beta = Y.cl_buf.ocldtype
+    elif len(set(beta)) == 1:
+        float_beta = beta[0]
+        type_beta = Y.cl_buf.ocldtype
     else:
         cl_beta = to_device(queue, np.asarray(beta, Y.dtype))
         type_beta = Y.cl_buf.ocldtype
 
-    cl_alpha = to_device(queue, np.asarray(alpha, Y.buf.dtype))
+    clra_gamma = None
+    float_gamma = None
+    cl_gamma = None
+    if isinstance(gamma, CLRaggedArray):
+        clra_gamma = gamma
+        type_gamma = gamma.cl_buf.ocldtype
+    elif isinstance(gamma, float):
+        float_gamma = gamma
+        type_gamma = Y.cl_buf.ocldtype
+    elif len(set(gamma)) == 1:
+        float_gamma = gamma[0]
+        type_gamma = Y.cl_buf.ocldtype
+    else:
+        cl_gamma = to_device(queue, np.asarray(gamma, Y.dtype))
+        type_gamma = Y.cl_buf.ocldtype
+
+   # if float_gamma == 0 and float_beta is not None:
+   #     if len(alpha) == 1:
+   #         alpha = alpha[0]
+   #     return plan_parallel_ragged_gather_gemv3(queue, alpha, A, A_js, X, X_js,
+   #             float_beta, Y, Y_in, tag, seq=seq)
+   # elif float_gamma == 0 and cl_beta is not None:
+   #     if len(alpha) == 1:
+   #         alpha = alpha[0]
+   #     return plan_parallel_ragged_gather_gemv3(queue, alpha, A, A_js, X, X_js,
+   #             cl_beta.get(), Y, Y_in, tag, seq=seq)
+   # else:
+   #     print 'not gemv3', float_gamma, float_beta
 
     if Y_in is None:
         Y_in = Y
@@ -233,6 +264,7 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
     textconf = {
         'type_alpha': cl_alpha.ocldtype,
         'type_beta': type_beta,
+        'type_gamma': type_gamma,
         'type_A': A.cl_buf.ocldtype,
         'type_X': X.cl_buf.ocldtype,
         'type_Y': Y.cl_buf.ocldtype,
@@ -241,6 +273,9 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
         'clra_beta': clra_beta,
         'float_beta': float_beta,
         'cl_beta': cl_beta,
+        'clra_gamma': clra_gamma,
+        'float_gamma': float_gamma,
+        'cl_gamma': cl_gamma,
     }
 
     text = """
@@ -263,6 +298,13 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
             % if clra_beta is not None:
             __global int *beta_starts,
             __global int *beta_data,
+            % endif
+            % if cl_gamma is not None:
+            __global ${type_gamma} * gammas,
+            % endif
+            % if clra_gamma is not None:
+            __global int *gamma_starts,
+            __global int *gamma_data,
             % endif
             __global int *Y_in_starts,
             __global ${type_Y} *Y_in_data,
@@ -289,7 +331,18 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
                 const ${type_beta} beta = beta_data[beta_offset + mm];
                 % endif
 
-                Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm];
+                % if float_gamma is not None:
+                const ${type_gamma} gamma = ${float_gamma};
+                % endif
+                % if cl_gamma is not None:
+                const ${type_gamma} gamma = gammas[bb];
+                % endif
+                % if clra_gamma is not None:
+                const int gamma_offset = gamma_starts[bb];
+                const ${type_gamma} gamma = gamma_data[gamma_offset + mm];
+                % endif
+
+                Y_data[y_offset + mm] = gamma + beta * Y_in_data[y_in_offset + mm];
 
     % if do_inner_products :
 
@@ -349,6 +402,10 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
         full_args += [cl_beta]
     elif clra_beta is not None:
         full_args += [clra_beta.cl_starts, clra_beta.cl_buf]
+    if cl_gamma is not None:
+        full_args += [cl_gamma]
+    elif clra_gamma is not None:
+        full_args += [clra_gamma.cl_starts, clra_gamma.cl_buf]
     full_args += [
         Y_in.cl_starts,
         Y_in.cl_buf,
@@ -369,14 +426,15 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
 
 def plan_parallel_ragged_gather_gemv3(queue,
     alpha, A, A_js, X, X_js,
-    beta, Y, Y_in=None, tag=None,
+    beta,
+    Y, Y_in=None, tag=None,
     group_size=32,
+    seq=None,
     ):
     """
     """
 
-    # TODO: if alpha or beta is a float
-    #       then render it into the kernel text.
+    print alpha
     try:
         alpha = float(alpha)
         cl_alpha = None
@@ -385,14 +443,15 @@ def plan_parallel_ragged_gather_gemv3(queue,
             np.asarray([alpha] * len(Y), Y.buf.dtype))
 
     try:
-        beta = float(beta)
+        float_beta = float(beta)
         cl_beta = None
     except TypeError:
+        float_beta = None
         cl_beta = to_device(queue,
-            np.asarray([beta] * len(Y), Y.buf.dtype))
+            np.asarray(beta, Y.buf.dtype))
 
-    if cl_alpha or cl_beta:
-        raise NotImplementedError('alpha or beta non-homogeneous')
+    if cl_alpha:
+        raise NotImplementedError('alpha non-homogeneous')
 
     if Y_in is None:
         Y_in = Y
@@ -431,9 +490,10 @@ def plan_parallel_ragged_gather_gemv3(queue,
 
     textconf = {
         'alpha' : str(alpha),
-        'beta' : str(beta),
+        'float_beta' : float_beta,
         'type_alpha': None, #cl_alpha.ocldtype,
-        'type_beta': None, #cl_beta.ocldtype,
+        'type_beta': None if cl_beta is None else cl_beta.ocldtype,
+        'cl_beta': cl_beta,
         'type_A': A.cl_buf.ocldtype,
         'type_X': X.cl_buf.ocldtype,
         'type_Y': Y.cl_buf.ocldtype,
@@ -456,6 +516,9 @@ def plan_parallel_ragged_gather_gemv3(queue,
             const __global int *gstructure,
             const __global ${type_A} *A_data,
             const __global ${type_X} *X_data,
+            % if cl_beta is not None:
+            const __global ${type_beta} * betas,
+            % endif
             const __global ${type_Y} *Y_in_data,
             __global ${type_Y} *Y_data)
     {
@@ -480,8 +543,10 @@ def plan_parallel_ragged_gather_gemv3(queue,
 
             if (get_local_id(0) == 0)
             {
-                % if beta != 0 :
+                % if float_beta is not None and float_beta != 0 :
                     y_sum_pre = ${beta} * Y_in_data[${y_in_starts}];
+                % elif cl_beta is not None:
+                    y_sum_pre = betas[bb] * Y_in_data[${y_in_starts}];
                 % else :
                     y_sum_pre = 0;
                 % endif
@@ -520,18 +585,22 @@ def plan_parallel_ragged_gather_gemv3(queue,
 
     _fn = cl.Program(queue.context, text).build().fn
 
-    full_args = (
+    full_args = [
                  cl_gstructure,
                  A.cl_buf,
                  X.cl_buf,
+                 ]
+    if cl_beta is not None:
+        full_args += [cl_beta]
+    full_args += [
                  Y_in.cl_buf,
                  Y.cl_buf,
-                )
+                ]
 
     _fn.set_args(*[arr.data for arr in full_args])
 
     rval = Plan(queue, _fn, gsize, lsize,
-                name='ref_parallel_ragged_gather_gemv',
+                name='parallel_ragged_gather_gemv3',
                 tag=tag,
                )
     # prevent garbage-collection

@@ -23,7 +23,7 @@ class Simulator(sim_npy.Simulator):
             return CLRaggedArray(self.queue, val)
 
     def __init__(self, context, model, n_prealloc_probes=1000,
-                 profiling=False):
+                 profiling=None):
         if profiling is None:
             profiling = bool(int(os.getenv("NENGO_OCL_PROFILING", 0)))
         self.context = context
@@ -174,8 +174,8 @@ class Simulator(sim_npy.Simulator):
                 self.probe_outputs[probe].append(buffer[:,:pos].T)
 
         ### concatenate probe buffers
-        for probe in self.model.probes:
-            self.probe_outputs[probe] = np.vstack(self.probe_outputs[probe])
+        #for probe in self.model.probes:
+            #self.probe_outputs[probe] = np.vstack(self.probe_outputs[probe])
 
     def print_profiling(self):
         print '-' * 80
@@ -194,11 +194,11 @@ class Simulator(sim_npy.Simulator):
         print 'totals:\t%2.3f\t%2.3f\t%2.3f' % (
             time_running_kernels, 0.0, 0.0)
 
-        import matplotlib.pyplot as plt
-        for p in self._plan:
-            if isinstance(p, Plan):
-                plt.plot(p.btimes)
-        plt.show()
+        #import matplotlib.pyplot as plt
+        #for p in self._plan:
+            #if isinstance(p, Plan):
+                #plt.plot(p.btimes)
+        #plt.show()
 
     def run_steps(self, N, verbose=False):
         if self._prog is None:
