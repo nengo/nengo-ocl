@@ -131,7 +131,6 @@ ${code}
                     OUT=ast_conversion.OUTPUT_NAME, OUTtype=Y.cl_buf.ocldtype,
                     )
     text = Template(text, output_encoding='ascii').render(**textconf)
-    print text
 
     full_args = (X.cl_starts, X.cl_buf, Y.cl_starts, Y.cl_buf)
     _fn = cl.Program(queue.context, text).build().fn

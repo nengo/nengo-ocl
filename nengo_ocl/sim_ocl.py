@@ -84,28 +84,21 @@ class Simulator(sim_npy.Simulator):
             assert y.size == out_dim
 
             ### try to get OCL code
-            if isinstance(fn, OCL_Function) and fn.can_translate:
-                Xname = fn.translator.arg_names[0]
+            try:
+                ocl_fn = OCL_Function(fn)
+                Xname = ocl_fn.translator.arg_names[0]
                 X = self.all_data[[self.sidx[i] for i in signals['in']]]
                 Y = self.all_data[[self.sidx[i] for i in signals['out']]]
-                plan = plan_direct(self.queue, fn.ocl_code, fn.ocl_init,
+                plan = plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
                                    Xname, X, Y, tag=fn_name)
                 ocl_plans.append(plan)
-            else:
-                raise Exception("Testing to make sure everything is OCL")
-                # py_plans.append(PythonPlan(fn, name=fn_name, tag=fn_name))
+            except NameError:
+                raise
+            # except NotImplementedError, AssertionError:
+            #     raise Exception("Testing to make sure everything is OCL")
+            #     # py_plans.append(PythonPlan(fn, name=fn_name, tag=fn_name))
 
         return [HybridProg(py_plans, ocl_plans)]
-
-        # ### TODO: this is sub-optimal, since it involves copying everything
-        # ### off the device, running the nonlinearity, then copying back on
-        # sidx = self.sidx
-        # def direct():
-        #     for nl in nls:
-        #         J = self.all_data[sidx[nl.input_signal]]
-        #         output = nl.fn(J)
-        #         self.all_data[sidx[nl.output_signal]] = output
-        # return PythonPlan(direct, name="direct", tag="direct")
 
     def plan_SimLIF(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
