@@ -26,16 +26,18 @@ def plan_probes(queue, sim_step, P, X, Y, tag=None):
 
     assert len(sim_step) == 1
     assert sim_step.shape0s[0] == 1 and sim_step.shape1s[0] == 1
-    assert sim_step.ldas[0] == 1
 
     assert P.cl_buf.ocldtype == 'int'
     assert X.cl_buf.ocldtype == Y.cl_buf.ocldtype
 
     ### N.B.  X[i].shape = (ndims[i], )
     ###       Y[i].shape = (buf_ndims[i], buf_len)
+
     for i in xrange(N):
-        assert X.shape0s[i] == Y.shape0s[i]
+        assert X.shape0s[i] == Y.shape1s[i]
         assert X.shape1s[i] == 1
+        assert X.stride0s[i] == 1
+        assert Y.stride1s[i] == 1
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -47,14 +49,12 @@ def plan_probes(queue, sim_step, P, X, Y, tag=None):
             __global const int *Xshape0s,
             __global const ${Xtype} *Xdata,
             __global const int *Ystarts,
-            __global const int *Yshape1s,
+            __global const int *Yshape0s,
             __global const int *Yldas,
             __global ${Ytype} *Ydata
         )
         {
             const int n = get_global_id(0);
-            if (n >= ${N}) return;
-
             const int sim_step = (int)step_data[${step_start}];
             const int period = Pdata[Pstarts[n]];
 
@@ -63,7 +63,7 @@ def plan_probes(queue, sim_step, P, X, Y, tag=None):
                 __global const ${Xtype} *x = Xdata + Xstarts[n];
 
                 const int probe_step = sim_step / period;
-                const int buf_len = Yshape1s[n];
+                const int buf_len = Yshape0s[n];
                 __global ${Ytype} *y = Ydata + Ystarts[n]
                                      + Yldas[n] * (probe_step % buf_len);
 
@@ -73,16 +73,18 @@ def plan_probes(queue, sim_step, P, X, Y, tag=None):
         }
         """
 
-    textconf = dict(N=N, step_start=sim_step.starts[0],
-                    Stype=sim_step.cl_buf.ocldtype,
-                    Xtype=X.cl_buf.ocldtype, Ytype=Y.cl_buf.ocldtype)
+    textconf = dict(N=N,
+            step_start=sim_step.starts[0],
+            Stype=sim_step.cl_buf.ocldtype,
+            Xtype=X.cl_buf.ocldtype,
+            Ytype=Y.cl_buf.ocldtype)
     text = Template(text, output_encoding='ascii').render(**textconf)
 
     full_args = (
         sim_step.cl_buf,
         P.cl_starts, P.cl_buf,
         X.cl_starts, X.cl_shape0s, X.cl_buf,
-        Y.cl_starts, Y.cl_shape1s, Y.cl_ldas, Y.cl_buf,
+        Y.cl_starts, Y.cl_shape0s, Y.cl_stride0s, Y.cl_buf,
         )
     _fn = cl.Program(queue.context, text).build().fn
     _fn.set_args(*[arr.data for arr in full_args])

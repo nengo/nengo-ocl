@@ -5,6 +5,25 @@ from mako.template import Template
 from clarray import to_device
 from clraggedarray import CLRaggedArray
 
+
+def float_cl_clra(queue, arg, cl_dtype, N):
+    float_arg = None
+    cl_arg = None
+    clra_arg = None
+    if isinstance(arg, CLRaggedArray):
+        clra_arg = arg
+        assert arg.dtype == cl_dtype
+    elif isinstance(arg, float):
+        float_arg = arg
+    elif len(set(arg)) == 1:
+        float_arg = arg[0]
+    else:
+        host_arg = np.asarray(arg, cl_dtype)
+        assert host_arg.shape == (N,)
+        cl_arg = to_device(queue, host_arg)
+    return float_arg, cl_arg, clra_arg
+
+
 def plan_parallel_ragged_gather_gemv2(queue,
     alpha, A, A_js, X, X_js,
     beta, Y, Y_in=None, tag=None,
@@ -194,123 +213,120 @@ def plan_parallel_ragged_gather_gemv2(queue,
     return rval
 
 
-def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
-                            beta, Y, Y_in=None, tag=None, seq=None, gamma=0.0):
-    """
-    """
+class plan_ragged_gather_gemv(Plan):
+    def __init__(self,
+            queue, alpha, A, A_js, X, X_js,
+            beta, Y, Y_in=None, tag=None, seq=None, gamma=0.0):
+        """
+        """
 
-    # TODO: if alpha or beta is a float
-    #       then render it into the kernel text.
-    try:
-        float(alpha)
-        alpha = [alpha] * len(Y)
-    except TypeError:
-        pass
-    cl_alpha = to_device(queue, np.asarray(alpha, Y.buf.dtype))
+        self.float_alpha, self.cl_alpha, self.clra_alpha = \
+                float_cl_clra(queue, alpha, Y.dtype, len(Y))
+        self.float_beta, self.cl_beta, self.clra_beta = \
+                float_cl_clra(queue, beta, Y.dtype, len(Y))
+        self.float_gamma, self.cl_gamma, self.clra_gamma = \
+                float_cl_clra(queue, gamma, Y.dtype, len(Y))
 
-    clra_beta = None
-    float_beta = None
-    cl_beta = None
-    if isinstance(beta, CLRaggedArray):
-        clra_beta = beta
-        type_beta = beta.cl_buf.ocldtype
-    elif isinstance(beta, float):
-        float_beta = beta
-        type_beta = Y.cl_buf.ocldtype
-    elif len(set(beta)) == 1:
-        float_beta = beta[0]
-        type_beta = Y.cl_buf.ocldtype
-    else:
-        cl_beta = to_device(queue, np.asarray(beta, Y.dtype))
-        type_beta = Y.cl_buf.ocldtype
+        if Y_in is None:
+            self.Y_in = Y
+        else:
+            self.Y_in = Y_in
 
-    clra_gamma = None
-    float_gamma = None
-    cl_gamma = None
-    if isinstance(gamma, CLRaggedArray):
-        clra_gamma = gamma
-        type_gamma = gamma.cl_buf.ocldtype
-    elif isinstance(gamma, float):
-        float_gamma = gamma
-        type_gamma = Y.cl_buf.ocldtype
-    elif len(set(gamma)) == 1:
-        float_gamma = gamma[0]
-        type_gamma = Y.cl_buf.ocldtype
-    else:
-        cl_gamma = to_device(queue, np.asarray(gamma, Y.dtype))
-        type_gamma = Y.cl_buf.ocldtype
+        self.queue = queue
+        self.A = A
+        self.A_js = A_js
+        self.X = X
+        self.X_js = X_js
+        self.Y = Y
+        self.tag = tag
+        self.seq = seq
 
-   # if float_gamma == 0 and float_beta is not None:
-   #     if len(alpha) == 1:
-   #         alpha = alpha[0]
-   #     return plan_parallel_ragged_gather_gemv3(queue, alpha, A, A_js, X, X_js,
-   #             float_beta, Y, Y_in, tag, seq=seq)
-   # elif float_gamma == 0 and cl_beta is not None:
-   #     if len(alpha) == 1:
-   #         alpha = alpha[0]
-   #     return plan_parallel_ragged_gather_gemv3(queue, alpha, A, A_js, X, X_js,
-   #             cl_beta.get(), Y, Y_in, tag, seq=seq)
-   # else:
-   #     print 'not gemv3', float_gamma, float_beta
+        fn, gsize, lsize, full_args, name = self.choose_impl()
+        Plan.__init__(self, queue, fn, gsize, lsize,
+            name=name,
+            tag=tag,
+            )
+        # prevent garbage-collection
+        self.full_args = full_args
 
-    if Y_in is None:
-        Y_in = Y
+    def choose_impl(self):
+        return ref_impl(self)
 
-    # XXX check for e.g. all Ns being the same thing
-    #     especially all Ns == 1
-    # cl_Ns = to_device(queue, np.asarray(Ns, 'int32'))
 
-    # XXX check that all the ints are ints not longs
-    textconf = {
-        'type_alpha': cl_alpha.ocldtype,
-        'type_beta': type_beta,
-        'type_gamma': type_gamma,
-        'type_A': A.cl_buf.ocldtype,
-        'type_X': X.cl_buf.ocldtype,
-        'type_Y': Y.cl_buf.ocldtype,
-        'tag': str(tag),
-        'do_inner_products': (A_js is not None),
-        'clra_beta': clra_beta,
-        'float_beta': float_beta,
-        'cl_beta': cl_beta,
-        'clra_gamma': clra_gamma,
-        'float_gamma': float_gamma,
-        'cl_gamma': cl_gamma,
-    }
+def ref_impl(p):
+    if p.clra_alpha is not None:
+        raise NotImplementedError()
+    if p.clra_gamma is not None:
+        raise NotImplementedError()
+
+    assert all(s == 1 for s in p.A.stride1s)
+
+    if 0:
+        print 'Y: ' + ''
+        print 'Y: ' + ' '.join(['%2s' % s for s in p.Y.shape0s])
+        print 'Y: ' + ' '.join(['%2s' % s for s in p.Y.shape1s])
+        print 'Y: ' + ' '.join(['%2s' % s for s in p.Y.stride0s])
+        print 'Y: ' + ' '.join(['%2s' % s for s in p.Y.stride1s])
+
+        print 'Y_in: ' + ''
+        print 'Y_in: ' + ' '.join(['%2s' % s for s in p.Y_in.shape0s])
+        print 'Y_in: ' + ' '.join(['%2s' % s for s in p.Y_in.shape1s])
+        print 'Y_in: ' + ' '.join(['%2s' % s for s in p.Y_in.stride0s])
+        print 'Y_in: ' + ' '.join(['%2s' % s for s in p.Y_in.stride1s])
+
+        print 'A: ' + ''
+        print 'A: ' + ' '.join(['%2s' % s for s in p.A.shape0s])
+        print 'A: ' + ' '.join(['%2s' % s for s in p.A.shape1s])
+        print 'A: ' + ' '.join(['%2s' % s for s in p.A.stride0s])
+        print 'A: ' + ' '.join(['%2s' % s for s in p.A.stride1s])
+
+        print 'X: ' + ''
+        print 'X: ' + ' '.join(['%2s' % s for s in p.X.shape0s])
+        print 'X: ' + ' '.join(['%2s' % s for s in p.X.shape1s])
+        print 'X: ' + ' '.join(['%2s' % s for s in p.X.stride0s])
+        print 'X: ' + ' '.join(['%2s' % s for s in p.X.stride1s])
+    assert all(s == 1 for s in p.X.stride1s)
+
+    assert all(s == 1 for s in p.Y.stride0s)
+    assert all(s == 1 for s in p.Y.stride1s)
+
+    assert all(s == 1 for s in p.Y_in.stride0s)
+    assert all(s == 1 for s in p.Y_in.stride1s)
 
     text = """
         __kernel void fn(
-            __global ${type_alpha} * alphas,
+    % if cl_alpha is not None:
+            __global ${cl_alpha.ocldtype} * alphas,
+    % endif
+    % if (A_js is not None):
             __global int *A_starts,
             __global int *A_shape1s,
-            __global int *A_ldas,
-            __global ${type_A} *A_data,
+            __global int *A_stride0s,
+            __global ${A.cl_buf.ocldtype} *A_data,
             __global int *A_js_starts,
             __global int *A_js_shape0s,
             __global int *A_js_data,
             __global int *X_starts,
-            __global ${type_X} *X_data,
+            __global int *X_stride0s,
+            __global ${X.cl_buf.ocldtype} *X_data,
             __global int *X_js_starts,
             __global int *X_js_data,
-            % if cl_beta is not None:
-            __global ${type_beta} * betas,
-            % endif
-            % if clra_beta is not None:
+    % endif
+    % if cl_beta is not None:
+            __global ${cl_beta.ocldtype} * betas,
+    % endif
+    % if clra_beta is not None:
             __global int *beta_starts,
             __global int *beta_data,
-            % endif
-            % if cl_gamma is not None:
-            __global ${type_gamma} * gammas,
-            % endif
-            % if clra_gamma is not None:
-            __global int *gamma_starts,
-            __global int *gamma_data,
-            % endif
+    % endif
+    % if cl_gamma is not None:
+            __global ${cl_gamma.ocldtype} * gammas,
+    % endif
             __global int *Y_in_starts,
-            __global ${type_Y} *Y_in_data,
+            __global ${Y_in.cl_buf.ocldtype} *Y_in_data,
             __global int *Y_starts,
             __global int *Y_shape0s,
-            __global ${type_Y} *Y_data)
+            __global ${Y.cl_buf.ocldtype} *Y_data)
         {
             const int mm = get_global_id(0);
             const int bb = get_global_id(1);
@@ -320,37 +336,31 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
                 const int y_offset = Y_starts[bb];
                 const int y_in_offset = Y_in_starts[bb];
 
-                % if float_beta is not None:
-                const ${type_beta} beta = ${float_beta};
-                % endif
-                % if cl_beta is not None:
-                const ${type_beta} beta = betas[bb];
-                % endif
-                % if clra_beta is not None:
+    % if float_beta is not None:
+                const ${Y.cl_buf.ocldtype} beta = ${float_beta};
+    % elif cl_beta is not None:
+                const ${cl_beta.ocldtype} beta = betas[bb];
+    % elif clra_beta is not None:
                 const int beta_offset = beta_starts[bb];
-                const ${type_beta} beta = beta_data[beta_offset + mm];
-                % endif
+                const ${clra_beta.cl_buf.ocldtype} beta
+                    = beta_data[beta_offset + mm];
+    % endif
 
-                % if float_gamma is not None:
-                const ${type_gamma} gamma = ${float_gamma};
-                % endif
-                % if cl_gamma is not None:
-                const ${type_gamma} gamma = gammas[bb];
-                % endif
-                % if clra_gamma is not None:
-                const int gamma_offset = gamma_starts[bb];
-                const ${type_gamma} gamma = gamma_data[gamma_offset + mm];
-                % endif
+    % if float_gamma is not None:
+                const ${Y.cl_buf.ocldtype} gamma = ${float_gamma};
+    % elif cl_gamma is not None:
+                const ${cl_gamma.ocldtype} gamma = gammas[bb];
+    % endif
 
                 Y_data[y_offset + mm] = gamma + beta * Y_in_data[y_in_offset + mm];
 
-    % if do_inner_products :
+    % if (A_js is not None) :
 
                 const int n_dot_products = A_js_shape0s[bb];
                 X_js_data += X_js_starts[bb];
                 A_js_data += A_js_starts[bb];
 
-                ${type_Y} y_sum = 0;
+                ${Y.cl_buf.ocldtype} y_sum = 0;
                 for (int ii = 0; ii < n_dot_products; ++ii)
                 {
                     //printf("${tag}: ii=%i / %i\\n", ii, n_dot_products);
@@ -361,67 +371,85 @@ def plan_ragged_gather_gemv(queue, alpha, A, A_js, X, X_js,
                     const int x_offset = X_starts[x_ji];
                     const int a_offset = A_starts[a_ji];
                     //printf("x_offset=%i a_offset=%i\\n", x_offset, a_offset);
-                    const int lda_i = A_ldas[a_ji];
+                    const int AsM = A_stride0s[a_ji];
+                    const int XsM = X_stride0s[x_ji];
 
                     for (int nn = 0; nn < N_i; ++nn)
-                        y_sum += X_data[x_offset + nn]
-                                 * A_data[a_offset + nn * lda_i + mm];
+                        y_sum += X_data[x_offset + nn * XsM]
+                                 * A_data[a_offset + mm * AsM + nn];
                 }
-                const ${type_alpha} alpha = alphas[bb];
-                Y_data[y_offset + mm] += alpha * y_sum;
+        % if float_alpha is not None:
+        % if 0:
+                printf("float_alpha ysum=%f %i %i %i %f\\n",
+                    y_sum,
+                    mm, bb, y_offset,
+                    Y_data[y_offset + mm]);
+                // return;
+        % endif
+                Y_data[y_offset + mm] += ${float_alpha} * y_sum;
+        % elif cl_alpha is not None:
+        % if 0:
+                printf("cl_alpha ysum=%f %f %i %i %i %f\\n",
+                    y_sum,
+                    alphas[bb],
+                    mm, bb, y_offset,
+                    Y_data[y_offset + mm]
+                    );
+                //return;
+        % endif
+                Y_data[y_offset + mm] += alphas[bb] * y_sum;
+        % endif
     % endif
             }
+
         }
     """
 
-    text = Template(text, output_encoding='ascii').render(**textconf)
-    if False: #tag == 'transforms':
-        print text
-        print A_js
+    text = Template(text, output_encoding='ascii').render(**p.__dict__)
+    #print text
 
     ### TODO: use the maximum of A.shape0s that is actually used in this op
-    gsize = (int(max(A.shape0s)), int(len(Y)),)
+    gsize = (int(max(p.A.shape0s)), int(len(p.Y)),)
     lsize = None
-    _fn = cl.Program(queue.context, text).build().fn
-    dummy = A.cl_buf
-    full_args = [
-        cl_alpha,
-        A.cl_starts,
-        A.cl_shape1s,
-        A.cl_ldas,
-        A.cl_buf,
-        A_js.cl_starts if A_js is not None else dummy,
-        A_js.cl_shape0s if A_js is not None else dummy,
-        A_js.cl_buf if A_js is not None else dummy,
-        X.cl_starts,
-        X.cl_buf,
-        X_js.cl_starts if X_js is not None else dummy,
-        X_js.cl_buf if X_js is not None else dummy,
-        ]
-    if cl_beta is not None:
-        full_args += [cl_beta]
-    elif clra_beta is not None:
-        full_args += [clra_beta.cl_starts, clra_beta.cl_buf]
-    if cl_gamma is not None:
-        full_args += [cl_gamma]
-    elif clra_gamma is not None:
-        full_args += [clra_gamma.cl_starts, clra_gamma.cl_buf]
+    fn = cl.Program(p.queue.context, text).build().fn
+    full_args = []
+    if p.cl_alpha is not None:
+        full_args += [p.cl_alpha]
+    if p.A_js is not None:
+        full_args += [
+            p.A.cl_starts,
+            p.A.cl_shape1s,
+            p.A.cl_stride0s,
+            p.A.cl_buf,
+            p.A_js.cl_starts,
+            p.A_js.cl_shape0s,
+            p.A_js.cl_buf,
+            p.X.cl_starts,
+            p.X.cl_stride0s,
+            p.X.cl_buf,
+            p.X_js.cl_starts,
+            p.X_js.cl_buf,
+            ]
+    if p.cl_beta is not None:
+        full_args += [p.cl_beta]
+    elif p.clra_beta is not None:
+        full_args += [p.clra_beta.cl_starts, clra_beta.cl_buf]
+
+    if p.cl_gamma is not None:
+        full_args += [p.cl_gamma]
+    elif p.clra_gamma is not None:
+        full_args += [p.clra_gamma.cl_starts, clra_gamma.cl_buf]
+
     full_args += [
-        Y_in.cl_starts,
-        Y_in.cl_buf,
-        Y.cl_starts,
-        Y.cl_shape0s,
-        Y.cl_buf]
+        p.Y_in.cl_starts,
+        p.Y_in.cl_buf,
+        p.Y.cl_starts,
+        p.Y.cl_shape0s,
+        p.Y.cl_buf]
 
     #print [str(arr.dtype)[0] for arr in full_args]
-    _fn.set_args(*[arr.data for arr in full_args])
-    rval = Plan(queue, _fn, gsize, lsize,
-                name="ref_ragged_gather_gemv",
-                tag=tag,
-               )
-    # prevent garbage-collection
-    rval.full_args = full_args
-    return rval
+    fn.set_args(*[arr.data for arr in full_args])
+    return fn, gsize, lsize, full_args, "ref_ragged_gather_gemv"
 
 
 def plan_parallel_ragged_gather_gemv3(queue,

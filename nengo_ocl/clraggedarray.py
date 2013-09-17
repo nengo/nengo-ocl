@@ -9,24 +9,27 @@ import pyopencl as cl
 from .clarray import to_device
 from .raggedarray import RaggedArray
 
-def to_host(queue, data, dtype, start, shape, lda):
+def to_host(queue, data, dtype, start, shape, elemstrides):
     """Copy memory off the device, into a Numpy array"""
 
     m, n = shape
+    Sm, Sn = elemstrides
     if m * n == 0:
         return np.zeros(shape, dtype=dtype)
 
-    assert lda >= 0, "lda must be non-negative"
+    if min(elemstrides) < 0:
+        raise NotImplementedError()
 
     itemsize = dtype.itemsize
     bytestart = itemsize * start
-    byteend = bytestart + itemsize * (m + lda * (n-1))
+    # -- TODO: is there an extra element transferred here?
+    byteend = bytestart + itemsize * ((m-1) * Sm + (n-1) * Sn + 1)
 
     temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
     cl.enqueue_copy(queue, temp_buf, data,
                     device_offset=bytestart, is_blocking=True)
 
-    bytestrides = (itemsize, itemsize * lda)
+    bytestrides = (itemsize * Sm, itemsize * Sn)
     try:
         view = np.ndarray(
             shape=(m, n),
@@ -52,7 +55,8 @@ class CLRaggedArray(object):
         self.starts = np_raggedarray.starts
         self.shape0s = np_raggedarray.shape0s
         self.shape1s = np_raggedarray.shape1s
-        self.ldas = np_raggedarray.ldas
+        self.stride0s = np_raggedarray.stride0s
+        self.stride1s = np_raggedarray.stride1s
         self.buf = np_raggedarray.buf
         self.names = np_raggedarray.names
 
@@ -74,7 +78,7 @@ class CLRaggedArray(object):
     def starts(self, starts):
         self._starts = np.array(starts, dtype='int32')
         self.cl_starts = to_device(self.queue, self._starts)
-        self.queue.flush()
+        self.queue.finish()
 
     @property
     def shape0s(self):
@@ -84,7 +88,7 @@ class CLRaggedArray(object):
     def shape0s(self, shape0s):
         self._shape0s = np.array(shape0s, dtype='int32')
         self.cl_shape0s = to_device(self.queue, self._shape0s)
-        self.queue.flush()
+        self.queue.finish()
 
     @property
     def shape1s(self):
@@ -94,17 +98,27 @@ class CLRaggedArray(object):
     def shape1s(self, shape1s):
         self._shape1s = np.array(shape1s, dtype='int32')
         self.cl_shape1s = to_device(self.queue, self._shape1s)
-        self.queue.flush()
+        self.queue.finish()
 
     @property
-    def ldas(self):
-        return self._ldas.tolist()
+    def stride0s(self):
+        return self._stride0s.tolist()
 
-    @ldas.setter
-    def ldas(self, ldas):
-        self._ldas = np.array(ldas, dtype='int32')
-        self.cl_ldas = to_device(self.queue, self._ldas)
-        self.queue.flush()
+    @stride0s.setter
+    def stride0s(self, stride0s):
+        self._stride0s = np.array(stride0s, dtype='int32')
+        self.cl_stride0s = to_device(self.queue, self._stride0s)
+        self.queue.finish()
+
+    @property
+    def stride1s(self):
+        return self._stride1s.tolist()
+
+    @stride1s.setter
+    def stride1s(self, stride1s):
+        self._stride1s = np.array(stride1s, dtype='int32')
+        self.cl_stride1s = to_device(self.queue, self._stride1s)
+        self.queue.finish()
 
     @property
     def buf(self):
@@ -120,7 +134,7 @@ class CLRaggedArray(object):
         if buf.dtype == np.dtype('float64'):
             buf = buf.astype('float32')
         self.cl_buf = to_device(self.queue, buf)
-        self.queue.flush()
+        self.queue.finish()
 
     # def shallow_copy(self):
     #     rval = self.__class__.__new__(self.__class__)
@@ -139,10 +153,12 @@ class CLRaggedArray(object):
         Getting multiple items returns a view into the device.
         """
 
+        # -- these are each OCL fetch operations (could be sped up)
         starts = self.starts
         shape0s = self.shape0s
         shape1s = self.shape1s
-        ldas = self.ldas
+        stride0s = self.stride0s
+        stride1s = self.stride1s
 
         if isinstance(item, (list, tuple)):
             items = item
@@ -153,14 +169,17 @@ class CLRaggedArray(object):
             rval.starts = [starts[i] for i in items]
             rval.shape0s = [shape0s[i] for i in items]
             rval.shape1s = [shape1s[i] for i in items]
-            rval.ldas = [ldas[i] for i in items]
+            rval.stride0s = [stride0s[i] for i in items]
+            rval.stride1s = [stride1s[i] for i in items]
             rval.cl_buf = self.cl_buf
             rval.names = [self.names[i] for i in items]
             return rval
         else:
             buf = to_host(
                 self.queue, self.cl_buf.data, self.dtype, self.starts[item],
-                (self.shape0s[item], self.shape1s[item]), self.ldas[item])
+                (self.shape0s[item], self.shape1s[item]),
+                (self.stride0s[item], self.stride1s[item]),
+                )
             buf.setflags(write=False)
             return buf
 
@@ -168,18 +187,23 @@ class CLRaggedArray(object):
         starts = self.starts
         shape0s = self.shape0s
         shape1s = self.shape1s
-        ldas = self.ldas
+        stride0s = self.stride0s
+        stride1s = self.stride1s
         if isinstance(item, (list, tuple)):
             raise NotImplementedError('TODO')
         else:
             m, n = shape0s[item], shape1s[item]
+            sM, sN = stride0s[item], stride1s[item]
 
-            lda = ldas[item]
-            assert lda >= 0, "lda must be non-negative"
+            if sM < 0 or sN < 0:
+                raise NotImplementedError()
+            if not (sM, sN) in [(1, m), (n, 1)]:
+                raise NotImplementedError('discontiguous setitem')
 
             itemsize = self.dtype.itemsize
             bytestart = itemsize * starts[item]
-            byteend = bytestart + itemsize * (m + lda * (n-1))
+            # -- N.B. match to getitem
+            byteend = bytestart + itemsize * ((m-1) * sM + (n-1) * sN + 1)
 
             temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
             # -- TODO: if copying into a contiguous region, this
@@ -187,7 +211,7 @@ class CLRaggedArray(object):
             cl.enqueue_copy(self.queue, temp_buf, self.cl_buf.data,
                             device_offset=bytestart, is_blocking=True)
 
-            bytestrides = (itemsize, itemsize * lda)
+            bytestrides = (itemsize * sM, itemsize * sN)
             view = np.ndarray(
                 shape=(m, n),
                 dtype=self.dtype,
@@ -205,7 +229,8 @@ class CLRaggedArray(object):
         rval.starts = self.starts
         rval.shape0s = self.shape0s
         rval.shape1s = self.shape1s
-        rval.ldas = self.ldas
+        rval.stride0s = self.stride0s
+        rval.stride1s = self.stride1s
         rval.buf = self.buf
         rval.names = self.names[:]
         return rval

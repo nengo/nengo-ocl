@@ -139,7 +139,7 @@ class Simulator(sim_npy.Simulator):
             P = self.RaggedArray(periods)
             X = self.all_data[[self.sidx[p.sig] for p in probes]]
             Y = self.RaggedArray(
-                [np.zeros((p.sig.shape[0], buf_len)) for p in probes])
+                [np.zeros((buf_len, p.sig.shape[0])) for p in probes])
 
             cl_plan = plan_probes(self.queue, sim_step, P, X, Y, tag="probes")
 
@@ -150,7 +150,7 @@ class Simulator(sim_npy.Simulator):
                     ### use (sim_step + 1), since device sim_step is updated
                     ### at start of time step, and self.sim_step at end
                     if (self.sim_step + 1) % length == length - 1:
-                        self.probe_outputs[probes[i]].append(Y[i].T)
+                        self.probe_outputs[probes[i]].extend(Y[i])
                 if profiling:
                     t1 = time.time()
                     probe_copy_fn.cumtime += t1 - t0
@@ -169,9 +169,9 @@ class Simulator(sim_npy.Simulator):
         for i, probe in enumerate(self.model.probes):
             period = self._probe_periods[i]
             buffer = self._probe_buffers[i]
-            pos = ((self.sim_step + 1) / period) % buffer.shape[1]
+            pos = ((self.sim_step + 1) / period) % buffer.shape[0]
             if pos > 0:
-                self.probe_outputs[probe].append(buffer[:,:pos].T)
+                self.probe_outputs[probe].append(buffer[:pos])
 
         ### concatenate probe buffers
         #for probe in self.model.probes:
