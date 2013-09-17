@@ -132,8 +132,8 @@ class MultiProdUpdate(sim.Operator):
         return [self.Y] if self.as_update else []
 
     def __str__(self):
-        return 'MultiProdUpdate(tag=%s, as_update=%s)' % (
-                self.tag, self.as_update)
+        return '<MultiProdUpdate(tag=%s, as_update=%s) at 0x%x>' % (
+                self.tag, self.as_update, id(self))
 
     def __repr__(self):
         return self.__str__()
@@ -171,40 +171,34 @@ class MultiProdUpdate(sim.Operator):
                     rval.append(inc_op)
         return rval
 
+
 def is_op(op):
     return isinstance(op, sim.Operator)
-
-def startstop(f):
-    def rval(*args, **kwargs):
-        print 'starting', f.__name__
-        t0 = time.time()
-        foo = f(*args, **kwargs)
-        print '  .. done', f.__name__, (time.time() - t0)
-        return foo
-    rval.__name__ = f.__name__
-    return rval
 
 
 _TimerCumulative = defaultdict(float)
 _TimerCalls = defaultdict(int)
 class Timer(object):
+    enabled = False
     def __init__(self, msg, print_freq=0):
         self.msg = msg
         self.print_freq = print_freq
     def __enter__(self):
         self.t0 = time.time()
     def __exit__(self, *args):
-        self.t1 = time.time()
-        _TimerCumulative[self.msg] += self.t1 - self.t0
-        _TimerCalls[self.msg] += 1
-        if self.print_freq == 0 or _TimerCalls[self.msg] % self.print_freq == 0:
-            print 'Timer: "%s" took %f (cumulative: %f, calls: %i)' % (
-                    self.msg,
-                    self.t1 - self.t0,
-                    _TimerCumulative[self.msg],
-                    _TimerCalls[self.msg])
+        if self.enabled:
+            self.t1 = time.time()
+            _TimerCumulative[self.msg] += self.t1 - self.t0
+            _TimerCalls[self.msg] += 1
+            if (self.print_freq == 0
+                    or _TimerCalls[self.msg] % self.print_freq == 0):
+                print 'Timer: "%s" took %f (cumulative: %f, calls: %i)' % (
+                        self.msg,
+                        self.t1 - self.t0,
+                        _TimerCumulative[self.msg],
+                        _TimerCalls[self.msg])
 
-@startstop
+
 def exact_dependency_graph(operators, share_memory):
     dg = nx.DiGraph()
 
@@ -251,12 +245,14 @@ def exact_dependency_graph(operators, share_memory):
             assert not share_memory(node, other)
 
     # -- incs depend on sets
-    for node, post_ops in incs.items():
-        pre_ops = []
-        for other in by_base_writes[node.base]:
-            if share_memory(node, other):
-                pre_ops += sets[other]
-        dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
+    #    Create an edge between any two ops (a, b)
+    #    if `a` sets a signal `u` that is [aliased to]
+    #    a signal `v` incremented by `b`
+    for inc_view, inc_ops in incs.items():
+        for set_view, set_ops in sets.items():
+            if share_memory(inc_view, set_view):
+                dg.add_edges_from(itertools.product(set_ops, inc_ops))
+
 
     # -- reads depend on writes (sets and incs)
     for node, post_ops in reads.items():
@@ -292,7 +288,6 @@ def exact_dependency_graph(operators, share_memory):
 
 
 def gbcw_algo1_helper(ops, score_fn=lambda op_subset: 0):
-
     mods = dict((op, op.incs + op.sets) for op in ops)
     indep = nx.Graph()
     indep.add_nodes_from(ops)
@@ -322,7 +317,7 @@ def gbcw_algo1_helper(ops, score_fn=lambda op_subset: 0):
             ops, rval)
     return rval
 
-@startstop
+
 def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0, chunksize=256):
     t0 = time.time()
     if len(ops) < 2:
@@ -341,6 +336,77 @@ def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0, chunksize=256)
             #print map(str, grp)
     #print '  .. grouping %i writes into %i groups' % (len(ops), len(rval))
     assert sum(len(r) for r in rval) == len(ops)
+    return rval
+
+
+def greedy_planner2(operators, share_memory, cliques):
+    """
+    I feel like there might e a dynamic programming solution here, but I can't
+    work it out, and I'm not sure. Even if a DP solution existed, we would
+    need a function to estimate the goodness (e.g. neg wall time) of kernel
+    calls, and  that function would need to be pretty fast.
+    """
+    dg = exact_dependency_graph(operators, share_memory)
+    #depth = {}
+    #ops_by_depth = defaultdict(list)
+
+    # -- TODO: linear time algo
+    ancestors_of = {}
+    for op in operators:
+        ancestors_of[op] = set(filter(is_op, nx.ancestors(dg, op)))
+
+    scheduled = set()
+    rval = []
+    #for k in cliques:
+        #print k, cliques[k]
+    while len(scheduled) < len(operators):
+        candidates = [op
+            for op, pre_ops in ancestors_of.items()
+            if not pre_ops and op not in scheduled]
+
+        type_counts = defaultdict(int)
+        for op in candidates:
+            type_counts[type(op)] += 1
+        chosen_type = sorted(type_counts.items(), key=lambda x: x[1])[-1][0]
+        #print chosen_type
+        candidates = [op for op in candidates if isinstance(op, chosen_type)]
+
+        cliques_by_base = defaultdict(dict)
+        by_base = defaultdict(list)
+        for op in candidates:
+            for sig in op.incs + op.sets + op.updates:
+                for cliq in cliques[sig.base]:
+                    if sig.structure in cliq:
+                        cliques_by_base[sig.base].setdefault(id(cliq), [])
+                        cliques_by_base[sig.base][id(cliq)].append(op)
+                by_base[sig.base].append(op)
+
+        #print by_base.keys()
+        chosen = []
+        for base, ops_writing_to_base in by_base.items():
+            if base in cliques_by_base:
+                most_ops = sorted((len(base_ops), base_ops)
+                    for cliq_id, base_ops in cliques_by_base[base].items())
+                chosen.extend(most_ops[-1][1])
+            else:
+                chosen.append(ops_writing_to_base[0])
+        # -- ops that produced multiple outputs show up multiple times
+        chosen = stable_unique(chosen)
+
+        assert chosen
+
+        #print clique_counts.keys()
+        #print by_base
+        assert not any(cc in scheduled for cc in chosen)
+        scheduled.update(chosen)
+        rval.append((chosen_type, chosen))
+        # -- prepare for next iteration
+        for op in ancestors_of:
+            ancestors_of[op].difference_update(chosen)
+
+    #print sum(len(p[1]) for p in rval)
+    assert len(operators) == sum(len(p[1]) for p in rval)
+    #print 'greedy_planner2: Program len:', len(rval)
     return rval
 
 
@@ -565,26 +631,34 @@ class Simulator(object):
         all_bases = stable_unique([sig.base for sig in all_signals])
 
         _shares_memory_with = getattr(model, '_shares_memory_with', {})
+        indep_cliques = getattr(model, '_independent_view_cliques', {})
         def share_memory(a, b):
             if a.base is not b.base:
                 return False
+            base = a.base
             astruct = a.structure
             bstruct = b.structure
-            key0 = (a.base, astruct, bstruct)
-            key1 = (a.base, bstruct, astruct)
+            key0 = (base, astruct, bstruct)
+            key1 = (base, bstruct, astruct)
             try:
                 return _shares_memory_with[key0]
             except KeyError:
-                try:
-                    return _shares_memory_with[key1]
-                except KeyError:
-                    pass
+                pass
+            try:
+                return _shares_memory_with[key1]
+            except KeyError:
+                pass
+            if any(astruct in cc and bstruct in cc
+                    for cc in indep_cliques[base]):
+                rval = True
+            else:
                 rval = a.shares_memory_with(b)
-                _shares_memory_with[key0] = rval
-                _shares_memory_with[key1] = rval
-                return rval
+            _shares_memory_with[key0] = rval
+            _shares_memory_with[key1] = rval
+            return rval
 
-        op_groups = planner(operators, share_memory)
+        #op_groups = planner(operators, share_memory)
+        op_groups = greedy_planner2(operators, share_memory, indep_cliques)
         self.op_groups = op_groups # debug
         #print '-' * 80
         #self.print_op_groups()
@@ -949,7 +1023,6 @@ class Simulator(object):
 
     def plan_probes(self):
         if self.model.probes:
-            print self.model.probes
             def probe_fn(profiling=False):
                 t0 = time.time()
                 probes = self.model.probes
