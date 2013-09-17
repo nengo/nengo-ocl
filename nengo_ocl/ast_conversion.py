@@ -205,13 +205,13 @@ class OCL_Translator(ast.NodeVisitor):
         return self.visit(expr.value)
 
     def visit_Ellipsis(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("Ellipsis")
 
     def visit_Slice(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("Slice")
 
     def visit_ExtSlice(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("ExtSlice")
 
     def _needs_wrapping(self, expr):
         if isinstance(expr, (ast.Num, ast.Name, ast.Call, ast.Subscript)):
@@ -254,7 +254,7 @@ class OCL_Translator(ast.NodeVisitor):
         return self._visit_binary_op(expr.op, expr.left, expr.right)
 
     def visit_BoolOp(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("BoolOp")
 
     def visit_Compare(self, expr):
         assert len(expr.ops) == 1
@@ -292,22 +292,22 @@ class OCL_Translator(ast.NodeVisitor):
                 "'%s' function is not supported" % handle.__name__)
 
     def visit_List(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("List")
 
     def visit_Expr(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("Expr")
 
     def visit_GeneratorExp(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("GeneratorExp")
 
     def visit_ListComp(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("ListComp")
 
     def visit_Attribute(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("Attribute")
 
     def visit_Tuple(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("Tuple")
 
     def visit_IfExp(self, expr):
         cond = self.visit(expr.test)
@@ -344,7 +344,7 @@ class OCL_Translator(ast.NodeVisitor):
                     self.init[name] = "float %s;" % name  # make a new variable
                 return name
         else:
-            raise NotImplementedError()
+            raise NotImplementedError("Complex LHS")
 
     def visit_Assign(self, expr):
         assert len(expr.targets) == 1, "Multiple targets not implemented"
@@ -372,16 +372,16 @@ class OCL_Translator(ast.NodeVisitor):
                 "}"]
 
     def visit_While(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("While")
 
     def visit_For(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("For")
 
     def visit_FunctionDef(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("FunctionDef")
 
     def visit_Lambda(self, expr):
-        raise NotImplementedError()
+        raise NotImplementedError("Lambda")
 
     def visit_block(self, exprs):
         block = []
