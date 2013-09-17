@@ -944,7 +944,7 @@ class Simulator(object):
         #     print A_js
         #     print X_js
 
-        return [self.plan_ragged_gather_gemv(
+        rval = self.plan_ragged_gather_gemv(
             alpha=alpha,
             A=self.all_data, A_js=A_js,
             X=self.all_data, X_js=X_js,
@@ -954,7 +954,12 @@ class Simulator(object):
             tag=tag,
             seq=seq,
             gamma=gamma,
-            )]
+            )
+
+        try:
+            return rval.plans
+        except AttributeError:
+            return [rval]
 
     def plan_ragged_gather_gemv(self, alpha, A, A_js, X, X_js,
                                 beta, Y, Y_in=None, tag=None, seq=None,

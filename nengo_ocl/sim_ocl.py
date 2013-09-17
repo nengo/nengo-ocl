@@ -25,7 +25,7 @@ class Simulator(sim_npy.Simulator):
     def __init__(self, context, model, n_prealloc_probes=1000,
                  profiling=None):
         if profiling is None:
-            profiling = bool(int(os.getenv("NENGO_OCL_PROFILING", 0)))
+            profiling = int(os.getenv("NENGO_OCL_PROFILING", 0))
         self.context = context
         self.profiling = profiling
         if profiling:
@@ -169,6 +169,10 @@ class Simulator(sim_npy.Simulator):
         ### concatenate probe buffers
         #for probe in self.model.probes:
             #self.probe_outputs[probe] = np.vstack(self.probe_outputs[probe])
+
+        print self.profiling
+        if self.profiling > 1:
+            self.print_profiling()
 
     def print_profiling(self):
         print '-' * 80
