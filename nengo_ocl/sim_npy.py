@@ -138,6 +138,38 @@ class MultiProdUpdate(sim.Operator):
     def __repr__(self):
         return self.__str__()
 
+    @classmethod
+    def compress(cls, operators):
+        sets = defaultdict(list)
+        incs = defaultdict(list)
+        rval = []
+        for op in operators:
+            if isinstance(op, cls):
+                if op.as_update:
+                    rval.append(op)
+                else:
+                    assert op.sets or op.incs
+                    if op.sets:
+                        sets[op.sets[0]].append(op)
+                    if op.incs:
+                        incs[op.incs[0]].append(op)
+            else:
+                rval.append(op)
+        done = set()
+        for view, set_ops in sets.items():
+            set_op, = set_ops
+            done.add(set_op)
+            for inc_op in incs[view]:
+                set_op.As.extend(inc_op.As)
+                set_op.Xs.extend(inc_op.Xs)
+                set_op.xTs.extend(inc_op.xTs)
+                done.add(inc_op)
+            rval.append(set_op)
+        for view, inc_ops in incs.items():
+            for inc_op in inc_ops:
+                if inc_op not in done:
+                    rval.append(inc_op)
+        return rval
 
 def is_op(op):
     return isinstance(op, sim.Operator)
@@ -527,6 +559,7 @@ class Simulator(object):
         self.model = model
         #dt = model.dt
         operators = map(MultiProdUpdate.convert_to, model._operators)
+        operators = MultiProdUpdate.compress(operators)
         self.operators = operators
         all_signals = signals_from_operators(operators)
         all_bases = stable_unique([sig.base for sig in all_signals])
