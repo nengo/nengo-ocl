@@ -23,7 +23,7 @@ def allclose(a, b, atol=1e-3, rtol=1e-3):
     if not np.allclose(a.starts, b.starts): return False
     if not np.allclose(a.shape0s, b.shape0s): return False
     if not np.allclose(a.shape1s, b.shape1s): return False
-    if not np.allclose(a.ldas, b.ldas): return False
+    if not np.allclose(a.stride0s, b.stride1s): return False
     if not np.allclose(a.buf, b.buf, atol=atol, rtol=rtol): return False
     return True
 
@@ -40,7 +40,8 @@ class RaggedArray(object):
         starts = []
         shape0s = []
         shape1s = []
-        ldas = []
+        stride0s = []
+        stride1s = []
         buf = []
 
         for l in listofarrays:
@@ -49,27 +50,28 @@ class RaggedArray(object):
             shape0s.append(shape0(obj))
             shape1s.append(shape1(obj))
             if obj.ndim == 0:
-                ldas.append(0)
+                stride0s.append(1)
+                stride1s.append(1)
             elif obj.ndim == 1:
-                ldas.append(obj.shape[0])
+                stride0s.append(1)
+                stride1s.append(1)
             elif obj.ndim == 2:
-                # -- N.B. the original indexing was
-                #    based on ROW-MAJOR storage, and
-                #    this simulator uses COL-MAJOR storage
-                ldas.append(obj.shape[0])
+                stride0s.append(obj.shape[1])
+                stride1s.append(1)
             else:
                 raise NotImplementedError()
-            buf.extend(obj.ravel('F'))
+            buf.extend(obj.ravel())
 
         self.starts = starts
         self.shape0s = shape0s
         self.shape1s = shape1s
-        self.ldas = ldas
+        self.stride0s = stride0s
+        self.stride1s = stride1s
         self.buf = np.asarray(buf)
         if names is None:
             self.names = [''] * len(self)
         else:
-            assert len(names) == len(ldas)
+            assert len(names) == len(stride0s)
             self.names = names
 
     def __str__(self):
@@ -85,12 +87,14 @@ class RaggedArray(object):
         rval.starts = self.starts
         rval.shape0s = self.shape0s
         rval.shape1s = self.shape1s
-        rval.ldas = self.ldas
+        rval.stride0s = self.stride0s
+        rval.stride1s = self.stride1s
         rval.buf = self.buf
         rval.names = self.names
         return rval
 
-    def add_views(self, starts, shape0s, shape1s, ldas, names=None):
+    def add_views(self, starts, shape0s, shape1s, stride0s, stride1s,
+        names=None):
         #assert start >= 0
         #assert start + length <= len(self.buf)
         # -- creates copies, same semantics
@@ -98,7 +102,8 @@ class RaggedArray(object):
         self.starts = self.starts + starts
         self.shape0s = self.shape0s + shape0s
         self.shape1s = self.shape1s + shape1s
-        self.ldas = self.ldas + ldas
+        self.stride0s = self.stride0s + stride0s
+        self.stride1s = self.stride1s + stride1s
         if names:
             self.names = self.names + names
         else:
@@ -113,14 +118,17 @@ class RaggedArray(object):
             rval.starts = [self.starts[i] for i in item]
             rval.shape0s = [self.shape0s[i] for i in item]
             rval.shape1s = [self.shape1s[i] for i in item]
-            rval.ldas = [self.ldas[i] for i in item]
+            rval.stride0s = [self.stride0s[i] for i in item]
+            rval.stride1s = [self.stride1s[i] for i in item]
             rval.buf = self.buf
             rval.names = [self.names[i] for i in item]
             return rval
         else:
             itemsize = self.dtype.itemsize
             byteoffset = itemsize * self.starts[item]
-            bytestrides = (itemsize, itemsize * self.ldas[item])
+            bytestrides = (
+                itemsize * self.stride0s[item],
+                itemsize * self.stride1s[item])
             shape = self.shape0s[item], self.shape1s[item]
             if shape[0] * shape[1] == 0:
                 return []
@@ -142,6 +150,7 @@ class RaggedArray(object):
             return view
 
     def view1d(self, idxs):
+        raise NotImplementedError('since cutting ldas')
         start = idxs[0]
         if idxs != range(start, start + len(idxs)):
             raise NotImplementedError('non-contiguous indexes')

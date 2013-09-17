@@ -49,7 +49,7 @@ class MultiProdUpdate(sim.Operator):
             self._float_beta = None
             self._signal_beta = beta
             if beta.shape != Y.shape:
-                raise NotImplementedError()
+                raise NotImplementedError('', (beta.shape, Y.shape))
         self.gamma = float(gamma)
         self.tag = tag
         self.as_update = as_update
@@ -132,8 +132,23 @@ class MultiProdUpdate(sim.Operator):
         return [self.Y] if self.as_update else []
 
     def __str__(self):
-        return '<MultiProdUpdate(tag=%s, as_update=%s) at 0x%x>' % (
-                self.tag, self.as_update, id(self))
+        if self._signal_beta is None:
+            beta = self._float_beta
+        else:
+            beta = self._signal_beta
+
+        dots = []
+        for A, X, xT in zip(self.As, self.Xs, self.xTs):
+            dots.append('dot(%s, %s, xT=%s)' % (A, X, xT))
+        return ('<MultiProdUpdate(tag=%s, as_update=%s, Y=%s,'
+                ' Y_in=%s, beta=%s,'
+                ' gamma=%s, dots=[%s]'
+                ') at 0x%x>' % (
+                self.tag, self.as_update, self.Y,
+                self.Y_in, beta,
+                self.gamma,
+                ', '.join(dots),
+                id(self)))
 
     def __repr__(self):
         return self.__str__()
@@ -375,7 +390,7 @@ def greedy_planner2(operators, share_memory, cliques):
         by_base = defaultdict(list)
         for op in candidates:
             for sig in op.incs + op.sets + op.updates:
-                for cliq in cliques[sig.base]:
+                for cliq in cliques.get(sig.base, []):
                     if sig.structure in cliq:
                         cliques_by_base[sig.base].setdefault(id(cliq), [])
                         cliques_by_base[sig.base][id(cliq)].append(op)
@@ -554,7 +569,8 @@ class ViewBuilder(object):
         self.starts = []
         self.shape0s = []
         self.shape1s = []
-        self.ldas = []
+        self.stride0s = []
+        self.stride1s = []
         self.names = []
         #self.orig_len = len(self.all_signals)
         #self.base_starts = self.all_data_A.starts
@@ -577,16 +593,14 @@ class ViewBuilder(object):
         self.shape0s.append(shape0(obj))
         self.shape1s.append(shape1(obj))
         if obj.ndim == 0:
-            self.ldas.append(0)
+            self.stride0s.append(1)
+            self.stride1s.append(1)
         elif obj.ndim == 1:
-            assert obj.elemstrides[0] == 1
-            self.ldas.append(obj.shape[0])
+            self.stride0s.append(obj.elemstrides[0])
+            self.stride1s.append(1)
         elif obj.ndim == 2:
-            # -- N.B. the original indexing was
-            #    based on ROW-MAJOR storage, and
-            #    this simulator uses COL-MAJOR storage
-            assert obj.elemstrides[1] == 1
-            self.ldas.append(obj.elemstrides[0])
+            self.stride0s.append(obj.elemstrides[0])
+            self.stride1s.append(obj.elemstrides[1])
         else:
             raise NotImplementedError()
         self.names.append(getattr(obj, 'name', ''))
@@ -597,7 +611,8 @@ class ViewBuilder(object):
             starts=self.starts,
             shape0s=self.shape0s,
             shape1s=self.shape1s,
-            ldas=self.ldas,
+            stride0s=self.stride0s,
+            stride1s=self.stride1s,
             names=self.names)
 
 
@@ -649,7 +664,7 @@ class Simulator(object):
             except KeyError:
                 pass
             if any(astruct in cc and bstruct in cc
-                    for cc in indep_cliques[base]):
+                    for cc in indep_cliques.get(base, [])):
                 rval = True
             else:
                 rval = a.shares_memory_with(b)
@@ -713,74 +728,81 @@ class Simulator(object):
                 map(view_builder.append_view, op.all_signals)
 
     def setup_views_MultiProdUpdate(self, view_builder, ops):
+        def as2d(view):
+            if view.ndim == 0:
+                return view.reshape(1, 1)
+            elif view.ndim == 1:
+                return view.reshape(view.shape[0], 1)
+            else:
+                return Y
+        if not hasattr(self, '_YYB_views'):
+            self._YYB_views = {}
+
         for op in ops:
-            Y = op.Y
-            views = []
+            Y_view = as2d(op.Y)
+            Y_in_view = as2d(op.Y_in)
+            if op._signal_beta is not None:
+                YYB_views = [Y_view, Y_in_view, as2d(op._signal_beta)]
+            else:
+                YYB_views = [Y_view, Y_in_view]
+            AX_views = []
             for A, X in zip(op.As, op.Xs):
                 if A.ndim == 0:
-                    if X.shape != Y.shape:
-                        raise ValueError('shape mismach in DotInc',
-                            (A.shape, X.shape, Y.shape))
-                    Aview = A.reshape((1, 1))
+                    A_view = A.reshape((1, 1))
                     if X.ndim == 1:
-                        Xview = X.reshape(X.shape[0], 1)
-                        Yview = Y.reshape(X.shape[0], 1)
+                        X_view = as2d(X)
                     else:
                         if op.xT:
-                            Xview = X.T
-                        else:
-                            Xview = X
-                        Yview = Y
-                    # -- scalar views can be done as reverse multiplication
-                    views.extend([Xview, Aview])
+                            X_view = X_view.T
+                    if X_view.shape != Y_view.shape or X_view.shape[1] != 1:
+                        raise ValueError('shape mismach in DotInc',
+                            (A.shape, X.shape, op.Y.shape))
+                    # -- scalar AX_views can be done as reverse multiplication
+                    AX_views.extend([X_view, A_view])
                 elif A.ndim == 1:
                     if X.ndim == 0:
                         raise NotImplementedError()
                     elif X.ndim == 1:
-                        Aview = A.reshape((1, A.shape[0]))
-                        Xview = X.reshape((X.shape[0], 1))
-                        views.extend([Aview, Xview])
+                        A_view = A.reshape((1, A.shape[0]))
+                        X_view = as2d(X)
+                        AX_views.extend([A_view, X_view])
                     elif X.ndim == 2:
+                        A_view = as2d(A)
                         if op.xT:
                             # -- dot(vecA, matX.T) -> vecY
                             #    = dot(mat, vecA) -> vecY
-                            Xview = X
-                            Aview = A.reshape((A.shape[0], 1))
-                            # self._DotInc_views[op] = (Xview, Aview, Y)
-                            views.extend([Xview, Aview])
+                            X_view = X
                         else:
                             # -- dot(vecA, matX) -> vecY
                             #    = dot(matX.T, vecA) -> vecY
-                            Xview = X.T
-                            Aview = A.reshape((A.shape[0], 1))
-                            #self._DotInc_views[op] = (Xview, Aview, Y)
-                            views.extend([Xview, Aview])
+                            X_view = X.T
+                        AX_views.extend([X_view, A_view])
                     else:
                         raise NotImplementedError()
                 elif A.ndim == 2:
                     if X.ndim == 0:
                         raise NotImplementedError()
                     elif X.ndim == 1:
-                        Xview = X.reshape(X.shape[0], 1)
-                        #self._DotInc_views[op] = (A, Xview, Y)
-                        views.extend([A, Xview])
+                        X_view = as2d(X)
+                        AX_views.extend([A, X_view])
                     elif X.ndim == 2:
                         if op.xT:
-                            Xview = X.T
-                            #self._DotInc_views[op] = (A, Xview, Y)
-                            views.extend([A, Xview])
+                            X_view = X.T
+                            AX_views.extend([A, X_view])
                         else:
                             # -- dot(vecA, matX) -> vecY
                             #    = dot(matX.T, vecA) -> vecY
                             #self._DotInc_views[op] = (A, X, Y)
-                            views.extend([A, X])
+                            AX_views.extend([A, X])
                     else:
                         raise NotImplementedError()
 
                 else:
                     raise NotImplementedError()
-            map(view_builder.append_view, op.all_signals + views)
-            self._AX_views[op] = views
+            map(view_builder.append_view,
+                op.all_signals + AX_views + YYB_views)
+            self._AX_views[op] = AX_views
+            self._YYB_views[op] = YYB_views
 
     def plan_MultiProdUpdate(self, ops):
         constant_bs = [op
@@ -793,17 +815,22 @@ class Simulator(object):
         if len(constant_bs) + len(vector_bs) != len(ops):
             raise NotImplementedError()
 
+        if len(ops) == 1:
+            tag = ops[0].tag
+        else:
+            tag = 'ProdUpdate-scalar-constant-beta-%i' % len(ops)
+
         constant_b_gemvs = self.sig_gemv(
             constant_bs,
             1.0,
             A_js_fn=lambda op: self._AX_views[op][0::2],
             X_js_fn=lambda op: self._AX_views[op][1::2],
             beta=[op._float_beta for op in constant_bs],
-            Y_sig_fn=lambda op: op.Y,
-            Y_in_sig_fn=lambda op: op.Y_in,
+            Y_sig_fn=lambda op: self._YYB_views[op][0],
+            Y_in_sig_fn=lambda op: self._YYB_views[op][1],
             gamma=[op.gamma for op in constant_bs],
             verbose=0,
-            tag='ProdUpdate-scalar-constant-beta'
+            tag=tag
             )
 
         vector_b_gemvs = self.sig_gemv(
@@ -811,9 +838,9 @@ class Simulator(object):
             1.0,
             A_js_fn=lambda op: self._AX_views[op][0::2],
             X_js_fn=lambda op: self._AX_views[op][1::2],
-            beta=lambda op: op.beta,
-            Y_sig_fn=lambda op: op.Y,
-            Y_in_sig_fn=lambda op: op.Y_in,
+            beta=lambda op: self._YYB_views[op][2],
+            Y_sig_fn=lambda op: self._YYB_views[op][0],
+            Y_in_sig_fn=lambda op: self._YYB_views[op][1],
             gamma=[op.gamma for op in vector_bs],
             verbose=0,
             tag='ProdUpdate-vector-beta'
@@ -934,6 +961,7 @@ class Simulator(object):
                                 gamma=None):
         fn = lambda: ragged_gather_gemv(alpha, A, A_js, X, X_js, beta, Y,
                                         Y_in=Y_in, gamma=gamma,
+                                        tag=tag,
                                         use_raw_fn=False)
         return PythonPlan(fn, name="npy_ragged_gather_gemv", tag=tag)
 
