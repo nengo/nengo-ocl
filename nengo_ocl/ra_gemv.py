@@ -51,8 +51,10 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
                        beta, Y, Y_in=None,
                        use_raw_fn=False,
                        tag=None, seq=None,
+                       gamma=None
                       ):
     """
+    Y <- gamma + Y_in * beta + \sum_j dot(A[A_js[j]], X[X_js[j]])
     """
     try:
         float(alpha)
@@ -100,7 +102,7 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
 
         for i in xrange(len(Y)):
             try:
-                y_i = beta[i] * Y_in[i]  # -- ragged getitem
+                y_i = gamma[i] + beta[i] * Y_in[i]  # -- ragged getitem
             except:
                 print i, beta, Y_in
                 raise

@@ -18,7 +18,7 @@ critical = logger.critical
 
 import numpy as np
 
-from nengo.core import Signal, Probe
+from nengo.core import Signal, Probe, Constant
 from nengo.core import SignalView
 from nengo.core import LIF, LIFRate, Direct
 from nengo import simulator as sim
@@ -27,6 +27,117 @@ from .ra_gemv import ragged_gather_gemv
 from .raggedarray import RaggedArray as _RaggedArray
 
 from .plan import PythonPlan
+
+
+class MultiProdUpdate(sim.Operator):
+    """
+    y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)
+    """
+    def __init__(self, Y, Y_in, beta, gamma, tag, as_update):
+        self.Y = Y
+        self.Y_in = Y_in
+        if Y.shape != Y_in.shape:
+            raise TypeError()
+        try:
+            if isinstance(beta, Constant):
+                self._float_beta = float(beta.value)
+            else:
+                self._float_beta = float(beta)
+            self._signal_beta = None
+        except:
+            assert isinstance(beta, SignalView)
+            self._float_beta = None
+            self._signal_beta = beta
+            if beta.shape != Y.shape:
+                raise NotImplementedError()
+        self.gamma = float(gamma)
+        self.tag = tag
+        self.as_update = as_update
+        self.As = []
+        self.Xs = []
+        self.xTs = []
+        self._incs_Y = (
+                self._signal_beta is None
+                and self._float_beta == 1
+                and self.Y_in is self.Y
+                and not as_update)
+
+    @classmethod
+    def convert_to(cls, op):
+        def assert_ok():
+            assert set(op.reads).issuperset(rval.reads), (rval.reads, op.reads)
+            assert rval.incs == op.incs
+            assert rval.sets == op.sets
+            assert set(rval.updates) == set(op.updates), (rval.updates, op.updates)
+        if isinstance(op, sim.Reset):
+            rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value, as_update=False,
+                    tag=getattr(op, 'tag', ''))
+            assert_ok()
+        elif isinstance(op, sim.Copy):
+            rval = cls(op.dst, op.src, beta=1, gamma=0,
+                    as_update=len(op.updates) == 1, tag=op.tag)
+            assert_ok()
+        elif isinstance(op, sim.DotInc):
+            rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=False,
+                    tag=op.tag)
+            rval.add_AX(op.A, op.X, op.xT)
+            assert_ok()
+        elif isinstance(op, sim.ProdUpdate):
+            rval = cls(op.Y, op.Y, beta=op.B, gamma=0, as_update=True,
+                    tag=op.tag)
+            rval.add_AX(op.A, op.X, False)
+            assert_ok()
+        else:
+            return op
+        return rval
+
+    def add_AX(self, A, X, xT):
+        self.As.append(A)
+        self.Xs.append(X)
+        self.xTs.append(xT)
+
+    @property
+    def reads(self):
+        rval = self.As + self.Xs
+        if self._incs_Y:
+            pass
+        else:
+            if self._signal_beta is None:
+                if self._float_beta != 0:
+                    if self.Y_in is self.Y:
+                        pass
+                    else:
+                        rval += [self.Y_in]
+            else:
+                if self.Y_in is self.Y:
+                    rval += [self._signal_beta]
+                else:
+                    rval += [self._signal_beta, self.Y_in]
+        return rval
+
+    @property
+    def incs(self):
+        return [self.Y] if self._incs_Y else []
+
+    @property
+    def sets(self):
+        if self._incs_Y:
+            return []
+        return [] if self.as_update else [self.Y]
+
+    @property
+    def updates(self):
+        if self._incs_Y:
+            return []
+        return [self.Y] if self.as_update else []
+
+    def __str__(self):
+        return 'MultiProdUpdate(tag=%s, as_update=%s)' % (
+                self.tag, self.as_update)
+
+    def __repr__(self):
+        return self.__str__()
+
 
 def is_op(op):
     return isinstance(op, sim.Operator)
@@ -69,7 +180,7 @@ def exact_dependency_graph(operators, share_memory):
         dg.add_edges_from(itertools.product(op.reads + op.updates, [op]))
         dg.add_edges_from(itertools.product([op], op.sets + op.incs))
 
-    print ' .. adding edges for %i nodes' % len(dg.nodes())
+    #print ' .. adding edges for %i nodes' % len(dg.nodes())
 
     # -- all views of a base object in a particular dictionary
     by_base_writes = defaultdict(list)
@@ -115,35 +226,32 @@ def exact_dependency_graph(operators, share_memory):
                 pre_ops += sets[other]
         dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
 
-    with Timer('writes'):
+    # -- reads depend on writes (sets and incs)
+    for node, post_ops in reads.items():
+        pre_ops = []
+        for other in by_base_writes[node.base]:
+            if share_memory(node, other):
+                pre_ops += sets[other] + incs[other]
+        dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
 
-        # -- reads depend on writes (sets and incs)
-        for node, post_ops in reads.items():
-            pre_ops = []
-            for other in by_base_writes[node.base]:
-                if share_memory(node, other):
-                    pre_ops += sets[other] + incs[other]
-            dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
+    # -- assert that only one op updates any particular view
+    for node in ups:
+        assert len(ups[node]) == 1, (node, ups[node])
 
-        # -- assert that only one op updates any particular view
-        for node in ups:
-            assert len(ups[node]) == 1, (node, ups[node])
+    # -- assert that no two views are both updated and aliased
+    if len(ups) >= 2:
+        for node, other in itertools.combinations(ups, 2):
+            assert not share_memory(node, other), (
+                    node, other)
 
-    with Timer('updates'):
-        # -- assert that no two views are both updated and aliased
-        if len(ups) >= 2:
-            for node, other in itertools.combinations(ups, 2):
-                assert not share_memory(node, other), (
-                        node, other)
-
-        # -- updates depend on reads, sets, and incs.
-        for node, post_ops in ups.items():
-            pre_ops = []
-            others = by_base_writes[node.base] + by_base_reads[node.base]
-            for other in others:
-                if share_memory(node, other):
-                    pre_ops += sets[other] + incs[other] + reads[other]
-            dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
+    # -- updates depend on reads, sets, and incs.
+    for node, post_ops in ups.items():
+        pre_ops = []
+        others = by_base_writes[node.base] + by_base_reads[node.base]
+        for other in others:
+            if share_memory(node, other):
+                pre_ops += sets[other] + incs[other] + reads[other]
+        dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
 
     for op in operators:
         assert op in dg
@@ -188,7 +296,7 @@ def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0, chunksize=256)
     if len(ops) < 2:
         return [list(ops)]
     rval = []
-    print '  .. grouping writes for', len(ops), 'ops'
+    #print '  .. grouping writes for', len(ops), 'ops'
     # -- algorithms are too slow :(
     #    just ignore the opportunity to make massive
     #    groups
@@ -199,7 +307,7 @@ def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0, chunksize=256)
     #if len(rval) > 5:
         #for grp in rval:
             #print map(str, grp)
-    print '  .. grouping %i writes into %i groups' % (len(ops), len(rval))
+    #print '  .. grouping %i writes into %i groups' % (len(ops), len(rval))
     assert sum(len(r) for r in rval) == len(ops)
     return rval
 
@@ -233,7 +341,7 @@ def greedy_planner(operators, share_memory):
         ops_by_depth[d].append(op)
     graph_depth = 1 + max(depth.values())
 
-    print 'greedy_planner: Graph depth:', graph_depth
+    #print 'greedy_planner: Graph depth:', graph_depth
     assert len(operators) == sum(len(lst) for lst in ops_by_depth.values())
 
     rval = []
@@ -246,10 +354,10 @@ def greedy_planner(operators, share_memory):
             for concurrent_grp in group_by_concurrent_writes(
                     ops_at_d_w_type):
                 rval.append((typ, list(concurrent_grp)))
-    print len(operators)
-    print sum(len(p[1]) for p in rval)
+    #print len(operators)
+    #print sum(len(p[1]) for p in rval)
     assert len(operators) == sum(len(p[1]) for p in rval)
-    print 'greedy_planner: Program len:', len(rval)
+    #print 'greedy_planner: Program len:', len(rval)
     return rval
 
 
@@ -418,11 +526,12 @@ class Simulator(object):
 
         self.model = model
         #dt = model.dt
-        operators = model._operators
+        operators = map(MultiProdUpdate.convert_to, model._operators)
+        self.operators = operators
         all_signals = signals_from_operators(operators)
         all_bases = stable_unique([sig.base for sig in all_signals])
 
-        _shares_memory_with = model._shares_memory_with
+        _shares_memory_with = getattr(model, '_shares_memory_with', {})
         def share_memory(a, b):
             if a.base is not b.base:
                 return False
@@ -442,14 +551,14 @@ class Simulator(object):
                 _shares_memory_with[key1] = rval
                 return rval
 
-        op_groups = planner(self.model._operators, share_memory)
+        op_groups = planner(operators, share_memory)
         self.op_groups = op_groups # debug
         #print '-' * 80
         #self.print_op_groups()
 
         # -- map from Signal.base -> ndarray
         sigdict = SignalDict()
-        for op in model._operators:
+        for op in operators:
             op.init_sigdict(sigdict, model.dt)
 
         self.sim_step = 0
@@ -461,7 +570,8 @@ class Simulator(object):
                 )
 
         builder = ViewBuilder(all_bases, self.all_data)
-        self._DotInc_views = {}
+        #self._DotInc_views = {}
+        self._AX_views = {}
         for op_type, op_list in op_groups:
             self.setup_views(builder, op_type, op_list)
         builder.add_views_to(self.all_data)
@@ -495,141 +605,96 @@ class Simulator(object):
             for op in ops:
                 map(view_builder.append_view, op.all_signals)
 
-    def setup_views_DotInc(self, view_builder, ops):
-        # -- this is some ugly workarounding because
-        #    sig_gemv expects all arguments to be matrices at the moment.
-        #    In particular, it expects A to be a matrix, and for X and Y to be
-        #    column vectors. Numpy's dot function is more accommodating
-        #    in terms of dealing with vectors, and this function makes up for
-        #    that.
+    def setup_views_MultiProdUpdate(self, view_builder, ops):
         for op in ops:
-            A, X, Y = op.A, op.X, op.Y
-            if A.ndim == 0:
-                if X.shape != Y.shape:
-                    raise ValueError('shape mismach in DotInc',
-                        (A.shape, X.shape, Y.shape))
-                Aview = A.reshape((1, 1))
-                if X.ndim == 1:
-                    Xview = X.reshape(X.shape[0], 1)
-                    Yview = Y.reshape(X.shape[0], 1)
-                else:
-                    if op.xT:
-                        Xview = X.T
+            Y = op.Y
+            views = []
+            for A, X in zip(op.As, op.Xs):
+                if A.ndim == 0:
+                    if X.shape != Y.shape:
+                        raise ValueError('shape mismach in DotInc',
+                            (A.shape, X.shape, Y.shape))
+                    Aview = A.reshape((1, 1))
+                    if X.ndim == 1:
+                        Xview = X.reshape(X.shape[0], 1)
+                        Yview = Y.reshape(X.shape[0], 1)
                     else:
-                        Xview = X
-                    Yview = Y
-                # -- scalar views can be done as reverse multiplication
-                self._DotInc_views[op] = (Xview, Aview, Yview)
-            elif A.ndim == 1:
-                if X.ndim == 0:
-                    raise NotImplementedError()
-                elif X.ndim == 1:
-                    Aview = A.reshape((1, A.shape[0]))
-                    Xview = X.reshape((X.shape[0], 1))
-                    self._DotInc_views[op] = (Aview, Xview, Y)
-                elif X.ndim == 2:
-                    if op.xT:
-                        # -- dot(vecA, matX.T) -> vecY
-                        #    = dot(mat, vecA) -> vecY
-                        Xview = X
-                        Aview = A.reshape((A.shape[0], 1))
-                        self._DotInc_views[op] = (Xview, Aview, Y)
+                        if op.xT:
+                            Xview = X.T
+                        else:
+                            Xview = X
+                        Yview = Y
+                    # -- scalar views can be done as reverse multiplication
+                    views.extend([Xview, Aview])
+                elif A.ndim == 1:
+                    if X.ndim == 0:
+                        raise NotImplementedError()
+                    elif X.ndim == 1:
+                        Aview = A.reshape((1, A.shape[0]))
+                        Xview = X.reshape((X.shape[0], 1))
+                        views.extend([Aview, Xview])
+                    elif X.ndim == 2:
+                        if op.xT:
+                            # -- dot(vecA, matX.T) -> vecY
+                            #    = dot(mat, vecA) -> vecY
+                            Xview = X
+                            Aview = A.reshape((A.shape[0], 1))
+                            # self._DotInc_views[op] = (Xview, Aview, Y)
+                            views.extend([Xview, Aview])
+                        else:
+                            # -- dot(vecA, matX) -> vecY
+                            #    = dot(matX.T, vecA) -> vecY
+                            Xview = X.T
+                            Aview = A.reshape((A.shape[0], 1))
+                            #self._DotInc_views[op] = (Xview, Aview, Y)
+                            views.extend([Xview, Aview])
                     else:
-                        # -- dot(vecA, matX) -> vecY
-                        #    = dot(matX.T, vecA) -> vecY
-                        Xview = X.T
-                        Aview = A.reshape((A.shape[0], 1))
-                        self._DotInc_views[op] = (Xview, Aview, Y)
+                        raise NotImplementedError()
+                elif A.ndim == 2:
+                    if X.ndim == 0:
+                        raise NotImplementedError()
+                    elif X.ndim == 1:
+                        Xview = X.reshape(X.shape[0], 1)
+                        #self._DotInc_views[op] = (A, Xview, Y)
+                        views.extend([A, Xview])
+                    elif X.ndim == 2:
+                        if op.xT:
+                            Xview = X.T
+                            #self._DotInc_views[op] = (A, Xview, Y)
+                            views.extend([A, Xview])
+                        else:
+                            # -- dot(vecA, matX) -> vecY
+                            #    = dot(matX.T, vecA) -> vecY
+                            #self._DotInc_views[op] = (A, X, Y)
+                            views.extend([A, X])
+                    else:
+                        raise NotImplementedError()
+
                 else:
                     raise NotImplementedError()
-            elif A.ndim == 2:
-                if X.ndim == 0:
-                    raise NotImplementedError()
-                elif X.ndim == 1:
-                    Xview = X.reshape(X.shape[0], 1)
-                    self._DotInc_views[op] = (A, Xview, Y)
-                elif X.ndim == 2:
-                    if op.xT:
-                        Xview = X.T
-                        self._DotInc_views[op] = (A, Xview, Y)
-                    else:
-                        # -- dot(vecA, matX) -> vecY
-                        #    = dot(matX.T, vecA) -> vecY
-                        self._DotInc_views[op] = (A, X, Y)
-                else:
-                    raise NotImplementedError()
+            map(view_builder.append_view, op.all_signals + views)
+            self._AX_views[op] = views
 
-            else:
-                raise NotImplementedError()
-            map(view_builder.append_view, op.all_signals)
-            map(view_builder.append_view, self._DotInc_views[op])
-
-    def setup_views_ProdUpdate(self, view_builder, ops):
-        self.setup_views_DotInc(view_builder, ops)
-        for op in ops:
-            B = op.B
-            #if B.ndim == 0:
-                #B = SignalView(
-                    #base=B.base,
-                    #shape=self._DotInc_views[op][2].shape,
-                    #elemstrides=(0,) * self._DotInc_views[op][2].ndim,
-                    #offset=B.offset,
-                    #name=B.name + '-broadcastview')
-                #Bndim = 0
-            #elif B.ndim == 1 and Y.ndim == 1:
-                #if B.shape != self._DotInc_views[op][2].shape:
-                    #print B.shape, self._DotInc_views[op][2].shape, op, B
-                    #B = B.reshape(self._DotInc_views[op][2].shape)
-            #assert B.shape == self._DotInc_views[op][2].shape
-            self._DotInc_views[op] = self._DotInc_views[op] + (B,)
-            #view_builder.append_view(B)
-
-    def plan_Reset(self, ops):
-        if not all(op.value == 0 for op in ops):
-            raise NotImplementedError()
-
-        return self.sig_gemv(
-            ops,
-            0.0,
-            lambda op: [],
-            lambda op: [],
-            0.0,
-            lambda op: op.dst,
-            verbose=0,
-            tag='Reset'
-            )
-
-    def plan_DotInc(self, ops):
-        return self.sig_gemv(
-            ops,
-            1.0,
-            lambda op: [self._DotInc_views[op][0]],
-            lambda op: [self._DotInc_views[op][1]],
-            1.0,
-            lambda op: self._DotInc_views[op][2],
-            verbose=0,
-            tag='DotInc'
-            )
-
-    def plan_ProdUpdate(self, ops):
-        scalar_bs = [op
-            for op in ops
-            if op.B.ndim == 0 and not hasattr(op.B, 'value')]
-        if scalar_bs:
-            raise NotImplementedError()
-        # XXX VERIFY THAT op.B is actually constant in this graph
+    def plan_MultiProdUpdate(self, ops):
         constant_bs = [op
             for op in ops
-            if op.B.ndim == 0 and hasattr(op.B, 'value')]
-        vector_bs = [op for op in ops if op.B.ndim == 1]
+            if op._float_beta is not None]
+
+        vector_bs = [op for op in ops
+            if op._signal_beta is not None and op._signal_beta.ndim == 1]
+
+        if len(constant_bs) + len(vector_bs) != len(ops):
+            raise NotImplementedError()
 
         constant_b_gemvs = self.sig_gemv(
             constant_bs,
             1.0,
-            lambda op: [self._DotInc_views[op][0]],
-            lambda op: [self._DotInc_views[op][1]],
-            [float(op.B.value) for op in constant_bs],
-            lambda op: self._DotInc_views[op][2],
+            A_js_fn=lambda op: self._AX_views[op][0::2],
+            X_js_fn=lambda op: self._AX_views[op][1::2],
+            beta=[op._float_beta for op in constant_bs],
+            Y_sig_fn=lambda op: op.Y,
+            Y_in_sig_fn=lambda op: op.Y_in,
+            gamma=[op.gamma for op in constant_bs],
             verbose=0,
             tag='ProdUpdate-scalar-constant-beta'
             )
@@ -637,26 +702,16 @@ class Simulator(object):
         vector_b_gemvs = self.sig_gemv(
             vector_bs,
             1.0,
-            lambda op: [self._DotInc_views[op][0]],
-            lambda op: [self._DotInc_views[op][1]],
-            lambda op: self._DotInc_views[op][3],
-            lambda op: self._DotInc_views[op][2],
+            A_js_fn=lambda op: self._AX_views[op][0::2],
+            X_js_fn=lambda op: self._AX_views[op][1::2],
+            beta=lambda op: op.beta,
+            Y_sig_fn=lambda op: op.Y,
+            Y_in_sig_fn=lambda op: op.Y_in,
+            gamma=[op.gamma for op in vector_bs],
             verbose=0,
             tag='ProdUpdate-vector-beta'
             )
         return constant_b_gemvs + vector_b_gemvs
-
-    def plan_Copy(self, ops):
-        return self.sig_gemv(
-            ops,
-            1.0,
-            lambda op: [op.src],
-            lambda op: [self.model.one],
-            0.0,
-            lambda op: op.dst,
-            verbose=0,
-            tag='Copy'
-            )
 
     def plan_SimDirect(self, ops):
         sidx = self.sidx
@@ -688,6 +743,7 @@ class Simulator(object):
 
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
                  Y_in_sig_fn=None,
+                 gamma=None,
                  verbose=0,
                  tag=None
                 ):
@@ -763,12 +819,15 @@ class Simulator(object):
             Y_in=Y_in,
             tag=tag,
             seq=seq,
+            gamma=gamma,
             )]
 
     def plan_ragged_gather_gemv(self, alpha, A, A_js, X, X_js,
-                                beta, Y, Y_in=None, tag=None):
+                                beta, Y, Y_in=None, tag=None, seq=None,
+                                gamma=None):
         fn = lambda: ragged_gather_gemv(alpha, A, A_js, X, X_js, beta, Y,
-                                        Y_in=Y_in, use_raw_fn=False)
+                                        Y_in=Y_in, gamma=gamma,
+                                        use_raw_fn=False)
         return PythonPlan(fn, name="npy_ragged_gather_gemv", tag=tag)
 
     def __getitem__(self, item):
