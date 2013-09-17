@@ -1,6 +1,7 @@
 
 import os
 import time
+import collections
 import numpy as np
 import pyopencl as cl
 
@@ -12,6 +13,8 @@ from .clra_nonlinearities import plan_lif, plan_lif_rate, plan_direct, plan_prob
 from .plan import Plan, Prog, PythonPlan, HybridProg
 from .ast_conversion import OCL_Function
 
+import logging
+logger = logging.getLogger(__name__)
 
 class Simulator(sim_npy.Simulator):
 
@@ -53,7 +56,7 @@ class Simulator(sim_npy.Simulator):
         ### TOOD: test with a hybrid program (Python and OCL)
 
         ### group nonlinearities
-        unique_ops = {}
+        unique_ops = collections.OrderedDict()
         for op in ops:
             if op.fn not in unique_ops:
                 unique_ops[op.fn] = {'in': [], 'out': []}
@@ -61,8 +64,7 @@ class Simulator(sim_npy.Simulator):
             unique_ops[op.fn]['out'].append(op.output)
 
         ### make plans
-        py_plans = []
-        ocl_plans = []
+        plans = []
         for fn, signals in unique_ops.items():
             fn_name = fn.__name__
 
@@ -73,7 +75,7 @@ class Simulator(sim_npy.Simulator):
             in_dim = signals['in'][0].size
             out_dim = signals['out'][0].size
             for sig_in, sig_out in zip(signals['in'], signals['out']):
-                # assert sig_in. == in_dim and sig_out == out_dim
+                assert sig_in.n == in_dim and sig_out.n == out_dim
                 assert vector_dims(sig_in.shape, in_dim)
                 assert vector_dims(sig_out.shape, out_dim)
                 assert unit_stride(sig_in.elemstrides)
@@ -91,14 +93,19 @@ class Simulator(sim_npy.Simulator):
                 Y = self.all_data[[self.sidx[i] for i in signals['out']]]
                 plan = plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
                                    Xname, X, Y, tag=fn_name)
-                ocl_plans.append(plan)
-            except NameError:
-                raise
-            # except NotImplementedError, AssertionError:
-            #     raise Exception("Testing to make sure everything is OCL")
-            #     # py_plans.append(PythonPlan(fn, name=fn_name, tag=fn_name))
+                plans.append(plan)
+            except NotImplementedError, AssertionError:
+                logger.warning("Function '%s' could not be converted to OCL"
+                               % fn_name)
 
-        return [HybridProg(py_plans, ocl_plans)]
+                def temp_fn():
+                    for sin, sout in zip(signals['in'], signals['out']):
+                        J = self.all_data[self.sidx[sin]]
+                        self.all_data[self.sidx[sout]] = fn(J)
+
+                plans.append(PythonPlan(temp_fn, name=fn_name, tag=fn_name))
+
+        return plans
 
     def plan_SimLIF(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
@@ -138,20 +145,21 @@ class Simulator(sim_npy.Simulator):
 
             lengths = [period * buf_len for period in periods]
             def probe_copy_fn(profiling=False):
-                if profiling: t0 = time.time()
+                copy_step = self._probe_copy_step
                 for i, length in enumerate(lengths):
-                    ### use (sim_step + 1), since device sim_step is updated
-                    ### at start of time step, and self.sim_step at end
-                    if (self.sim_step + 1) % length == length - 1:
-                        self.probe_outputs[probes[i]].extend(Y[i])
-                if profiling:
-                    t1 = time.time()
-                    probe_copy_fn.cumtime += t1 - t0
-            probe_copy_fn.cumtime = 0.0
+                    if self.sim_step % length == length - 1:
+                        y = Y[i]
+                        if (copy_step > 0 and
+                            (self.sim_step - copy_step) < length):
+                            j = (copy_step / periods[i]) % buf_len
+                            y = y[j:]
+                        self.probe_outputs[probes[i]].extend(y)
 
+            self._probe_copy_step = 0
             self._probe_periods = periods
             self._probe_buffers = Y
-            return [cl_plan, probe_copy_fn]
+            return [cl_plan,
+                    PythonPlan(probe_copy_fn, name='probes', tag='probes')]
         else:
             return []
 
@@ -159,18 +167,24 @@ class Simulator(sim_npy.Simulator):
         """Perform cleanup tasks after a run"""
 
         ### Copy any remaining probe data off device
+        copy_step = self._probe_copy_step
         for i, probe in enumerate(self.model.probes):
             period = self._probe_periods[i]
-            buffer = self._probe_buffers[i]
-            pos = ((self.sim_step + 1) / period) % buffer.shape[0]
+            buf_len = self._probe_buffers.shape0s[i]
+            pos = (self.sim_step / period) % buf_len
+            old_pos = (copy_step / period) % buf_len
             if pos > 0:
-                self.probe_outputs[probe].append(buffer[:pos])
+                buffer = self._probe_buffers[i]
+                if ((self.sim_step - copy_step) < period * buf_len
+                    and old_pos < pos):
+                    self.probe_outputs[probe].append(buffer[old_pos:pos])
+                else:
+                    self.probe_outputs[probe].append(buffer[:pos])
 
-        ### concatenate probe buffers
-        #for probe in self.model.probes:
-            #self.probe_outputs[probe] = np.vstack(self.probe_outputs[probe])
+        self._probe_copy_step = self.sim_step
 
     def print_profiling(self):
+        ### TODO: fix this to work with PythonPlan
         print '-' * 80
         print '%s\t%s\t%s\t%s' % (
             'n_calls', 'runtime', 'q-time', 'subtime')
@@ -200,3 +214,6 @@ class Simulator(sim_npy.Simulator):
         else:
             self._prog.call_n_times(N, self.profiling)
         self.post_run()
+
+    def probe_data(self, probe):
+        return np.vstack(self.probe_outputs[probe])

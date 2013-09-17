@@ -55,8 +55,9 @@ def plan_probes(queue, sim_step, P, X, Y, tag=None):
         )
         {
             const int n = get_global_id(0);
-            const int sim_step = (int)step_data[${step_start}];
             const int period = Pdata[Pstarts[n]];
+            const int sim_step = (int)step_data[${step_start}] - 1;
+                // sim_step--, since OCL updates step before probes
 
             if ((sim_step % period) == 0) {
                 const int n_dims = Xshape0s[n];
