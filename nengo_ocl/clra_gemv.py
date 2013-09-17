@@ -308,36 +308,9 @@ def ref_impl(p):
         raise NotImplementedError()
 
     assert all(s == 1 for s in p.A.stride1s)
-
-    if 0:
-        print 'Y: ' + ' '.join(['%2s' % s for s in p.Y.shape0s])
-        #print 'Y: ' + ' '.join(['%2s' % s for s in p.Y.shape1s])
-        #print 'Y: ' + ' '.join(['%2s' % s for s in p.Y.stride0s])
-        #print 'Y: ' + ' '.join(['%2s' % s for s in p.Y.stride1s])
-
-    if 0:
-        print 'Y_in: ' + ''
-        #print 'Y_in: ' + ' '.join(['%2s' % s for s in p.Y_in.shape0s])
-        #print 'Y_in: ' + ' '.join(['%2s' % s for s in p.Y_in.shape1s])
-        #print 'Y_in: ' + ' '.join(['%2s' % s for s in p.Y_in.stride0s])
-        #print 'Y_in: ' + ' '.join(['%2s' % s for s in p.Y_in.stride1s])
-
-        print 'A: ' + ''
-        print 'A: ' + ' '.join(['%2s' % s for s in p.A.shape0s])
-        print 'A: ' + ' '.join(['%2s' % s for s in p.A.shape1s])
-        print 'A: ' + ' '.join(['%2s' % s for s in p.A.stride0s])
-        print 'A: ' + ' '.join(['%2s' % s for s in p.A.stride1s])
-
-        print 'X: ' + ''
-        print 'X: ' + ' '.join(['%2s' % s for s in p.X.shape0s])
-        print 'X: ' + ' '.join(['%2s' % s for s in p.X.shape1s])
-        print 'X: ' + ' '.join(['%2s' % s for s in p.X.stride0s])
-        print 'X: ' + ' '.join(['%2s' % s for s in p.X.stride1s])
     assert all(s == 1 for s in p.X.stride1s)
-
     assert all(s == 1 for s in p.Y.stride0s)
     assert all(s == 1 for s in p.Y.stride1s)
-
     assert all(s == 1 for s in p.Y_in.stride0s)
     assert all(s == 1 for s in p.Y_in.stride1s)
 
