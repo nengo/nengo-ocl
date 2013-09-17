@@ -33,195 +33,6 @@ def float_cl_clra(queue, arg, cl_dtype, N):
     return float_arg, cl_arg, clra_arg
 
 
-def plan_parallel_ragged_gather_gemv2(queue,
-    alpha, A, A_js, X, X_js,
-    beta, Y, Y_in=None, tag=None,
-    group_size=32,
-    ):
-    """
-    """
-
-    # TODO: if alpha or beta is a float
-    #       then render it into the kernel text.
-    try:
-        alpha = float(alpha)
-        cl_alpha = None
-    except TypeError:
-        cl_alpha = to_device(queue,
-            np.asarray([alpha] * len(Y), Y.buf.dtype))
-
-    try:
-        beta = float(beta)
-        cl_beta = None
-    except TypeError:
-        cl_beta = to_device(queue,
-            np.asarray([beta] * len(Y), Y.buf.dtype))
-
-    if cl_alpha or cl_beta:
-        raise NotImplementedError('alpha or beta non-homogeneous')
-
-    if Y_in is None:
-        Y_in = Y
-
-    # Make the global size the closest multiple of the group size (ceiling)
-    gsize = (group_size, 512)
-    lsize = (group_size, 1)
-
-    #print gsize
-    #print lsize
-
-    if not np.all(shp0 == 1 for shp0 in Y.shape0s):
-        raise NotImplementedError(Y.shape0s)
-
-    # XXX check that all the ints are ints not longs
-    textconf = {
-        'alpha' : str(alpha),
-        'beta' : str(beta),
-        'type_alpha': None, #cl_alpha.ocldtype,
-        'type_beta': None, #cl_beta.ocldtype,
-        'type_A': A.cl_buf.ocldtype,
-        'type_X': X.cl_buf.ocldtype,
-        'type_Y': Y.cl_buf.ocldtype,
-        'y_len': len(Y),
-        'lsize': group_size,
-        'MAX_N_DOT_PRODUCTS': max(A_js.shape0s),
-    }
-
-    text = """
-        __kernel void fn(
-            //const __global ${type_alpha} * alphas,
-            const __global int *A_starts,
-            const __global int *A_shape1s,
-            const __global int *A_ldas,
-            const __global ${type_A} *A_data,
-            const __global int *A_js_starts,
-            const __global int *A_js_lens,
-            const __global int *A_js_data,
-            const __global int *X_starts,
-            const __global ${type_X} *X_data,
-            const __global int *X_js_starts,
-            const __global int *X_js_data,
-            //const __global ${type_beta} * betas,
-            const __global int *Y_in_starts,
-            const __global ${type_Y} *Y_in_data,
-            const __global int *Y_starts,
-            const __global int *Y_lens,
-            __global ${type_Y} *Y_data)
-    {
-        __local ${type_Y} partialDotProduct[${lsize}]; //Scratch space for the dot products
-        __local int y_offset;
-        __local int n_dot_products;
-        __local int A_js_offset;
-        __local int X_js_offset;
-        __local int A_js_row[${MAX_N_DOT_PRODUCTS}];
-        __local int X_js_row[${MAX_N_DOT_PRODUCTS}];
-        __local ${type_Y} y_sum_pre;
-        ${type_Y} y_sum_post;
-
-        for (int bb = get_global_id(1);
-                 bb < ${y_len};
-                 bb += get_global_size(1))
-        {
-            const int mm = 0; // TODO: SUPPORT M > 1
-
-            if (get_local_id(0) < n_dot_products)
-            {
-                if (get_local_id(0) == 0)
-                {
-                    y_offset = Y_starts[bb];
-                    n_dot_products = A_js_lens[bb];
-                    A_js_offset = A_js_starts[bb];
-                    X_js_offset = X_js_starts[bb];
-
-                    % if beta != 0 :
-                        y_sum_pre = ${beta} * Y_in_data[Y_in_starts[bb]];
-                    % else :
-                        y_sum_pre = 0;
-                    % endif
-                }
-
-                // a barrier here risks *deadlock*
-                // instead we assume that n_dot_products < warp size
-                // barrier(CLK_LOCAL_MEM_FENCE); // need A_js_offset to be loaded
-                A_js_row[get_local_id(0)] = A_js_data[A_js_offset + get_local_id(0)];
-                X_js_row[get_local_id(0)] = X_js_data[X_js_offset + get_local_id(0)];
-            }
-            // This barrier cannot cause deadlock because
-            // the whole local work group is devoted to the same value of bb
-            // so they are all here, or none here.
-            barrier(CLK_LOCAL_MEM_FENCE); // need A_js_row to be loaded
-            y_sum_post = 0;
-
-            for(int ii = 0; ii < n_dot_products; ii++) {
-                const int a_ji = A_js_row[ii];
-                const int x_ji = X_js_row[ii];
-                const int N_i = A_shape1s[a_ji];
-                const int lda_i = A_ldas[a_ji];
-
-                const __global ${type_A}* A_row = A_data + A_starts[a_ji];
-                const __global ${type_X}* X_row = X_data + X_starts[x_ji];
-
-                for (int nn = get_local_id(0); nn < N_i; nn += get_local_size(0)) {
-                    y_sum_post += A_row[nn * lda_i + mm] * X_row[nn];
-                }
-            }
-
-            // -- Parallel reduction within local group sum registers
-            barrier(CLK_LOCAL_MEM_FENCE);
-            partialDotProduct[get_local_id(0)] = y_sum_post;
-
-            for (uint stride = 1; stride < get_local_size(0); stride *= 2) {
-                // XXX not necessary IFF local_size(0) < warp size
-                barrier(CLK_LOCAL_MEM_FENCE);
-
-                uint index = 2 * stride * get_local_id(0);
-                if (index + stride < get_local_size(0)) {
-                    partialDotProduct[index] += partialDotProduct[index + stride];
-                }
-            }
-            if (get_local_id(0) == 0) {
-                Y_data[y_offset] = y_sum_pre + ${alpha} * partialDotProduct[0];
-            }
-        }
-    }
-    """
-
-    text = Template(text, output_encoding='ascii').render(**textconf)
-
-    _fn = cl.Program(queue.context, text).build().fn
-
-    full_args = (
-                 #cl_alpha,
-                 A.cl_starts,
-                 A.cl_shape1s,
-                 A.cl_ldas,
-                 A.cl_buf,
-                 A_js.cl_starts,
-                 A_js.cl_shape0s,
-                 A_js.cl_buf,
-                 X.cl_starts,
-                 X.cl_buf,
-                 X_js.cl_starts,
-                 X_js.cl_buf,
-                 #cl_beta,
-                 Y_in.cl_starts,
-                 Y_in.cl_buf,
-                 Y.cl_starts,
-                 Y.cl_shape0s,
-                 Y.cl_buf,
-                )
-
-    _fn.set_args(*[arr.data for arr in full_args])
-
-    rval = Plan(queue, _fn, gsize, lsize,
-                name='ref_parallel_ragged_gather_gemv',
-                tag=tag,
-               )
-    # prevent garbage-collection
-    rval.full_args = full_args
-    return rval
-
-
 class plan_ragged_gather_gemv(Prog):
     def __init__(self,
             queue, alpha, A, A_js, X, X_js,
@@ -668,5 +479,194 @@ def reduce_impl(p, group_size):
     fn.set_args(*[arr.data for arr in full_args])
     return fn, gsize, lsize, full_args, 'parallel_ragged_gather_gemv3'
 
+
+
+def plan_parallel_ragged_gather_gemv2(queue,
+    alpha, A, A_js, X, X_js,
+    beta, Y, Y_in=None, tag=None,
+    group_size=32,
+    ):
+    """
+    """
+
+    # TODO: if alpha or beta is a float
+    #       then render it into the kernel text.
+    try:
+        alpha = float(alpha)
+        cl_alpha = None
+    except TypeError:
+        cl_alpha = to_device(queue,
+            np.asarray([alpha] * len(Y), Y.buf.dtype))
+
+    try:
+        beta = float(beta)
+        cl_beta = None
+    except TypeError:
+        cl_beta = to_device(queue,
+            np.asarray([beta] * len(Y), Y.buf.dtype))
+
+    if cl_alpha or cl_beta:
+        raise NotImplementedError('alpha or beta non-homogeneous')
+
+    if Y_in is None:
+        Y_in = Y
+
+    # Make the global size the closest multiple of the group size (ceiling)
+    gsize = (group_size, 512)
+    lsize = (group_size, 1)
+
+    #print gsize
+    #print lsize
+
+    if not np.all(shp0 == 1 for shp0 in Y.shape0s):
+        raise NotImplementedError(Y.shape0s)
+
+    # XXX check that all the ints are ints not longs
+    textconf = {
+        'alpha' : str(alpha),
+        'beta' : str(beta),
+        'type_alpha': None, #cl_alpha.ocldtype,
+        'type_beta': None, #cl_beta.ocldtype,
+        'type_A': A.cl_buf.ocldtype,
+        'type_X': X.cl_buf.ocldtype,
+        'type_Y': Y.cl_buf.ocldtype,
+        'y_len': len(Y),
+        'lsize': group_size,
+        'MAX_N_DOT_PRODUCTS': max(A_js.shape0s),
+    }
+
+    text = """
+        __kernel void fn(
+            //const __global ${type_alpha} * alphas,
+            const __global int *A_starts,
+            const __global int *A_shape1s,
+            const __global int *A_ldas,
+            const __global ${type_A} *A_data,
+            const __global int *A_js_starts,
+            const __global int *A_js_lens,
+            const __global int *A_js_data,
+            const __global int *X_starts,
+            const __global ${type_X} *X_data,
+            const __global int *X_js_starts,
+            const __global int *X_js_data,
+            //const __global ${type_beta} * betas,
+            const __global int *Y_in_starts,
+            const __global ${type_Y} *Y_in_data,
+            const __global int *Y_starts,
+            const __global int *Y_lens,
+            __global ${type_Y} *Y_data)
+    {
+        __local ${type_Y} partialDotProduct[${lsize}]; //Scratch space for the dot products
+        __local int y_offset;
+        __local int n_dot_products;
+        __local int A_js_offset;
+        __local int X_js_offset;
+        __local int A_js_row[${MAX_N_DOT_PRODUCTS}];
+        __local int X_js_row[${MAX_N_DOT_PRODUCTS}];
+        __local ${type_Y} y_sum_pre;
+        ${type_Y} y_sum_post;
+
+        for (int bb = get_global_id(1);
+                 bb < ${y_len};
+                 bb += get_global_size(1))
+        {
+            const int mm = 0; // TODO: SUPPORT M > 1
+
+            if (get_local_id(0) < n_dot_products)
+            {
+                if (get_local_id(0) == 0)
+                {
+                    y_offset = Y_starts[bb];
+                    n_dot_products = A_js_lens[bb];
+                    A_js_offset = A_js_starts[bb];
+                    X_js_offset = X_js_starts[bb];
+
+                    % if beta != 0 :
+                        y_sum_pre = ${beta} * Y_in_data[Y_in_starts[bb]];
+                    % else :
+                        y_sum_pre = 0;
+                    % endif
+                }
+
+                // a barrier here risks *deadlock*
+                // instead we assume that n_dot_products < warp size
+                // barrier(CLK_LOCAL_MEM_FENCE); // need A_js_offset to be loaded
+                A_js_row[get_local_id(0)] = A_js_data[A_js_offset + get_local_id(0)];
+                X_js_row[get_local_id(0)] = X_js_data[X_js_offset + get_local_id(0)];
+            }
+            // This barrier cannot cause deadlock because
+            // the whole local work group is devoted to the same value of bb
+            // so they are all here, or none here.
+            barrier(CLK_LOCAL_MEM_FENCE); // need A_js_row to be loaded
+            y_sum_post = 0;
+
+            for(int ii = 0; ii < n_dot_products; ii++) {
+                const int a_ji = A_js_row[ii];
+                const int x_ji = X_js_row[ii];
+                const int N_i = A_shape1s[a_ji];
+                const int lda_i = A_ldas[a_ji];
+
+                const __global ${type_A}* A_row = A_data + A_starts[a_ji];
+                const __global ${type_X}* X_row = X_data + X_starts[x_ji];
+
+                for (int nn = get_local_id(0); nn < N_i; nn += get_local_size(0)) {
+                    y_sum_post += A_row[nn * lda_i + mm] * X_row[nn];
+                }
+            }
+
+            // -- Parallel reduction within local group sum registers
+            barrier(CLK_LOCAL_MEM_FENCE);
+            partialDotProduct[get_local_id(0)] = y_sum_post;
+
+            for (uint stride = 1; stride < get_local_size(0); stride *= 2) {
+                // XXX not necessary IFF local_size(0) < warp size
+                barrier(CLK_LOCAL_MEM_FENCE);
+
+                uint index = 2 * stride * get_local_id(0);
+                if (index + stride < get_local_size(0)) {
+                    partialDotProduct[index] += partialDotProduct[index + stride];
+                }
+            }
+            if (get_local_id(0) == 0) {
+                Y_data[y_offset] = y_sum_pre + ${alpha} * partialDotProduct[0];
+            }
+        }
+    }
+    """
+
+    text = Template(text, output_encoding='ascii').render(**textconf)
+
+    _fn = cl.Program(queue.context, text).build().fn
+
+    full_args = (
+                 #cl_alpha,
+                 A.cl_starts,
+                 A.cl_shape1s,
+                 A.cl_ldas,
+                 A.cl_buf,
+                 A_js.cl_starts,
+                 A_js.cl_shape0s,
+                 A_js.cl_buf,
+                 X.cl_starts,
+                 X.cl_buf,
+                 X_js.cl_starts,
+                 X_js.cl_buf,
+                 #cl_beta,
+                 Y_in.cl_starts,
+                 Y_in.cl_buf,
+                 Y.cl_starts,
+                 Y.cl_shape0s,
+                 Y.cl_buf,
+                )
+
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    rval = Plan(queue, _fn, gsize, lsize,
+                name='ref_parallel_ragged_gather_gemv',
+                tag=tag,
+               )
+    # prevent garbage-collection
+    rval.full_args = full_args
+    return rval
 
 
