@@ -145,13 +145,10 @@ INPUT_NAME = "__INPUT__"
 OUTPUT_NAME = "__OUTPUT__"
 
 class OCL_Translator(ast.NodeVisitor):
-    def __init__(self, source, globals_dict, free_vars, closure_cells,
-                 filename=None):
-
+    def __init__(self, source, globals_dict, closure_dict, filename=None):
         self.source = source
         self.globals = globals_dict
-        self.free_vars = free_vars
-        self.closure_cells = closure_cells
+        self.closures = closure_dict
         self.filename = filename
 
         ### parse and make code
@@ -169,7 +166,11 @@ class OCL_Translator(ast.NodeVisitor):
     def _var_to_string(self, var):
         if isinstance(var, str):
             return '"%s"' % var
-        elif isinstance(var, (float, int)):
+        elif isinstance(var, float):
+            ### TODO: can we get around putting the 'f' afterwards?
+            ### Append an 'f' to floats, o.w. some calls (e.g. pow) ambiguous
+            return "%sf" % var
+        elif isinstance(var, int):
             return str(var)
         else:
             raise NotImplementedError(
@@ -184,9 +185,9 @@ class OCL_Translator(ast.NodeVisitor):
     def visit_Name(self, expr):
         name = expr.id
         if name in self.arg_names:
-            # return name
-            # return '(*%s)' % name
             return '%s[0]' % name
+        elif name in self.closures:
+            return self._var_to_string(self.closures[name])
         elif name in self.globals:
             return self._var_to_string(self.globals[name])
         elif name in self.init:
@@ -273,15 +274,19 @@ class OCL_Translator(ast.NodeVisitor):
 
         def get_handle(expr):
             if isinstance(expr, ast.Name):
-                return self.globals[expr.id]
+                return (self.closures[expr.id] if expr.id in self.closures
+                        else self.globals[expr.id])
             else:
                 return getattr(get_handle(expr.value), expr.attr)
         handle = get_handle(expr.func)
 
-        args = ', '.join([self.visit(arg) for arg in expr.args])
-
         if handle in function_map:
-            return "%s(%s)" % (function_map[handle], args)
+            value = function_map[handle]
+            args = [self.visit(arg) for arg in expr.args]
+            if callable(value):
+                return "(%s)" % value(args)
+            else:
+                return "%s(%s)" % (value, ', '.join(args))
         else:
             raise NotImplementedError(
                 "'%s' function is not supported" % handle.__name__)
@@ -397,38 +402,55 @@ def strip_leading_whitespace(source):
 class OCL_Function(object):
     def __init__(self, fn):
         self.fn = fn
-        self.__name__ = self.fn.__name__
+        # self.__name__ = self.fn.__name__
         self._translator = None
 
+    @staticmethod
+    def _is_lambda(v):
+        return isinstance(v, type(lambda: None)) and v.__name__ == '<lambda>'
+
     def get_ocl_translator(self):
-        source = inspect.getsource(self.fn)
-        filename = inspect.getsourcefile(self.fn)
+        if self._is_lambda(self.fn):
+            raise NotImplementedError("No lambda functions")
+        elif self.fn in function_map:
+            function = self.fn
+            def dummy(x):
+                return function(x)
+            fn = dummy
+        else:
+            fn = self.fn
 
-        globals_dict = self.fn.func_globals
-        free_vars = self.fn.func_code.co_freevars
-        closure_cells = self.fn.func_closure
-        # if closure_cells is None: closure_cells = ()
-
+        source = inspect.getsource(fn)
         source = strip_leading_whitespace(source)
-        try:
-            return OCL_Translator(source, globals_dict, free_vars,
-                                  closure_cells, filename=filename)
-        # except AssertionError as e:
-        #     print "Could not translate to OCL: %s" % e.strerror
-        # except NotImplementedError as e:
-        except Exception as e:
-            print "Could not translate to OCL: %s" % e.strerror
-        return None
+        # filename = inspect.getsourcefile(fn)
 
-    @property
-    def can_translate(self):
-        return self.translator is not None
+        globals_dict = fn.func_globals
+        closure_dict = (
+            dict(zip(fn.func_code.co_freevars,
+                     [c.cell_contents for c in fn.func_closure]))
+            if fn.func_closure is not None else {})
+
+        return OCL_Translator(source, globals_dict, closure_dict)
+
+        # try:
+        #     return OCL_Translator(source, globals_dict, free_vars,
+        #                           closure_cells, filename=filename)
+        # # except AssertionError as e:
+        # #     print "Could not translate to OCL: %s" % e.strerror
+        # # except NotImplementedError as e:
+        # except Exception as e:
+        #     print "Could not translate to OCL: %s" % e.message
+        # return None
 
     @property
     def translator(self):
         if self._translator is None:
             self._translator = self.get_ocl_translator()
         return self._translator
+
+    # @property
+    # def can_translate(self):
+    #     return self.translator is not None
 
     def _flatten(self, blocks, indent=0):
         lines = []
@@ -440,15 +462,12 @@ class OCL_Function(object):
         return lines
 
     @property
-    def ocl_init(self):
+    def init(self):
         return '\n'.join(self._flatten(self.translator.init.values()))
 
     @property
-    def ocl_code(self):
+    def code(self):
         return '\n'.join(self._flatten(self.translator.body))
-
-    def __call__(self, *args, **kwargs):
-        return self.fn(*args, **kwargs)
 
 
 if __name__ == '__main__':
@@ -470,15 +489,20 @@ if __name__ == '__main__':
     # print square(4)
     # print square.get_ocl_code()
 
-    multiplier = 3.14
+    # multiplier = 3.14
 
-    @OCL_Function
-    def slicing(x):
-        y = x**3
-        return x[0] * x[1]
-        # return [x * x, multiplier*y]
+    # def slicing(x):
+    #     y = x**3
+    #     return x[0] * x[1]
+    #     # return [x * x, multiplier*y]
 
-    print slicing.ocl_init
-    print slicing.ocl_code
+    # function = np.sin
+
+    def function(dede):
+        return np.subtract(dede, dede)
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
 
 
