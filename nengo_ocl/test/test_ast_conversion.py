@@ -19,24 +19,25 @@ def OclSimulator(*args, **kwargs):
     return rval
 
 class TestAstConversion(unittest.TestCase):
-    def test_product(self):
+    def _test_fn(self, fn, in_dims, low=-10, high=10):
+        """Test an arbitrary function"""
 
-        @ast_conversion.OCL_Function
-        def product(x):
-            return x[0] * x[1]
+        seed = sum(map(ord, fn.__name__)) % 2**30
+        rng = np.random.RandomState(seed)
 
         FunctionObject = lambda: None
-        FunctionObject.fn = product
+        FunctionObject.fn = fn
 
-        n = 100
-        x = np.random.randn(n, 2)
-        y = map(product, x)
+        n = 200
+        x = rng.uniform(low=low, high=high, size=(n, in_dims))
+        y = map(fn, x)
+        out_dims = np.asarray(y[0]).size
 
-        model = nengo.Model("Product")
+        model = nengo.Model(fn.__name__)
 
         output_signals = []
         for i, xx in enumerate(x):
-            s = model.add(Signal(n=1, name="output_%d" % i))
+            s = model.add(Signal(n=out_dims, name="output_%d" % i))
             model._operators.append(nengo.simulator.SimDirect(
                     s, nengo.core.Constant(xx, name="input_%d" % i), FunctionObject))
             output_signals.append(s)
@@ -46,7 +47,25 @@ class TestAstConversion(unittest.TestCase):
 
         for s, yy in zip(output_signals, y):
             out = sim.signals[sim.copied(s)]
-            print yy
-            print out
-            assert np.allclose(out, yy, rtol=1e-5, atol=1e-8)
+            ### use slightly loose tols since OCL uses singles
+            assert np.allclose(out, yy, rtol=1e-5, atol=1e-6)
 
+    def test_raw(self):
+        """Test a raw (Numpy) function"""
+        self._test_fn(np.sin, 1)
+
+    def test_closures(self):
+        """Test a function defined using closure variables"""
+
+        mult = 1.23
+        power = 3.2
+        def func(x):
+            return mult * x**power
+
+        self._test_fn(func, 1, low=0)
+
+    def test_product(self):
+        def product(x):
+            return x[0] * x[1]
+
+        self._test_fn(product, 2)
