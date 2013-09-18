@@ -587,8 +587,6 @@ def many_dots_impl(p, items):
     # * most targets have approx. 10 - 100 elements
     #p.print_geometry_summary(items, full=True)
 
-    # TODO load X into shared if RPB > 1
-    # TODO: tune group_size
     if p.clra_alpha is not None:
         raise NotImplementedError()
     if p.clra_gamma is not None:
