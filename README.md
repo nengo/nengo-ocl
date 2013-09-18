@@ -16,7 +16,6 @@ usual, but pass `sim_ocl.Simulator` when creating a simulator for your model.
 import nengo
 from nengo_ocl.sim_ocl import Simulator
 import pyopencl as cl
-from functools import partial
 
 ctx = cl.create_some_context()
 
@@ -29,7 +28,7 @@ m.probe('A', filter=0.01)
 
 # -- create an OpenCL-backed simulator using a
 #    particular device context:
-sim = m.simulator(sim_class=partial(Simulator, context=ctx))
+sim = m.simulator(sim_class=Simulator, context=ctx)
 
 sim.run(1.0)
 print sim.data('A')
@@ -116,6 +115,3 @@ Install Nvidia OCL on Debian/Ubuntu Linux
 Can be tricky: Nvidia provides binary drivers but does not seem to want people
 to use them.
 TODO: make some and put them on PyOpenCL wiki.
-
-
-
