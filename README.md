@@ -1,4 +1,4 @@
-OpenCL-based Nengo simulator
+OpenCL-based Nengo Simulator
 ============================
 
 This project is an OpenCL-based simulator for
