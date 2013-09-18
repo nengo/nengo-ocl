@@ -14,9 +14,8 @@ from nengo_ocl import ast_conversion
 import pyopencl as cl
 ctx = cl.create_some_context()
 
-def OclSimulator(*args, **kwargs):
-    rval = sim_ocl.Simulator(ctx, *args, **kwargs)
-    return rval
+def OclSimulator(model):
+    return sim_ocl.Simulator(model, ctx)
 
 class TestAstConversion(unittest.TestCase):
     def _test_fn(self, fn, in_dims, low=-10, high=10):
