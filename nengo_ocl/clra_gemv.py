@@ -84,7 +84,7 @@ class plan_ragged_gather_gemv(Prog):
                 and len(self.geometry[ii]['dots'])
                 and self.geometry[ii]['dots'][0]['a_shape1'] > 16]
         if long_gemv2s:
-            gemv2_plan = ref_impl(self, long_gemv2s)
+            gemv2_plan = reduce_impl(self, long_gemv2s)
             gemv2_plan.tag += '-gemv2-%i' % len(long_gemv2s)
             plans.append(gemv2_plan)
             remaining_items = [ii
@@ -393,12 +393,13 @@ def reduce_impl(p, items):
     cl_gstructure = to_device(p.queue, gstructure)
 
     # Make the global size the closest multiple of the group size (ceiling)
-    reductions_per_block = min(max_y_len, 2)
+    assert max_y_len == min_y_len
+    reductions_per_block = max_y_len
     gsize = (group_size, reductions_per_block, n_items)
     lsize = (group_size, reductions_per_block, 1)
 
     textconf = {
-        'n_items'      : n_items,
+        'n_items' : n_items,
         'RPB'     : reductions_per_block,
         'gsize'   : gsize,
         'group_size' : group_size,
@@ -419,11 +420,8 @@ def reduce_impl(p, items):
     }
     textconf.update(p.__dict__)
 
-    print 'RPB', reductions_per_block
-    assert reductions_per_block == 1
     assert n_structure_vars <= group_size
     assert min_n_dots == max_n_dots == 1
-    assert min_y_len == max_y_len == 1
 
     text = """
         __kernel void fn(
@@ -438,38 +436,39 @@ def reduce_impl(p, items):
     {
         __local int lstructure[${n_structure_vars}];
         //Scratch space for the dot products
-        __local ${Y.cl_buf.ocldtype} partialDotProduct[${local_count}];
-        __local ${Y.cl_buf.ocldtype} y_sum_pre;
+        __local ${Y.cl_buf.ocldtype} partialDotProduct[${RPB}][${group_size}];
+        __local ${Y.cl_buf.ocldtype} y_sum_pre[${RPB}];
+        const int local_idx = get_local_id(0) + get_local_id(1) * get_local_size(0);
         barrier(CLK_LOCAL_MEM_FENCE);
-        if (get_local_id(0) < ${n_structure_vars})
+        if (local_idx < ${n_structure_vars})
         {
-            lstructure[get_local_id(0)] = gstructure[
-                get_global_id(2) * ${structure_stride} + get_local_id(0)];
+            lstructure[local_idx] = gstructure[
+                get_global_id(2) * ${structure_stride} + local_idx];
         }
         barrier(CLK_LOCAL_MEM_FENCE);
 
         const int ii = 0;
-        if (get_local_id(0) == 0)
+        const int mm = get_local_id(1);
+        if (local_idx < ${RPB})
         {
     % if float_beta is not None and float_beta != 0 :
-            y_sum_pre = ${float_beta} * Y_in_data[${y_in_starts}];
+            y_sum_pre[local_idx] = ${float_beta} * Y_in_data[${y_in_starts} + local_idx];
     % elif cl_beta is not None:
-            y_sum_pre = betas[${bb}] * Y_in_data[${y_in_starts}];
+            y_sum_pre[local_idx] = betas[${bb}] * Y_in_data[${y_in_starts} + local_idx];
     % else :
-            y_sum_pre = 0;
+            y_sum_pre[local_idx] = 0;
     % endif
 
     % if float_gamma is not None and float_gamma != 0:
-            y_sum_pre += ${float_gamma};
+            y_sum_pre[local_idx] += ${float_gamma};
     % endif
         }
 
-        const int mm = 0;
-        partialDotProduct[get_local_id(0)] = 0;
+        partialDotProduct[mm][get_local_id(0)] = 0;
         for (int nn = get_local_id(0);
                  nn < ${N_i};
                  nn += get_local_size(0)) {
-            partialDotProduct[get_local_id(0)] +=
+            partialDotProduct[mm][get_local_id(0)] +=
                 A_data[${a_starts} + mm * ${a_s0} + nn] * X_data[${x_starts} + nn];
         }
         // -- Parallel reduction within local group sum registers
@@ -480,17 +479,21 @@ def reduce_impl(p, items):
             barrier(CLK_LOCAL_MEM_FENCE);
 
             uint index = 2 * stride * get_local_id(0);
-            if (index + stride < get_local_size(0)) {
-                partialDotProduct[index] +=
-                    partialDotProduct[index + stride];
+            if (index + stride < get_local_size(0))
+            {
+                partialDotProduct[mm][index] +=
+                    partialDotProduct[mm][index + stride];
             }
         }
+        barrier(CLK_LOCAL_MEM_FENCE);
         if (get_local_id(0) == 0) {
-            Y_data[${y_offset}] = y_sum_pre
-                + ${float_alpha} * partialDotProduct[0];
+            //printf("%i\\n", mm);
+            Y_data[${y_offset} + mm] = y_sum_pre[mm]
+                + ${float_alpha} * partialDotProduct[mm][0];
         }
     }
         """
+    # XXX load X into shared if RPB > 1
 
     text = Template(text, output_encoding='ascii').render(**textconf)
     #print text
