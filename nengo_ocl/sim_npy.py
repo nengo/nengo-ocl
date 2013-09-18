@@ -1079,7 +1079,7 @@ class Simulator(object):
 
     def run(self, time_in_seconds):
         """Simulate for the given length of time."""
-        steps = int(time_in_seconds // self.model.dt)
+        steps = int(np.round(float(time_in_seconds) / self.model.dt))
         logger.debug("Running %s for %f seconds, or %d steps",
                      self.model.name, time_in_seconds, steps)
         self.run_steps(steps)
@@ -1119,5 +1119,5 @@ class Simulator(object):
                 probe = self.model.probed[probe]
             else:
                 probe = self.model.probed[self.model.memo[id(probe)]]
-        return np.asarray(self.probe_outputs[probe])
+        return self.probe_data(probe)
 
