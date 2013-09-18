@@ -107,14 +107,15 @@ Details: http://software.intel.com/en-us/forums/topic/390630
 Install AMD OCL on Debian/Ubuntu Linux
 --------------------------------------
 Can be easy: AMD provides binary drivers and wants people to use OCL.
-TODO / link to PyOpenCL wiki.
+[Instructions on PyOpenCL
+wiki](http://wiki.tiker.net/PyOpenCL/Installation/Linux/Ubuntu)
 
 
 Install Nvidia OCL on Debian/Ubuntu Linux
 --------------------------------------
 Can be tricky: Nvidia provides binary drivers but does not seem to want people
 to use them.
-TODO / link to PyOpenCL wiki.
+TODO: make some and put them on PyOpenCL wiki.
 
 
 
