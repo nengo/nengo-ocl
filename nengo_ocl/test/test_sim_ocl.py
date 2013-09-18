@@ -19,7 +19,7 @@ import pyopencl as cl
 ctx = cl.create_some_context()
 
 def Ocl2Simulator(model):
-    return sim_ocl.Simulator(ctx, model)
+    return sim_ocl.Simulator(model, ctx)
 
 load_tests = load_nengo_tests(Ocl2Simulator)
 

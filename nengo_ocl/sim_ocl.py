@@ -25,7 +25,7 @@ class Simulator(sim_npy.Simulator):
         else:
             return CLRaggedArray(self.queue, val)
 
-    def __init__(self, context, model, n_prealloc_probes=1000,
+    def __init__(self, model, context, n_prealloc_probes=1000,
                  profiling=None):
         if profiling is None:
             profiling = int(os.getenv("NENGO_OCL_PROFILING", 0))
