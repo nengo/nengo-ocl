@@ -109,6 +109,17 @@ Can be easy: AMD provides binary drivers and wants people to use OCL.
 [Instructions on PyOpenCL
 wiki](http://wiki.tiker.net/PyOpenCL/Installation/Linux/Ubuntu)
 
+Install AMD OCL on Debian Unstable
+----------------------------------
+
+On Debian unstable (sid) there are packages in non-free and contrib
+to install AMD's OCL implementation easily.
+Actually, the easiest thing would be to apt-get install
+[python-pyopencl](http://packages.debian.org/sid/python-pyopencl).
+But if you're using a virtual environment, you can
+`apt-get install opencl-headers libboost-python-dev
+amd-opencl-icd amd-libopencl1`
+and then `pip install pyopencl`.
 
 Install Nvidia OCL on Debian/Ubuntu Linux
 --------------------------------------
