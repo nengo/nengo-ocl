@@ -127,14 +127,14 @@ class Simulator(sim_npy.Simulator):
         return [plan_lif(self.queue, J, V, W, V, W, S, ref, tau, dt,
                         tag="lif", upsample=1)]
 
-    def plan_SimLIFRate(self, nls):
-        raise NotImplementedError()
-        J = self.all_data[[self.sidx[nl.input_signal] for nl in nls]]
-        R = self.all_data[[self.sidx[nl.output_signal] for nl in nls]]
-        ref = self.RaggedArray([nl.tau_ref for nl in nls])
-        tau = self.RaggedArray([nl.tau_rc for nl in nls])
-        return plan_lif_rate(self.queue, J, R, ref, tau,
-                             tag="lif_rate", n_elements=10)
+    def plan_SimLIFRate(self, ops):
+        J = self.all_data[[self.sidx[op.J] for op in ops]]
+        R = self.all_data[[self.sidx[op.output] for op in ops]]
+        ref = self.RaggedArray([op.nl.tau_ref for op in ops])
+        tau = self.RaggedArray([op.nl.tau_rc for op in ops])
+        dt = self.model.dt
+        return [plan_lif_rate(self.queue, J, R, ref, tau, dt,
+                              tag="lif_rate", n_elements=10)]
 
     def plan_probes(self):
         if len(self.model.probes) > 0:

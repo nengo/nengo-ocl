@@ -771,6 +771,15 @@ class Simulator(object):
                 op.nl.step_math0(dt, J, voltage, reftime, output,)
         return [lif]
 
+    def plan_SimLIFRate(self, ops):
+        dt = self.model.dt
+        def lif_rate(profiling=False):
+            for op in ops:
+                J = self.all_data[self.sidx[op.J]]
+                output = self.all_data[self.sidx[op.output]]
+                output[:] = dt * op.nl.math(J)
+        return [lif_rate]
+
     def RaggedArray(self, *args, **kwargs):
         return _RaggedArray(*args, **kwargs)
 
