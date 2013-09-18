@@ -385,7 +385,7 @@ def ref_impl(p, items):
 
     #print [str(arr.dtype)[0] for arr in full_args]
     fn.set_args(*[arr.data for arr in full_args])
-    rval = Plan(p.queue, fn, gsize, lsize, name="ref_ragged_gather_gemv",
+    rval = Plan(p.queue, fn, gsize, lsize, name="clra_gemv.ref_impl",
             tag=p.tag)
     rval.full_args = full_args  # prevent GC the args
     return rval
