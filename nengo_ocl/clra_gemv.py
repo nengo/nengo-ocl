@@ -1,3 +1,4 @@
+import sys
 from collections import defaultdict
 import numpy as np
 import pyopencl as cl
@@ -97,22 +98,20 @@ class plan_ragged_gather_gemv(Prog):
         if many_dots:
             # XXX: implement a special case here,
             #      computing all the dots at once
-            many_plan = ref_impl(self, many_dots)
+            many_plan = many_dots_impl(self, many_dots)
             many_plan.tag += '-many%i' % len(many_dots)
             plans.append(many_plan)
             remaining_items = [ii
                 for ii in remaining_items
                 if ii not in many_dots]
 
-        print 'remaining'
-        self.quick_geometry_summary(remaining_items)
         remaining_plan = ref_impl(self, remaining_items)
         remaining_plan.tag += '-remaining%i' % len(remaining_items)
         plans.append(remaining_plan)
         Prog.__init__(self, plans)
 
-    def quick_geometry_summary(self, items=None):
-        print 'quick_geometry_summary: tag=%s' % self.tag
+    def print_geometry_summary(self, items=None, full=False):
+        print 'geometry_summary: tag=%s' % self.tag
         if items is None:
             gg = self.geometry
         else:
@@ -123,8 +122,13 @@ class plan_ragged_gather_gemv(Prog):
         for ggi in gg:
             Ks.extend(ddb['a_shape1'] for ddb in ggi['dots'])
         print 'Ks', dhist(Ks)
-        #for ggi in gg:
-            #print ggi
+        if full:
+            for ggi in gg:
+                tmp = dict(ggi)
+                del tmp['dots']
+                print tmp
+                for dot in ggi['dots']:
+                    print '  ', dot
 
     def _geometry(self):
         A_starts = self.A.starts
@@ -158,6 +162,52 @@ class plan_ragged_gather_gemv(Prog):
                 })
             rval.append(dbb)
         return rval
+
+    def cl_geometry_and_textconf(self, items):
+        p = self
+        max_n_dots = max(len(p.geometry[ii]['dots']) for ii in items)
+        n_structure_vars = 4 * max_n_dots + 5
+        gstructure = np.zeros((len(items), n_structure_vars), dtype='int32')
+        A_starts = p.A.starts
+        X_starts = p.X.starts
+        Y_starts = p.Y.starts
+        Y_in_starts = p.Y_in.starts
+        A_stride0s = p.A.stride0s
+        A_shape1s = p.A.shape1s
+        Y_shape0s = p.Y.shape0s
+
+        for bbi, bb in enumerate(items):
+            x_js_i = p.X_js[bb]
+            A_js_i = p.A_js[bb]
+            assert len(x_js_i) == len(A_js_i)
+            for ii, (xi, ai) in enumerate(zip(x_js_i, A_js_i)):
+                gstructure[bbi, 0 * max_n_dots + ii] = X_starts[xi]
+                gstructure[bbi, 1 * max_n_dots + ii] = A_starts[ai]
+                gstructure[bbi, 2 * max_n_dots + ii] = A_stride0s[ai]
+                gstructure[bbi, 3 * max_n_dots + ii] = A_shape1s[ai]
+            # -- offset of output and input buffers
+            gstructure[bbi, 4 * max_n_dots + 0] = Y_in_starts[bb]
+            gstructure[bbi, 4 * max_n_dots + 1] = Y_starts[bb]
+            # -- number of dots for bb
+            gstructure[bbi, 4 * max_n_dots + 2] = len(A_js_i)
+            # -- length of Y[bb]
+            gstructure[bbi, 4 * max_n_dots + 3] = Y_shape0s[bb]
+            gstructure[bbi, 4 * max_n_dots + 4] = bb
+        cl_gstructure = to_device(p.queue, gstructure)
+
+        textconf = {
+            'n_structure_vars': n_structure_vars,
+            'x_starts': 'lstructure[0 * %s + ii]' % max_n_dots,
+            'a_starts': 'lstructure[1 * %s + ii]' % max_n_dots,
+            'a_s0'    : 'lstructure[2 * %s + ii]' % max_n_dots,
+            'N_i'     : 'lstructure[3 * %s + ii]' % max_n_dots,
+            'y_in_starts': 'lstructure[4 * %s + 0]' % max_n_dots,
+            'y_offset': 'lstructure[4 * %s + 1]' % max_n_dots,
+            'n_dot_products': 'lstructure[4 * %s + 2]' % max_n_dots,
+            'y_len'   : 'lstructure[4 * %s + 3]' % max_n_dots,
+            'bb'   : 'lstructure[4 * %s + 4]' % max_n_dots,
+            }
+        return cl_gstructure, textconf
 
 
 def ref_impl(p, items):
@@ -335,6 +385,8 @@ def ref_impl(p, items):
 
 
 def reduce_impl(p, items):
+    # TODO load X into shared if RPB > 1
+    # TODO: tune group_size
     group_size = 32
     if p.clra_alpha is not None:
         raise NotImplementedError()
@@ -369,7 +421,7 @@ def reduce_impl(p, items):
 
     max_reduce_len = 0
     max_y_len = 0
-    min_y_len = 100000000
+    min_y_len = sys.maxint
     for bbi, bb in enumerate(items):
         x_js_i = p.X_js[bb]
         A_js_i = p.A_js[bb]
@@ -493,11 +545,8 @@ def reduce_impl(p, items):
         }
     }
         """
-    # XXX load X into shared if RPB > 1
 
     text = Template(text, output_encoding='ascii').render(**textconf)
-    #print text
-    print gsize
 
     fn = cl.Program(p.queue.context, text).build().fn
 
@@ -520,4 +569,115 @@ def reduce_impl(p, items):
     rval.full_args = full_args  # prevent GC the args
     return rval
 
+
+def many_dots_impl(p, items):
+    # target use case:
+    # * several very shallow gemvs into each target
+    # * not all targets have the same size
+    # * most targets have approx. 10 - 100 elements
+    #p.print_geometry_summary(items, full=True)
+
+    # TODO load X into shared if RPB > 1
+    # TODO: tune group_size
+    if p.clra_alpha is not None:
+        raise NotImplementedError()
+    if p.clra_gamma is not None:
+        raise NotImplementedError()
+    if p.clra_beta is not None:
+        raise NotImplementedError()
+    if p.cl_alpha is not None:
+        raise NotImplementedError()
+    if p.cl_gamma is not None:
+        raise NotImplementedError()
+    if not all(s == 1 for s in p.A.stride1s):
+        raise NotImplementedError()
+
+    assert p.float_alpha is not None
+    assert p.float_gamma is not None
+
+    A_js_shape0s = p.A_js.shape0s
+    cl_gstructure, textconf = p.cl_geometry_and_textconf(items)
+
+    max_y_len = max(p.geometry[ii]['y_len'] for ii in items)
+    gsize = (max_y_len, len(items))
+    lsize = (max_y_len, 1)
+
+    textconf.update(p.__dict__)
+
+    text = """
+        __kernel void fn(
+            const __global int *gstructure,
+            const __global ${A.cl_buf.ocldtype} *A_data,
+            const __global ${X.cl_buf.ocldtype} *X_data,
+            % if cl_beta is not None:
+            const __global ${cl_beta.ocldtype} * betas,
+            % endif
+            const __global ${Y_in.cl_buf.ocldtype} *Y_in_data,
+            __global ${Y.cl_buf.ocldtype} *Y_data)
+    {
+        __local int lstructure[${n_structure_vars}];
+        ${Y.cl_buf.ocldtype} y_sum_pre, y_sum_post;
+
+        barrier(CLK_LOCAL_MEM_FENCE);
+        for (int ii = get_local_id(0);
+                 ii < ${n_structure_vars};
+                 ii += get_local_size(0))
+        {
+            lstructure[ii] = gstructure[
+                get_global_id(1) * ${n_structure_vars} + ii];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+        const int mm = get_local_id(0);
+        if (mm >= ${y_len}) return;
+
+    % if float_beta is not None and float_beta != 0 :
+        y_sum_pre = ${float_beta} * Y_in_data[${y_in_starts} + mm];
+    % elif cl_beta is not None:
+        y_sum_pre = betas[${bb}] * Y_in_data[${y_in_starts} + mm];
+    % else :
+        y_sum_pre = 0;
+    % endif
+
+    % if float_gamma is not None:
+        % if float_gamma != 0:
+        y_sum_pre += ${float_gamma};
+        % endif
+    % endif
+
+        y_sum_post = 0;
+        for (int ii = 0; ii < ${n_dot_products} ; ++ii)
+        {
+            for (int nn = 0; nn < ${N_i}; nn += 1)
+            {
+                y_sum_post +=
+                    A_data[${a_starts} + mm * ${a_s0} + nn] * X_data[${x_starts} + nn];
+            }
+        }
+        Y_data[${y_offset} + mm] = y_sum_pre + ${float_alpha} * y_sum_post;
+    }
+        """
+
+    text = Template(text, output_encoding='ascii').render(**textconf)
+
+    fn = cl.Program(p.queue.context, text).build().fn
+
+    full_args = [
+                 cl_gstructure,
+                 p.A.cl_buf,
+                 p.X.cl_buf,
+                 ]
+    if p.cl_beta is not None:
+        full_args += [p.cl_beta]
+    full_args += [
+                 p.Y_in.cl_buf,
+                 p.Y.cl_buf,
+                ]
+
+    fn.set_args(*[arr.data for arr in full_args])
+    rval = Plan(p.queue, fn, gsize, lsize,
+            name='clra_gemv.many_dots_impl',
+            tag=p.tag)
+    rval.full_args = full_args  # prevent GC the args
+    return rval
 
