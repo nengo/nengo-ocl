@@ -61,24 +61,75 @@ class plan_ragged_gather_gemv(Prog):
         self.tag = tag
         self.seq = seq
 
+        self.geometry = self._geometry()
+
         self.quick_geometry_summary()
         A_shape1s = self.A.shape1s
         reduce_lens = dhist(A_shape1s[j] for j in self.A_js.buf)
 
-        ref_plan = ref_impl(self)
-        Prog.__init__(self, [ref_plan])
+        plans = []
+        remaining_items = range(len(Y))
 
-    def quick_geometry_summary(self):
+        long_dots = [ii
+            for ii in remaining_items
+            if self.geometry[ii]['y_len'] == 1
+                and len(self.geometry[ii]['dots'])
+                and self.geometry[ii]['dots'][0]['a_shape1'] > 16]
+        if long_dots:
+            long_plan = ref_impl(self, long_dots)
+            long_plan.tag += '-long%i' % len(long_dots)
+            plans.append(long_plan)
+            remaining_items = [ii
+                for ii in remaining_items
+                if ii not in long_dots]
+
+        long_gemvs = [ii
+            for ii in remaining_items
+            if self.geometry[ii]['y_len'] == 2
+                and len(self.geometry[ii]['dots'])
+                and self.geometry[ii]['dots'][0]['a_shape1'] > 16]
+        if long_gemvs:
+            gemv_plan = ref_impl(self, long_gemvs)
+            gemv_plan.tag += '-gemv2-%i' % len(long_gemvs)
+            plans.append(gemv_plan)
+            remaining_items = [ii
+                for ii in remaining_items
+                if ii not in long_gemvs]
+
+        many_dots = [ii
+            for ii in remaining_items
+            if len(self.geometry[ii]['dots']) > 3]
+        if many_dots:
+            many_plan = ref_impl(self, many_dots)
+            many_plan.tag += '-many%i' % len(many_dots)
+            plans.append(many_plan)
+            remaining_items = [ii
+                for ii in remaining_items
+                if ii not in many_dots]
+
+        print 'remaining'
+        self.quick_geometry_summary(remaining_items)
+        remaining_plan = ref_impl(self, remaining_items)
+        remaining_plan.tag += '-remaining%i' % len(remaining_items)
+        plans.append(remaining_plan)
+        Prog.__init__(self, plans)
+
+    def quick_geometry_summary(self, items=None):
         print 'quick_geometry_summary: tag=%s' % self.tag
-        gg = self.geometry()
+        if items is None:
+            gg = self.geometry
+        else:
+            gg = map(self.geometry.__getitem__, items)
         print 'Y lens', dhist(ggi['y_len'] for ggi in gg)
         print 'ndots', dhist(len(ggi['dots']) for ggi in gg)
         Ks = []
         for ggi in gg:
             Ks.extend(ddb['a_shape1'] for ddb in ggi['dots'])
         print 'Ks', dhist(Ks)
+        #for ggi in gg:
+            #print ggi
 
-    def geometry(self):
+    def _geometry(self):
         A_starts = self.A.starts
         X_starts = self.X.starts
         Y_starts = self.Y.starts
@@ -112,11 +163,25 @@ class plan_ragged_gather_gemv(Prog):
         return rval
 
 
-def ref_impl(p):
+def ref_impl(p, items):
+    """
+    Return an OpenCL function to calculate elements `items` of
+    gemv operation `p`.
+
+    In this reference implementation, we create a work item
+    per output number, or more specifically, a work grid
+    of (max_y_len, len(items)).  Each work item loops over the
+    dot products and the elements within each dot product to
+    compute the output value Y[global_id(1)][global_id(0)].
+
+    """
+
     if p.clra_alpha is not None:
         raise NotImplementedError()
     if p.clra_gamma is not None:
         raise NotImplementedError()
+    cl_items = to_device(p.queue,
+        np.asarray(items, dtype='int32'))
 
     assert all(s == 1 for s in p.A.stride1s)
     assert all(s == 1 for s in p.X.stride1s)
@@ -127,6 +192,7 @@ def ref_impl(p):
 
     text = """
         __kernel void fn(
+            __global int *items,
     % if cl_alpha is not None:
             __global ${cl_alpha.ocldtype} * alphas,
     % endif
@@ -161,7 +227,7 @@ def ref_impl(p):
             __global ${Y.cl_buf.ocldtype} *Y_data)
         {
             const int mm = get_global_id(0);
-            const int bb = get_global_id(1);
+            const int bb = items[get_global_id(1)];
             const int M = Y_shape0s[bb];
             if (mm < M)
             {
@@ -195,40 +261,23 @@ def ref_impl(p):
                 ${Y.cl_buf.ocldtype} y_sum = 0;
                 for (int ii = 0; ii < n_dot_products; ++ii)
                 {
-                    //printf("${tag}: ii=%i / %i\\n", ii, n_dot_products);
                     const int x_ji = X_js_data[ii];
                     const int a_ji = A_js_data[ii];
-                    //printf("x_ji=%i a_ji=%i\\n", x_ji, a_ji);
                     const int N_i = A_shape1s[a_ji];
                     const int x_offset = X_starts[x_ji];
                     const int a_offset = A_starts[a_ji];
-                    //printf("x_offset=%i a_offset=%i\\n", x_offset, a_offset);
                     const int AsM = A_stride0s[a_ji];
                     const int XsM = X_stride0s[x_ji];
 
                     for (int nn = 0; nn < N_i; ++nn)
+                    {
                         y_sum += X_data[x_offset + nn * XsM]
                                  * A_data[a_offset + mm * AsM + nn];
+                    }
                 }
         % if float_alpha is not None:
-        % if 0:
-                printf("float_alpha ysum=%f %i %i %i %f\\n",
-                    y_sum,
-                    mm, bb, y_offset,
-                    Y_data[y_offset + mm]);
-                // return;
-        % endif
                 Y_data[y_offset + mm] += ${float_alpha} * y_sum;
         % elif cl_alpha is not None:
-        % if 0:
-                printf("cl_alpha ysum=%f %f %i %i %i %f\\n",
-                    y_sum,
-                    alphas[bb],
-                    mm, bb, y_offset,
-                    Y_data[y_offset + mm]
-                    );
-                //return;
-        % endif
                 Y_data[y_offset + mm] += alphas[bb] * y_sum;
         % endif
     % endif
@@ -240,11 +289,12 @@ def ref_impl(p):
     text = Template(text, output_encoding='ascii').render(**p.__dict__)
     #print text
 
-    ### TODO: use the maximum of A.shape0s that is actually used in this op
-    gsize = (int(max(p.A.shape0s)), int(len(p.Y)),)
+    gsize = (
+        max(p.geometry[ii]['y_len'] for ii in items),
+        len(items))
     lsize = None
     fn = cl.Program(p.queue.context, text).build().fn
-    full_args = []
+    full_args = [cl_items]
     if p.cl_alpha is not None:
         full_args += [p.cl_alpha]
     if p.A_js is not None:
@@ -287,7 +337,7 @@ def ref_impl(p):
     return rval
 
 
-def reduce_impl(p, group_size):
+def reduce_impl(p, items, group_size):
     if p.clra_alpha is not None:
         raise NotImplementedError()
     if p.clra_gamma is not None:
@@ -322,7 +372,7 @@ def reduce_impl(p, group_size):
     Y_shape0s = p.Y.shape0s
 
     max_reduce_len = 0
-    for bb in range(BB):
+    for bb in items:
         x_js_i = p.X_js[bb]
         A_js_i = p.A_js[bb]
         assert len(x_js_i) == len(A_js_i)
