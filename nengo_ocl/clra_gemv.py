@@ -103,8 +103,6 @@ class plan_ragged_gather_gemv(Prog):
             for ii in remaining_items
             if len(self.geometry[ii]['dots']) > 3]
         if many_dots:
-            # XXX: implement a special case here,
-            #      computing all the dots at once
             many_plan = many_dots_impl(self, many_dots)
             many_plan.tag += '-many%i' % len(many_dots)
             plans.append(many_plan)
