@@ -183,7 +183,6 @@ class Simulator(sim_npy.Simulator):
 
         self._probe_copy_step = self.sim_step
 
-        print self.profiling
         if self.profiling > 1:
             self.print_profiling()
 
