@@ -302,59 +302,7 @@ def exact_dependency_graph(operators, share_memory):
     return dg
 
 
-def gbcw_algo1_helper(ops, score_fn=lambda op_subset: 0):
-    mods = dict((op, op.incs + op.sets) for op in ops)
-    indep = nx.Graph()
-    indep.add_nodes_from(ops)
-    if len(ops) >= 2:
-        for aa, bb in itertools.combinations(ops, 2):
-            for amod, bmod in itertools.product(mods[aa], mods[bb]):
-                if amod.shares_memory_with(bmod):
-                    #print 'shares memory:', amod, bmod
-                    break
-            else:
-                indep.add_edge(aa, bb)
-    #print '  .. building indep graph took', (time.time() - t0)
-
-    # -- Subsets of ops that can run concurrently correspond to cliques in the
-    #    `indep` graph. We would ideally like to return a partitioning of
-    #    `ops` into cliques C0, C1, .., CN such that score_fn(C0) +
-    #    score_fn(C1) + ... + score_fn(CN) is minimized, but (a) I suspect
-    #    that is an NP-hard problem, and (b) the assumption of scheduling by
-    #    graph depth already ruins an attempt at optimal scheduling.
-    rval = []
-    while len(indep.nodes()):
-        some_group = next(nx.find_cliques(indep))
-        rval.append(some_group)
-        indep.remove_nodes_from(some_group)
-    #print '  .. partitioning took', (time.time() - t0)
-    assert sum(len(r) for r in rval) == len(ops), (
-            ops, rval)
-    return rval
-
-
-def group_by_concurrent_writes(ops, score_fn=lambda op_subset: 0, chunksize=256):
-    t0 = time.time()
-    if len(ops) < 2:
-        return [list(ops)]
-    rval = []
-    #print '  .. grouping writes for', len(ops), 'ops'
-    # -- algorithms are too slow :(
-    #    just ignore the opportunity to make massive
-    #    groups
-    for ii in range(0, len(ops), chunksize):
-        rval.extend(gbcw_algo1_helper(
-            ops[ii:ii + chunksize],
-            score_fn))
-    #if len(rval) > 5:
-        #for grp in rval:
-            #print map(str, grp)
-    #print '  .. grouping %i writes into %i groups' % (len(ops), len(rval))
-    assert sum(len(r) for r in rval) == len(ops)
-    return rval
-
-
-def greedy_planner2(operators, share_memory, cliques):
+def greedy_planner(operators, share_memory, cliques):
     """
     I feel like there might e a dynamic programming solution here, but I can't
     work it out, and I'm not sure. Even if a DP solution existed, we would
@@ -419,55 +367,6 @@ def greedy_planner2(operators, share_memory, cliques):
         for op in ancestors_of:
             ancestors_of[op].difference_update(chosen)
 
-    #print sum(len(p[1]) for p in rval)
-    assert len(operators) == sum(len(p[1]) for p in rval)
-    #print 'greedy_planner2: Program len:', len(rval)
-    return rval
-
-
-def greedy_planner(operators, share_memory):
-    """
-    I feel like there might e a dynamic programming solution here, but I can't
-    work it out, and I'm not sure. Even if a DP solution existed, we would
-    need a function to estimate the goodness (e.g. neg wall time) of kernel
-    calls, and  that function would need to be pretty fast.
-    """
-    dg = exact_dependency_graph(operators, share_memory)
-
-    # -- filter Signals out of the dependency graph
-    op_dg = nx.DiGraph()
-    for op in operators:
-        op_dg.add_node(op)
-        for pre in dg.predecessors(op):
-            if is_op(pre):
-                op_dg.add_edge(pre, op)
-
-    ops_by_depth = defaultdict(list)
-    depth = {}
-    for op in nx.topological_sort(op_dg):
-        preops = op_dg.predecessors(op)
-        if preops:
-            d = 1 + max(map(depth.__getitem__, preops))
-        else:
-            d = 0
-        depth[op] = d
-        ops_by_depth[d].append(op)
-    graph_depth = 1 + max(depth.values())
-
-    #print 'greedy_planner: Graph depth:', graph_depth
-    assert len(operators) == sum(len(lst) for lst in ops_by_depth.values())
-
-    rval = []
-    for d in sorted(ops_by_depth):
-        ops_at_d = ops_by_depth[d]
-        ops_by_type = defaultdict(list)
-        for op in ops_at_d:
-            ops_by_type[type(op)].append(op)
-        for typ, ops_at_d_w_type in ops_by_type.items():
-            for concurrent_grp in group_by_concurrent_writes(
-                    ops_at_d_w_type):
-                rval.append((typ, list(concurrent_grp)))
-    #print len(operators)
     #print sum(len(p[1]) for p in rval)
     assert len(operators) == sum(len(p[1]) for p in rval)
     #print 'greedy_planner: Program len:', len(rval)
@@ -672,8 +571,7 @@ class Simulator(object):
             _shares_memory_with[key1] = rval
             return rval
 
-        #op_groups = planner(operators, share_memory)
-        op_groups = greedy_planner2(operators, share_memory, indep_cliques)
+        op_groups = planner(operators, share_memory, indep_cliques)
         self.op_groups = op_groups # debug
         #print '-' * 80
         #self.print_op_groups()
