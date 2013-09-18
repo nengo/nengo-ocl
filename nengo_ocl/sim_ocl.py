@@ -9,8 +9,9 @@ from . import sim_npy
 from .raggedarray import RaggedArray
 from .clraggedarray import CLRaggedArray
 from .clra_gemv import plan_ragged_gather_gemv
-from .clra_nonlinearities import plan_lif, plan_lif_rate, plan_direct, plan_probes
-from .plan import Plan, Prog, PythonPlan, HybridProg
+from .clra_nonlinearities import \
+    plan_lif, plan_lif_rate, plan_direct, plan_probes
+from .plan import BasePlan, PythonPlan, Plan, Prog
 from .ast_conversion import OCL_Function
 
 import logging
@@ -152,7 +153,7 @@ class Simulator(sim_npy.Simulator):
             cl_plan = plan_probes(self.queue, sim_step, P, X, Y, tag="probes")
 
             lengths = [period * buf_len for period in periods]
-            def probe_copy_fn(profiling=False):
+            def py_probes(profiling=False):
                 copy_step = self._probe_copy_step
                 for i, length in enumerate(lengths):
                     if self.sim_step % length == length - 1:
@@ -167,7 +168,7 @@ class Simulator(sim_npy.Simulator):
             self._probe_periods = periods
             self._probe_buffers = Y
             return [cl_plan,
-                    PythonPlan(probe_copy_fn, name='probes', tag='probes')]
+                    PythonPlan(py_probes, name="py_probes", tag="probes")]
         else:
             return []
 
@@ -194,23 +195,44 @@ class Simulator(sim_npy.Simulator):
         if self.profiling > 1:
             self.print_profiling()
 
-    def print_profiling(self):
-        ### TODO: fix this to work with PythonPlan
-        print '-' * 80
-        print '%s\t%s\t%s\t%s' % (
-            'n_calls', 'runtime', 'q-time', 'subtime')
-        time_running_kernels = 0.0
+    def print_profiling(self, sort=None):
+        """
+        Parameters
+        ----------
+        sort : indicates the column to sort by (negative number sorts ascending)
+            (0 = n_calls, 1 = runtime, 2 = q-time, 3 = subtime)
+        """
+        ### make and sort table
+        table = []
+        unknowns = []
         for p in self._plan:
-            if isinstance(p, Plan):
-                print '%i\t%2.3f\t%2.3f\t%2.3f\t<%s, tag=%s>' % (
-                    p.n_calls, sum(p.ctimes), sum(p.btimes), sum(p.atimes),
-                    p.name, p.tag)
-                time_running_kernels += sum(p.ctimes)
+            if isinstance(p, BasePlan):
+                table.append(
+                    (p.n_calls, sum(p.ctimes), sum(p.btimes), sum(p.atimes),
+                    p.name, p.tag))
             else:
-                print p, getattr(p, 'cumtime', '<unknown>')
+                unknowns.append((str(p), getattr(p, 'cumtime', '<unknown>')))
+
+        if sort is not None:
+            reverse = sort >= 0
+            table.sort(key=lambda x: x[abs(sort)], reverse=reverse)
+
+        ### printing
         print '-' * 80
+        print '%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'q-time', 'subtime')
+
+        for r in table:
+            print '%i\t%2.3f\t%2.3f\t%2.3f\t<%s, tag=%s>' % r
+
+        print '-' * 80
+        col_sum = lambda c: sum(map(lambda x: x[c], table))
         print 'totals:\t%2.3f\t%2.3f\t%2.3f' % (
-            time_running_kernels, 0.0, 0.0)
+            col_sum(1), col_sum(2), col_sum(3))
+
+        if len(unknowns) > 0:
+            print
+            for r in unknowns:
+                print "%s %s" % r
 
         #import matplotlib.pyplot as plt
         #for p in self._plan:

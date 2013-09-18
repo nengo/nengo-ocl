@@ -1,27 +1,16 @@
 import time
 import pyopencl as cl
 
-class PythonPlan(object):
-    def __init__(self, function, **kwargs):
-        self.function = function
-        self.name = kwargs.get('name', "")
-        self.tag = kwargs.get('tag', "")
+
+class BasePlan(object):
+    def __init__(self, name="", tag="", **kwargs):
+        self.name = name
+        self.tag = tag
         self.kwargs = kwargs
-        self.atime = 0.0
-        self.btime = 0.0
-        self.ctime = 0.0
+        self.atimes = []
+        self.btimes = []
+        self.ctimes = []
         self.n_calls = 0
-
-    def __call__(self, profiling=False):
-        if profiling:
-            timer = time.time()
-        self.function()
-        if profiling:
-            self.ctime += (time.time() - timer)
-            self.n_calls += 1
-
-    def enqueue(self):
-        pass
 
     def __str__(self):
         return '%s{%s %s %s}' % (
@@ -31,29 +20,36 @@ class PythonPlan(object):
             self.kwargs)
 
 
-class PythonProg(object):
-    def __init__(self, plans):
-        self.plans = plans
+class PythonPlan(BasePlan):
+    def __init__(self, function, **kwargs):
+        super(PythonPlan, self).__init__(**kwargs)
+        self.function = function
 
     def __call__(self, profiling=False):
-        for p in self.plans:
-            p(profiling=profiling)
+        if profiling:
+            t0 = time.time()
+        self.function()
+        if profiling:
+            t1 = time.time()
+            self.atimes.append(0)
+            self.btimes.append(0)
+            self.ctimes.append(t1 - t0)
+            self.n_calls += 1
+
+    def update_from_event(self, ev):
+        self.atimes.append(1e-9 * (ev.profile.submit - ev.profile.queued))
+        self.btimes.append(1e-9 * (ev.profile.start - ev.profile.submit))
+        self.ctimes.append(1e-9 * (ev.profile.end - ev.profile.start))
+        self.n_calls += 1
 
 
-class Plan(object):
-
+class Plan(BasePlan):
     def __init__(self, queue, kern, gsize, lsize, **kwargs):
+        super(Plan, self).__init__(**kwargs)
         self.queue = queue
         self.kern = kern
         self.gsize = gsize
         self.lsize = lsize
-        self.name = kwargs.get('name', "")
-        self.tag = kwargs.get('tag', "")
-        self.kwargs = kwargs
-        self.atimes = []
-        self.btimes = []
-        self.ctimes = []
-        self.n_calls = 0
 
     def __call__(self, profiling=False):
         ev = self.enqueue()
@@ -120,13 +116,3 @@ class Prog(object):
             if profiling:
                 all_evs.append(evs)
         return all_evs
-
-
-class HybridProg(object):
-    def __init__(self, python_plans, ocl_plans):
-        self.py_prog = PythonProg(python_plans)
-        self.ocl_prog = Prog(ocl_plans)
-
-    def __call__(self, profiling=False):
-        self.py_prog(profiling=profiling)
-        self.ocl_prog(profiling=profiling)
