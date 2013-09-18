@@ -67,6 +67,8 @@ class Simulator(sim_npy.Simulator):
         plans = []
         for fn, signals in unique_ops.items():
             fn_name = fn.__name__
+            if fn_name == "<lambda>":
+                fn_name += "%d" % len(plans)
 
             # check signal input and output shape (implicitly checks
             # for indexing errors)
@@ -98,12 +100,18 @@ class Simulator(sim_npy.Simulator):
                 logger.warning("Function '%s' could not be converted to OCL"
                                % fn_name)
 
-                def temp_fn():
-                    for sin, sout in zip(signals['in'], signals['out']):
-                        J = self.all_data[self.sidx[sin]]
-                        self.all_data[self.sidx[sout]] = fn(J)
+                ### Need wrapper function so that variables get copied
+                def make_temp():
+                    f = fn
+                    signals_in = signals['in'][:]
+                    signals_out = signals['out'][:]
+                    def temp_fn():
+                        for sin, sout in zip(signals_in, signals_out):
+                            x = self.all_data[self.sidx[sin]]
+                            self.all_data[self.sidx[sout]] = f(x)
+                    return temp_fn
 
-                plans.append(PythonPlan(temp_fn, name=fn_name, tag=fn_name))
+                plans.append(PythonPlan(make_temp(), name=fn_name, tag=fn_name))
 
         return plans
 
