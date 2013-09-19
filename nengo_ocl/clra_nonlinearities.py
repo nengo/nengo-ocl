@@ -12,7 +12,7 @@ def all_equal(a, b):
 def _indent(s, i):
     return '\n'.join([(' ' * i) + line for line in s.split('\n')])
 
-def plan_probes(queue, sim_step, periods, X, Y, tag=None):
+def plan_probes(queue, periods, X, Y, tag=None):
     """
     Parameters
     ----------
@@ -23,9 +23,6 @@ def plan_probes(queue, sim_step, periods, X, Y, tag=None):
     assert len(X) == len(Y)
     assert len(X) == len(periods)
     N = len(X)
-
-    assert len(sim_step) == 1
-    assert sim_step.shape0s[0] == 1 and sim_step.shape1s[0] == 1
 
     cl_countdowns = to_device(queue, np.zeros(N, dtype='int32'))
     cl_bufpositions = to_device(queue, np.zeros(N, dtype='int32'))
@@ -80,13 +77,13 @@ def plan_probes(queue, sim_step, periods, X, Y, tag=None):
             }
             else
             {
+                barrier(CLK_LOCAL_MEM_FENCE);
                 countdowns[n] = countdown - 1;
             }
         }
         """
 
     textconf = dict(N=N,
-            Stype=sim_step.cl_buf.ocldtype,
             Xtype=X.cl_buf.ocldtype,
             Ytype=Y.cl_buf.ocldtype)
     text = Template(text, output_encoding='ascii').render(**textconf)

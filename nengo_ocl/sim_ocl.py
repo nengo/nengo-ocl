@@ -140,19 +140,26 @@ class Simulator(sim_npy.Simulator):
     def plan_probes(self):
         if len(self.model.probes) > 0:
             n_prealloc = self.n_prealloc_probes
+            #print 'n_prealloc', n_prealloc
 
             probes = self.model.probes
             periods = [int(np.round(float(p.dt) / self.model.dt))
                        for p in probes]
+            #print 'model dt', self.model.dt
+            #print [p.dt for p in probes]
+            #print 'periods', periods
+            for p in probes:
+                if p.sig.size != p.sig.shape[0]:
+                    raise NotImplementedError('probing non-vector', p)
 
-            sim_step = self.all_data[[self.sidx[self.model.steps]]]
+
             X = self.all_data[[self.sidx[p.sig] for p in probes]]
             Y = self.RaggedArray(
                 [np.zeros((n_prealloc, p.sig.shape[0])) for p in probes])
 
-            cl_plan = plan_probes(self.queue, sim_step, periods, X, Y,
-                                  tag="probes")
+            cl_plan = plan_probes(self.queue, periods, X, Y, tag="probes")
             self._max_steps_between_probes = n_prealloc * min(periods)
+            #print 'max inter steps', self._max_steps_between_probes
             cl_plan.Y = Y
             self._cl_probe_plan = cl_plan
             return [cl_plan]
