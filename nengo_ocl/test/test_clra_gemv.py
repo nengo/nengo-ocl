@@ -1,7 +1,10 @@
-from nengo_ocl.tricky_imports import unittest
 
 import nose
 import numpy as np
+
+from nengo.tests.helpers import assert_allclose
+
+from nengo_ocl.tricky_imports import unittest
 from nengo_ocl.ra_gemv import ragged_gather_gemv
 from  nengo_ocl import raggedarray as ra
 RA = ra.RaggedArray
@@ -12,7 +15,10 @@ from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 # from nengo_ocl.clra_gemv import plan_parallel_ragged_gather_gemv3
 
 import pyopencl as cl
+import logging
+
 ctx = cl.create_some_context()
+logger = logging.getLogger(__name__)
 
 def allclose(raA, raB):
     assert len(raA) == len(raB)
@@ -59,19 +65,29 @@ class TestStuff(unittest.TestCase):
             sim = clY[i]
             assert np.allclose(ref, sim)
 
-    def _test_random(self, k=4, m=10, n=10):
+    def _test_random(self, k=4, p=1, m=10, n=10):
+        """
+        Parameters
+        ----------
+        k : number of operations (length of A_js)
+        p : number of dots per operation (width of A_js)
+        m : output dimensions
+        n : input dimensions
+        """
 
         rng = np.random.RandomState(3294)
 
         aa = [rng.normal(size=(m, n)) for i in xrange(k)]
         xx = [rng.normal(size=n) for i in xrange(k)]
         yy = [rng.normal(size=m) for i in xrange(k)]
+        ajs = [rng.randint(k, size=p) for i in xrange(k)]
+        xjs = [rng.randint(k, size=p) for i in xrange(k)]
 
         A = RA(aa)
         X = RA(xx)
         Y = RA(yy)
-        A_js = RA(np.arange(k))
-        X_js = RA(np.arange(k))
+        A_js = RA(ajs)
+        X_js = RA(xjs)
         alpha = 0.5
         beta = 0.1
 
@@ -99,17 +115,25 @@ class TestStuff(unittest.TestCase):
 
         # -- ensure they match
         for i in xrange(k):
-            aj, xj = int(A_js[i]), int(X_js[i])
-            ref = alpha*np.dot(A[aj], X[xj]) + beta*Y[i]
+            ref = beta*Y[i]
+            for aj, xj in zip(A_js[i], X_js[i]):
+                ref += alpha*np.dot(A[aj], X[xj])
             sim = clY[i]
-            assert np.allclose(ref, sim, atol=1e-5, rtol=1e-4)
+            assert np.allclose(ref, sim, atol=1e-3, rtol=1e-3)
+            # assert_allclose(self, logger, ref, sim, atol=1e-3, rtol=1e-3)
 
     def test_random_small(self):
         self._test_random(k=4, m=10, n=10)
 
     def test_random_large(self):
-        self._test_random(k=4, m=100, n=100)
+        self._test_random(k=10, m=550, n=550)
 
+    def test_many_dots_small(self):
+        self._test_random(k=4, p=4, m=10, n=10)
+
+    def test_many_dots_large(self):
+        # self._test_random(k=4, p=4, m=550, n=550)
+        self._test_random(k=4, p=4, m=1000, n=1000)
 
 class TestSpeed(unittest.TestCase):
 
