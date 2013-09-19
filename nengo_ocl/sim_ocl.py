@@ -161,15 +161,14 @@ class Simulator(sim_npy.Simulator):
 
     def drain_probe_buffers(self):
         self.queue.finish()
-        with sim_npy.Timer('drain_probes', enabled=True):
-            plan = self._cl_probe_plan
-            bufpositions = plan.cl_bufpositions.get()
-            for i, probe in enumerate(self.model.probes):
-                n_buffered = bufpositions[i]
-                if n_buffered:
-                    self.probe_outputs[probe].extend(plan.Y[i][:n_buffered])
-            plan.cl_bufpositions.fill(0)
-            self.queue.finish()
+        plan = self._cl_probe_plan
+        bufpositions = plan.cl_bufpositions.get()
+        for i, probe in enumerate(self.model.probes):
+            n_buffered = bufpositions[i]
+            if n_buffered:
+                self.probe_outputs[probe].extend(plan.Y[i][:n_buffered])
+        plan.cl_bufpositions.fill(0)
+        self.queue.finish()
 
 
     def print_profiling(self, sort=None):
@@ -215,29 +214,24 @@ class Simulator(sim_npy.Simulator):
         return self.run_steps(1)
 
     def run_steps(self, N, verbose=False):
-        for fn in self._plan:
-            fn()
-        self.drain_probe_buffers()
-        self.queue.finish()
-        with sim_npy.Timer('run_steps', enabled=True):
-            profiling = self.profiling
-            # -- precondition: the probe buffers have been drained
-            bufpositions = self._cl_probe_plan.cl_bufpositions.get()
-            assert np.all(bufpositions == 0)
-            # -- we will go through N steps of the simulator
-            #    in groups of up to B at a time, draining
-            #    the probe buffers after each group of B
-            while N:
-                B = min(N, self._max_steps_between_probes)
-                if self._prog is None:
-                    for bb in xrange(B):
-                        for fn in self._plan:
-                            fn(profiling)
-                        self.sim_step += 1
-                else:
-                    self._prog.call_n_times(B, self.profiling)
-                self.drain_probe_buffers()
-                N -= B
+        profiling = self.profiling
+        # -- precondition: the probe buffers have been drained
+        bufpositions = self._cl_probe_plan.cl_bufpositions.get()
+        assert np.all(bufpositions == 0)
+        # -- we will go through N steps of the simulator
+        #    in groups of up to B at a time, draining
+        #    the probe buffers after each group of B
+        while N:
+            B = min(N, self._max_steps_between_probes)
+            if self._prog is None:
+                for bb in xrange(B):
+                    for fn in self._plan:
+                        fn(profiling)
+                    self.sim_step += 1
+            else:
+                self._prog.call_n_times(B, self.profiling)
+            self.drain_probe_buffers()
+            N -= B
         if self.profiling > 1:
             self.print_profiling()
 
