@@ -72,13 +72,19 @@ def plan_probes(queue, periods, X, Y, tag=None):
                 // all local threads guaranteed to be
                 // in this branch together.
                 barrier(CLK_LOCAL_MEM_FENCE);
-                countdowns[n] = periods[n] - 1;
-                bufpositions[n] = bufpos + 1;
+                if (get_global_id(0) == 0)
+                {
+                    countdowns[n] = periods[n] - 1;
+                    bufpositions[n] = bufpos + 1;
+                }
             }
             else
             {
                 barrier(CLK_LOCAL_MEM_FENCE);
-                countdowns[n] = countdown - 1;
+                if (get_global_id(0) == 0)
+                {
+                    countdowns[n] = countdown - 1;
+                }
             }
         }
         """
