@@ -37,6 +37,7 @@ class Simulator(sim_npy.Simulator):
                 properties=cl.command_queue_properties.PROFILING_ENABLE)
         else:
             self.queue = cl.CommandQueue(context)
+        self.n_prealloc_probes = n_prealloc_probes
         sim_npy.Simulator.__init__(self,
                                    model,
                                    )
@@ -137,62 +138,38 @@ class Simulator(sim_npy.Simulator):
 
     def plan_probes(self):
         if len(self.model.probes) > 0:
-            buf_len = 1000
+            n_prealloc = self.n_prealloc_probes
 
             probes = self.model.probes
             periods = [int(np.round(float(p.dt) / self.model.dt))
                        for p in probes]
 
             sim_step = self.all_data[[self.sidx[self.model.steps]]]
-            P = self.RaggedArray(periods)
             X = self.all_data[[self.sidx[p.sig] for p in probes]]
             Y = self.RaggedArray(
-                [np.zeros((buf_len, p.sig.shape[0])) for p in probes])
+                [np.zeros((n_prealloc, p.sig.shape[0])) for p in probes])
 
-            cl_plan = plan_probes(self.queue, sim_step, P, X, Y, tag="probes")
-
-            lengths = [period * buf_len for period in periods]
-            def probe_copy_fn(profiling=False):
-                copy_step = self._probe_copy_step
-                for i, length in enumerate(lengths):
-                    if self.sim_step % length == length - 1:
-                        y = Y[i]
-                        if (copy_step > 0 and
-                            (self.sim_step - copy_step) < length):
-                            j = (copy_step / periods[i]) % buf_len
-                            y = y[j:]
-                        self.probe_outputs[probes[i]].extend(y)
-
-            self._probe_copy_step = 0
-            self._probe_periods = periods
-            self._probe_buffers = Y
-            return [cl_plan,
-                    PythonPlan(probe_copy_fn, name='probes', tag='probes')]
+            cl_plan = plan_probes(self.queue, sim_step, periods, X, Y,
+                                  tag="probes")
+            self._max_steps_between_probes = n_prealloc * min(periods)
+            cl_plan.Y = Y
+            self._cl_probe_plan = cl_plan
+            return [cl_plan]
         else:
             return []
 
-    def post_run(self):
-        """Perform cleanup tasks after a run"""
+    def drain_probe_buffers(self):
+        self.queue.finish()
+        with sim_npy.Timer('drain_probes', enabled=True):
+            plan = self._cl_probe_plan
+            bufpositions = plan.cl_bufpositions.get()
+            for i, probe in enumerate(self.model.probes):
+                n_buffered = bufpositions[i]
+                if n_buffered:
+                    self.probe_outputs[probe].extend(plan.Y[i][:n_buffered])
+            plan.cl_bufpositions.fill(0)
+            self.queue.finish()
 
-        ### Copy any remaining probe data off device
-        copy_step = self._probe_copy_step
-        for i, probe in enumerate(self.model.probes):
-            period = self._probe_periods[i]
-            buf_len = self._probe_buffers.shape0s[i]
-            pos = (self.sim_step / period) % buf_len
-            old_pos = (copy_step / period) % buf_len
-            if pos > 0:
-                buffer = self._probe_buffers[i]
-                if ((self.sim_step - copy_step) < period * buf_len
-                    and old_pos < pos):
-                    self.probe_outputs[probe].append(buffer[old_pos:pos])
-                else:
-                    self.probe_outputs[probe].append(buffer[:pos])
-
-        self._probe_copy_step = self.sim_step
-
-        if self.profiling > 1:
-            self.print_profiling()
 
     def print_profiling(self):
         ### TODO: fix this to work with PythonPlan
@@ -212,19 +189,36 @@ class Simulator(sim_npy.Simulator):
         print 'totals:\t%2.3f\t%2.3f\t%2.3f' % (
             time_running_kernels, 0.0, 0.0)
 
-        #import matplotlib.pyplot as plt
-        #for p in self._plan:
-            #if isinstance(p, Plan):
-                #plt.plot(p.btimes)
-        #plt.show()
+    def step(self):
+        return self.run_steps(1)
 
     def run_steps(self, N, verbose=False):
-        if self._prog is None:
-            for i in xrange(N):
-                self.step()
-        else:
-            self._prog.call_n_times(N, self.profiling)
-        self.post_run()
+        for fn in self._plan:
+            fn()
+        self.drain_probe_buffers()
+        self.queue.finish()
+        with sim_npy.Timer('run_steps', enabled=True):
+            profiling = self.profiling
+            # -- precondition: the probe buffers have been drained
+            bufpositions = self._cl_probe_plan.cl_bufpositions.get()
+            assert np.all(bufpositions == 0)
+            # -- we will go through N steps of the simulator
+            #    in groups of up to B at a time, draining
+            #    the probe buffers after each group of B
+            while N:
+                B = min(N, self._max_steps_between_probes)
+                if self._prog is None:
+                    for bb in xrange(B):
+                        for fn in self._plan:
+                            fn(profiling)
+                        self.sim_step += 1
+                else:
+                    self._prog.call_n_times(B, self.profiling)
+                self.drain_probe_buffers()
+                N -= B
+        if self.profiling > 1:
+            self.print_profiling()
+
 
     def probe_data(self, probe):
         return np.vstack(self.probe_outputs[probe])

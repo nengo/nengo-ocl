@@ -12,7 +12,7 @@ def all_equal(a, b):
 def _indent(s, i):
     return '\n'.join([(' ' * i) + line for line in s.split('\n')])
 
-def plan_probes(queue, sim_step, P, X, Y, tag=None):
+def plan_probes(queue, sim_step, periods, X, Y, tag=None):
     """
     Parameters
     ----------
@@ -21,13 +21,16 @@ def plan_probes(queue, sim_step, P, X, Y, tag=None):
     """
 
     assert len(X) == len(Y)
-    assert len(X) == len(P)
+    assert len(X) == len(periods)
     N = len(X)
 
     assert len(sim_step) == 1
     assert sim_step.shape0s[0] == 1 and sim_step.shape1s[0] == 1
 
-    assert P.cl_buf.ocldtype == 'int'
+    cl_countdowns = to_device(queue, np.zeros(N, dtype='int32'))
+    cl_bufpositions = to_device(queue, np.zeros(N, dtype='int32'))
+    cl_periods = to_device(queue, np.asarray(periods, dtype='int32'))
+
     assert X.cl_buf.ocldtype == Y.cl_buf.ocldtype
 
     ### N.B.  X[i].shape = (ndims[i], )
@@ -42,57 +45,72 @@ def plan_probes(queue, sim_step, P, X, Y, tag=None):
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void fn(
-            __global const ${Stype} *step_data,
-            __global const int *Pstarts,
-            __global const int *Pdata,
+            __global int *countdowns,
+            __global int *bufpositions,
+            __global const int *periods,
             __global const int *Xstarts,
             __global const int *Xshape0s,
             __global const ${Xtype} *Xdata,
             __global const int *Ystarts,
-            __global const int *Yshape0s,
-            __global const int *Yldas,
             __global ${Ytype} *Ydata
         )
         {
-            const int n = get_global_id(0);
-            const int period = Pdata[Pstarts[n]];
-            const int sim_step = (int)step_data[${step_start}] - 1;
-                // sim_step--, since OCL updates step before probes
+            const int n = get_global_id(1);
+            const int countdown = countdowns[n];
 
-            if ((sim_step % period) == 0) {
+            if (countdown == 0) {
                 const int n_dims = Xshape0s[n];
                 __global const ${Xtype} *x = Xdata + Xstarts[n];
+                const int bufpos = bufpositions[n];
 
-                const int probe_step = sim_step / period;
-                const int buf_len = Yshape0s[n];
-                __global ${Ytype} *y = Ydata + Ystarts[n]
-                                     + Yldas[n] * (probe_step % buf_len);
+                __global ${Ytype} *y = Ydata + Ystarts[n] + bufpos * n_dims;
 
-                for (int i = 0; i < n_dims; i++)
-                    y[i] = x[i];
+                for (int ii = get_global_id(0);
+                         ii < n_dims;
+                         ii += get_global_size(0))
+                {
+                    y[ii] = x[ii];
+                }
+                // This should *not* cause deadlock because
+                // all local threads guaranteed to be
+                // in this branch together.
+                barrier(CLK_LOCAL_MEM_FENCE);
+                countdowns[n] = periods[n] - 1;
+                bufpositions[n] = bufpos + 1;
+            }
+            else
+            {
+                countdowns[n] = countdown - 1;
             }
         }
         """
 
     textconf = dict(N=N,
-            step_start=sim_step.starts[0],
             Stype=sim_step.cl_buf.ocldtype,
             Xtype=X.cl_buf.ocldtype,
             Ytype=Y.cl_buf.ocldtype)
     text = Template(text, output_encoding='ascii').render(**textconf)
 
     full_args = (
-        sim_step.cl_buf,
-        P.cl_starts, P.cl_buf,
-        X.cl_starts, X.cl_shape0s, X.cl_buf,
-        Y.cl_starts, Y.cl_shape0s, Y.cl_stride0s, Y.cl_buf,
+        cl_countdowns,
+        cl_bufpositions,
+        cl_periods,
+        X.cl_starts,
+        X.cl_shape0s,
+        X.cl_buf,
+        Y.cl_starts,
+        Y.cl_buf,
         )
     _fn = cl.Program(queue.context, text).build().fn
     _fn.set_args(*[arr.data for arr in full_args])
 
-    gsize = (N,)
-    rval = Plan(queue, _fn, gsize, lsize=None, name="probes", tag=tag)
+    max_len = min(queue.device.max_work_group_size, max(X.shape0s))
+    gsize = (max_len, N,)
+    lsize = (max_len, 1)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="probes", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
+    rval.cl_bufpositions = cl_bufpositions
+    rval.Y = Y
     return rval
 
 def plan_direct(queue, code, init, Xname, X, Y, tag=None):

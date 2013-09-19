@@ -195,9 +195,10 @@ _TimerCumulative = defaultdict(float)
 _TimerCalls = defaultdict(int)
 class Timer(object):
     enabled = False
-    def __init__(self, msg, print_freq=0):
+    def __init__(self, msg, print_freq=0, enabled=enabled):
         self.msg = msg
         self.print_freq = print_freq
+        self.enabled = enabled
     def __enter__(self):
         self.t0 = time.time()
     def __exit__(self, *args):
