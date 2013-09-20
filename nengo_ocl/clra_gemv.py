@@ -235,6 +235,13 @@ def ref_impl(p, items):
         raise NotImplementedError()
     cl_items = to_device(p.queue,
         np.asarray(items, dtype='int32'))
+    if 1:
+        if len(items) < 10:
+            print 'Falling back on reference implementation'
+            p.print_geometry_summary(items, full=True)
+        else:
+            print 'Falling back on reference implementation'
+            p.print_geometry_summary(items)
 
     assert all(s == 1 for s in p.A.stride1s)
     assert all(s == 1 for s in p.X.stride1s)
