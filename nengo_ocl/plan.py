@@ -46,6 +46,10 @@ class PythonPlan(BasePlan):
 class Plan(BasePlan):
     def __init__(self, queue, kern, gsize, lsize, **kwargs):
         super(Plan, self).__init__(**kwargs)
+        assert 0 not in gsize, gsize
+        if lsize is not None:
+            assert len(lsize) > 0
+            assert 0 not in lsize, lsize
         self.queue = queue
         self.kern = kern
         self.gsize = gsize

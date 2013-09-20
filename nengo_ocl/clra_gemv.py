@@ -1,4 +1,3 @@
-import math
 import sys
 from collections import defaultdict
 import numpy as np
@@ -369,12 +368,12 @@ def ref_impl(p, items):
     if p.cl_beta is not None:
         full_args += [p.cl_beta]
     elif p.clra_beta is not None:
-        full_args += [p.clra_beta.cl_starts, clra_beta.cl_buf]
+        full_args += [p.clra_beta.cl_starts, p.clra_beta.cl_buf]
 
     if p.cl_gamma is not None:
         full_args += [p.cl_gamma]
     elif p.clra_gamma is not None:
-        full_args += [p.clra_gamma.cl_starts, clra_gamma.cl_buf]
+        full_args += [p.clra_gamma.cl_starts, p.clra_gamma.cl_buf]
 
     full_args += [
         p.Y_in.cl_starts,
@@ -582,10 +581,19 @@ def reduce_impl(p, items):
 
 def many_dots_impl(p, items):
     # target use case:
-    # * several very shallow gemvs into each target
+    # * several very shallow gemvs (short inner prods) into each target
     # * not all targets have the same size
-    # * most targets have approx. 10 - 100 elements
     #p.print_geometry_summary(items, full=True)
+
+    #
+    # This algorithm is blocked out so that a work-group [i, j] computes
+    # some segment of an output vector:
+    # e.g. Y[i][ 32 * j : 32 * (j + 1)]
+    #
+    # This is done for two reasons:
+    # - to increase occupancy when there are not so many vectors Y
+    # - to handle long vectors Y
+
 
     if p.clra_alpha is not None:
         raise NotImplementedError()
@@ -606,16 +614,30 @@ def many_dots_impl(p, items):
     A_js_shape0s = p.A_js.shape0s
     cl_gstructure, textconf = p.cl_geometry_and_textconf(items)
 
+    #min_n_dots = min(A_js_shape0s)
+    max_n_dots = max(A_js_shape0s)
+
+
     max_y_len = max(p.geometry[ii]['y_len'] for ii in items)
-    dot_block_size = int(
-        math.floor(p.queue.device.max_work_group_size / max_y_len))
-    gsize = (max_y_len, dot_block_size, len(items))
-    lsize = (max_y_len, dot_block_size, 1)
+    MAX_SEGMENT_SIZE = 16 # tricky to tune?
+
+    segment_size = min(
+        max_y_len,
+        MAX_SEGMENT_SIZE)
+    dot_block_size = min(
+        max_n_dots,
+        int(p.queue.device.max_work_group_size / segment_size),
+        )
+
+    n_segments = max_y_len // segment_size
+    gsize = (n_segments * segment_size, dot_block_size, len(items))
+    lsize = (segment_size, dot_block_size, 1)
 
     textconf.update({
+        'segment_size': segment_size,
         'dot_block_size': dot_block_size,
         'max_y_len': max_y_len,
-        'n_locals': dot_block_size * max_y_len
+        'n_locals': segment_size * dot_block_size
         })
     textconf.update(p.__dict__)
 
@@ -633,7 +655,7 @@ def many_dots_impl(p, items):
         __local int lstructure[${n_structure_vars}];
         ${Y.cl_buf.ocldtype} y_sum_pre;
         __local ${Y.cl_buf.ocldtype} \
-            y_sum_post[${dot_block_size}][${max_y_len}];
+            y_sum_post[${dot_block_size}][${segment_size}];
         const int local_idx = get_local_id(0) \
             + get_local_id(1) * get_local_size(0);
 
@@ -644,7 +666,7 @@ def many_dots_impl(p, items):
         }
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        const int mm = get_local_id(0);
+        const int mm = get_global_id(0);
         if (mm < ${y_len})
         {
 
@@ -665,14 +687,15 @@ def many_dots_impl(p, items):
     % endif
             }
 
-            y_sum_post[get_local_id(1)][mm] = 0;
+            // XXX Move X into shared memory first
+            y_sum_post[get_local_id(1)][get_local_id(0)] = 0;
             for (int ii = get_local_id(1);
                      ii < ${n_dot_products};
                      ii += ${dot_block_size})
             {
                 for (int nn = 0; nn < ${N_i}; nn += 1)
                 {
-                    y_sum_post[get_local_id(1)][mm] +=
+                    y_sum_post[get_local_id(1)][get_local_id(0)] +=
                         A_data[${a_starts} + mm * ${a_s0} + nn]
                         * X_data[${x_starts} + nn];
                 }
@@ -683,10 +706,11 @@ def many_dots_impl(p, items):
         {
             for (int ii = 1; ii < ${dot_block_size}; ++ii)
             {
-                y_sum_post[0][mm] += y_sum_post[ii][mm];
+                y_sum_post[0][get_local_id(0)] \
+                    += y_sum_post[ii][get_local_id(0)];
             }
             Y_data[${y_offset} + mm] = y_sum_pre
-                + ${float_alpha} * y_sum_post[0][mm];
+                + ${float_alpha} * y_sum_post[0][get_local_id(0)];
         }
     }
         """

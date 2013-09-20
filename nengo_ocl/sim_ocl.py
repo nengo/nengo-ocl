@@ -173,6 +173,9 @@ class Simulator(sim_npy.Simulator):
         for i, probe in enumerate(self.model.probes):
             n_buffered = bufpositions[i]
             if n_buffered:
+                # XXX: this syntax retrieves *ALL* of Y from the device
+                #      because the :n_buffered only works on the ndarray
+                #      *after* it has been transferred.
                 self.probe_outputs[probe].extend(plan.Y[i][:n_buffered])
         plan.cl_bufpositions.fill(0)
         self.queue.finish()
