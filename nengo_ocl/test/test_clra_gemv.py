@@ -1,19 +1,15 @@
 
-import nose
 import numpy as np
 
-from nengo.tests.helpers import assert_allclose
-
 from nengo_ocl.tricky_imports import unittest
-from nengo_ocl.ra_gemv import ragged_gather_gemv
 from  nengo_ocl import raggedarray as ra
 RA = ra.RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_gemv import plan_many_dots
-# from nengo_ocl.clra_gemv import plan_parallel_ragged_gather_gemv2
-# from nengo_ocl.clra_gemv import plan_parallel_ragged_gather_gemv3
+from nengo_ocl.clra_gemv import plan_reduce
+from nengo_ocl.clra_gemv import plan_ref
 
 import pyopencl as cl
 import logging
@@ -121,7 +117,6 @@ class TestStuff(unittest.TestCase):
                 ref += alpha*np.dot(A[aj], X[xj])
             sim = clY[i]
             assert np.allclose(ref, sim, atol=1e-3, rtol=1e-3)
-            # assert_allclose(self, logger, ref, sim, atol=1e-3, rtol=1e-3)
 
     def test_random_small(self):
         self._test_random(k=4, m=10, n=10)
@@ -189,15 +184,17 @@ def check_from_shapes(
         if not np.allclose(ref, sim, atol=1e-3, rtol=1e-3):
             print 'A_shapes',  A_shapes
             print 'X_shapes', X_shapes
-            print 'ref', ref[:10], '...', ref[-10:]
-            print 'sim', sim[:10], '...', sim[-10:]
+            if len(ref) > 20:
+                print 'ref', ref[:10], '...', ref[-10:]
+                print 'sim', sim[:10], '...', sim[-10:]
+            else:
+                print 'ref', ref
+                print 'sim', sim
             assert 0
 
-
-class TestManyDots(unittest.TestCase):
+class ShapeCheckMixin(object):
     def test_basic(self):
-        check_from_shapes(
-            plan_many_dots,
+        self.check_from_shapes(
             0.5, 0.6, 0.7,
             A_shapes = [(1, 1)],
             X_shapes = [(1, 1)],
@@ -205,8 +202,7 @@ class TestManyDots(unittest.TestCase):
             X_js = [[0]])
 
     def test_one_short_segment(self):
-        check_from_shapes(
-            plan_many_dots,
+        self.check_from_shapes(
             0.5, 0.6, 0.7,
             A_shapes = [(10, 1)],
             X_shapes = [(1, 1)],
@@ -214,34 +210,47 @@ class TestManyDots(unittest.TestCase):
             X_js = [[0]])
 
     def test_one_long_segment(self):
-        check_from_shapes(
-            plan_many_dots,
+        self.check_from_shapes(
             0.5, 0.6, 0.7,
-            A_shapes = [(2000, 1)],
+            A_shapes = [(2001, 1)],
             X_shapes = [(1, 1)],
             A_js = [[0]],
             X_js = [[0]])
 
     def test_one_short_segment_many_dots(self):
         for ND in 2, 20, 100:
-            check_from_shapes(
-                plan_many_dots,
+            self.check_from_shapes(
                 0.5, 0.6, 0.7,
-                A_shapes = [(2000, ii % 2) for ii in range(ND)],
-                X_shapes = [(ii % 2, 1) for ii in range(ND)],
+                A_shapes = [(10, 1 + ii % 2) for ii in range(ND)],
+                X_shapes = [(1 + ii % 2, 1) for ii in range(ND)],
                 A_js = [range(ND)],
                 X_js = [range(ND)])
 
     def test_one_short_segment_many_longer_dots(self):
         for ND in 2, 20, 100:
-            check_from_shapes(
-                plan_many_dots,
+            self.check_from_shapes(
                 0.5, 0.6, 0.7,
-                A_shapes = [(50, ii + 1) for ii in range(ND)],
+                A_shapes = [(2000, ii + 1) for ii in range(ND)],
                 X_shapes = [(ii + 1, 1) for ii in range(ND)],
                 A_js = [range(ND)],
                 X_js = [range(ND)])
 
+class TestManyDots(unittest.TestCase, ShapeCheckMixin):
+
+    def check_from_shapes(self, *args, **kwargs):
+        return check_from_shapes(plan_many_dots, *args, **kwargs)
+
+class TestReduce(unittest.TestCase, ShapeCheckMixin):
+
+    def check_from_shapes(self, *args, **kwargs):
+        return check_from_shapes(plan_reduce, *args, **kwargs)
+
+class TestRef(unittest.TestCase, ShapeCheckMixin):
+
+    def check_from_shapes(self, *args, **kwargs):
+        return check_from_shapes(plan_ref, *args, **kwargs)
+
 if __name__ == '__main__':
+
    unittest.main()
 

@@ -352,9 +352,6 @@ def reduce_impl(p, items,
                 group_size=None,
                 segment_size=None,
                ):
-    # TODO load X into shared if RPB > 1
-    # TODO: tune group_size
-    return ref_impl(p, items)
 
     #
     # Target use case: long inner products, small numbers of dots.
@@ -383,21 +380,23 @@ def reduce_impl(p, items,
     max_reduce_len = max(max([gg['a_shape1']
                               for gg in p.geometry[ii]['dots']])
                          for ii in items )
-    min_y_len = min([p.geometry[ii]['y_len'] for ii in items])
     max_y_len = max([p.geometry[ii]['y_len'] for ii in items])
-
-    if max_y_len != min_y_len:
-        # Make the global size the closest multiple of the group size
-        # (ceiling)
-        raise NotImplementedError()
 
     # segment means the piece of Y written by a work-group
     # group_size is the number of values that we're reducing over
 
-    if group_size is None:
-        group_size = 64 # XXX
-    segment_size = min(max_y_len, 4) # XXX
-    gsize = (group_size, segment_size, len(items))
+    if len(items) < 4:
+        if group_size is None:
+            group_size = 32 # XXX
+        if segment_size is None:
+            segment_size = min(max_y_len, 2) # XXX
+    else:
+        if group_size is None:
+            group_size = 32 # XXX
+        if segment_size is None:
+            segment_size = min(max_y_len, 4) # XXX
+    g_segments = int(math.ceil(float(max_y_len) / segment_size))
+    gsize = (group_size, g_segments * segment_size, len(items))
     lsize = (group_size, segment_size, 1)
 
     max_reduce_iters = int(math.ceil(float(max_reduce_len) / group_size))
@@ -405,12 +404,16 @@ def reduce_impl(p, items,
         'n_items' : len(items),
         'gsize'   : gsize,
         'segment_size': segment_size,
+        'max_y_len': max_y_len,
         'group_size' : group_size,
         'local_count': group_size * segment_size,
         'max_reduce_len': max_reduce_len,
         'N_cutoff': max_reduce_iters * group_size,
         'max_n_dots': max_n_dots,
     })
+    if 0:
+        for k, v in textconf.items():
+            print k, v
 
     textconf.update(p.__dict__)
 
@@ -457,7 +460,7 @@ def reduce_impl(p, items,
     % endif
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        if (get_local_id(0) == 0)
+        if ((get_local_id(0) == 0) && (get_global_id(1) < ${y_len}))
         {
     % if float_beta is not None and float_beta != 0 :
             y_sum_pre[get_local_id(1)] = ${float_beta}
@@ -472,8 +475,10 @@ def reduce_impl(p, items,
     % if float_gamma is not None and float_gamma != 0:
             y_sum_pre[get_local_id(1)] += ${float_gamma};
     % endif
+    // printf("betaY + gamma=%f\\n", y_sum_pre[get_local_id(1)]);
         }
 
+        partialDotProduct[get_local_id(1)][get_local_id(0)] = 0;
     % if max_n_dots > 1:
         for (int ii = 0;
                  ii < ${n_dot_products};
@@ -483,39 +488,40 @@ def reduce_impl(p, items,
         const int ii = 0;
     % endif
 
-        partialDotProduct[get_local_id(1)][get_local_id(0)] = 0;
+
         for (int nn = get_local_id(0);
                  nn < ${N_cutoff};
                  nn += get_local_size(0))
         {
-        % if segment_size == 1:
-            if (nn < ${N_i})
+    // segment_size = ${segment_size}
+    % if (segment_size == 1):
+            if ((nn < ${N_i}) && (get_global_id(1) < ${y_len}))
             {
             partialDotProduct[get_local_id(1)][get_local_id(0)] +=
                 A_data[${a_starts} + get_global_id(1) * ${a_s0} + nn]
                 * X_data[${x_starts} + nn];
             }
-        % else:
+    % else:
             barrier(CLK_LOCAL_MEM_FENCE);
             if ((get_local_id(1) == 0) && (nn < ${N_i}))
             {
                 lX[get_local_id(0)] = X_data[${x_starts} + nn];
             }
             barrier(CLK_LOCAL_MEM_FENCE);
-            if (nn < ${N_i})
+            if ((nn < ${N_i}) && (get_global_id(1) < ${y_len}))
             {
             partialDotProduct[get_local_id(1)][get_local_id(0)] +=
                 A_data[${a_starts} + get_global_id(1) * ${a_s0} + nn]
                 * lX[get_local_id(0)];
             }
-        % endif
+    % endif
         }
 
-    % if max_n_dots > 1:
+    % if (max_n_dots > 1):
         }
     % endif
 
-        // -- Parallel reduction within local group sum registers
+        // -- Parallel reduction long work-group dimension 0
         for (uint stride = 1;
                   stride < get_local_size(0);
                   stride *= 2)
@@ -529,8 +535,8 @@ def reduce_impl(p, items,
                     partialDotProduct[get_local_id(1)][index + stride];
             }
         }
-        //barrier(CLK_LOCAL_MEM_FENCE);
-        if (get_local_id(0) == 0) {
+        // barrier(CLK_LOCAL_MEM_FENCE);
+        if ((get_local_id(0) == 0) && (get_global_id(1) < ${y_len})) {
             Y_data[${y_offset} + get_global_id(1)] = y_sum_pre[get_local_id(1)]
                 + ${float_alpha} * partialDotProduct[get_local_id(1)][0];
         }
@@ -741,10 +747,17 @@ def many_dots_impl(p, items):
     return rval
 
 
+class plan_ref(gemv_prog):
+    def choose_plans(self):
+        return [ref_impl(self, range(len(self.Y)))]
+
 class plan_many_dots(gemv_prog):
     def choose_plans(self):
         return [many_dots_impl(self, range(len(self.Y)))]
 
+class plan_reduce(gemv_prog):
+    def choose_plans(self):
+        return [reduce_impl(self, range(len(self.Y)))]
 
 class plan_ragged_gather_gemv(gemv_prog):
 
@@ -754,9 +767,9 @@ class plan_ragged_gather_gemv(gemv_prog):
 
         long_dots = [ii
             for ii in remaining_items
-            if self.geometry[ii]['y_len'] == 1
-                and len(self.geometry[ii]['dots'])
-                and self.geometry[ii]['dots'][0]['a_shape1'] > 16]
+            if len(self.geometry[ii]['dots']) <= 2
+               and max([0] + [dct['a_shape1']
+                              for dct in self.geometry[ii]['dots']]) > 16]
         if long_dots:
             try:
                 long_plan = reduce_impl(self, long_dots)
@@ -767,22 +780,6 @@ class plan_ragged_gather_gemv(gemv_prog):
             remaining_items = [ii
                 for ii in remaining_items
                 if ii not in long_dots]
-
-        long_gemv2s = [ii
-            for ii in remaining_items
-            if self.geometry[ii]['y_len'] == 2
-                and len(self.geometry[ii]['dots'])
-                and self.geometry[ii]['dots'][0]['a_shape1'] > 16]
-        if long_gemv2s:
-            try:
-                gemv2_plan = reduce_impl(self, long_gemv2s)
-            except NotImplementedError:
-                gemv2_plan = ref_impl(self, long_gemv2s)
-            gemv2_plan.tag += '-gemv2-%i' % len(long_gemv2s)
-            plans.append(gemv2_plan)
-            remaining_items = [ii
-                for ii in remaining_items
-                if ii not in long_gemv2s]
 
         many_dots = [ii
             for ii in remaining_items
