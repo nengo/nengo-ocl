@@ -28,81 +28,47 @@ prefix_unary_ops = {
     ast.USub: '-',
     }
 
-function_map = {
+### list of functions that we can map directly onto OCL (all unary)
+direct_funcs = {
     np.abs: 'fabs',
     np.absolute: 'fabs',
-    np.add: lambda args: args[0] + " + " + args[1],
     np.arccos: 'acos',
     np.arccosh: 'acosh',
     np.arcsin: 'asin',
     np.arcsinh: 'asinh',
     np.arctan: 'atan',
-    np.arctan2: 'atan2',
     np.arctanh: 'atanh',
-    np.bitwise_and: lambda args: args[0] + " & " + args[1],
-    np.bitwise_not: lambda args: "~" + args[0],
-    np.bitwise_or: lambda args: args[0] + " | " + args[1],
-    np.bitwise_xor: lambda args: args[0] + " ^ " + args[1],
     np.ceil: 'ceil',
     np.copysign: 'copysign',
     np.cos: 'cos',
     np.cosh: 'cosh',
-    np.deg2rad: lambda args: args[0] + " * M_PI / 180",
-    np.degrees: lambda args: args[0] + " * 180 * M_1_PI",
-    np.divide: lambda args: args[0] + " / " + args[1],
-    np.equal: lambda args: args[0] + " == " + args[1],
     np.exp: 'exp',
     np.exp2: 'exp2',
     np.expm1: 'expm1',
     np.fabs: 'fabs',
     np.floor: 'floor',
-    np.floor_divide: lambda args: "floor(" + args[0] + " / " + args[1] + ")",
     np.fmax: 'fmax',
     np.fmin: 'fmin',
     np.fmod: 'fmod',
-    np.greater: lambda args: args[0] + " > " + args[1],
-    np.greater_equal: lambda args: args[0] + " >= " + args[1],
-    np.hypot: "hypot",
-    np.invert: lambda args: "~" + args[0],
+    np.hypot: 'hypot',
     np.isfinite: 'isfinite',
     np.isinf: 'isinf',
     np.isnan: 'isnan',
     np.ldexp: 'ldexp',
-    np.left_shift: lambda args: "<<" + args[0],
-    np.less: lambda args: args[0] + " < " + args[1],
-    np.less_equal: lambda args: args[0] + " <= " + args[1],
     np.log: 'log',
     np.log10: 'log10',
     np.log1p: 'log1p',
     np.log2: 'log2',
-    np.logaddexp: lambda args: "log(exp(" + args[0] + "), exp(" + args[1] + "))",
-    np.logaddexp: lambda args: "log2(exp2(" + args[0] + "), exp2(" + args[1] + "))",
-    np.logical_and: lambda args: args[0] + " && " + args[1],
-    np.logical_not: lambda args: "!" + args[0],
-    np.logical_or: lambda args: args[0] + " || " + args[1],
-    np.logical_xor: lambda args: args[0] + " ^^ " + args[1],
     np.maximum: 'fmax',
     np.minimum: 'fmin',
     np.mod: 'remainder',
-    np.modf: lambda args: "floor(" + args[0] + ")" if len(args)==1 else 'modf(' + args[0] + ", *" + args[2] + ")",
-    np.multiply: lambda args: args[0] + " * " + args[1],
-    np.negative: lambda args: "-" + args[0],
     np.nextafter: 'nextafter',
     np.power: 'pow',
-    np.prod: lambda args: args[0] + " * " + args[1],
-    np.product: lambda args: args[0] + " * " + args[1],
-    np.rad2deg: lambda args: args[0] + " * 180 * M_1_PI",
-    np.radians: lambda args: args[0] + " * M_PI / 180",
-    np.reciprocal: lambda args: "1 / " + args[0],
     np.remainder: 'remainder',
     np.rint: 'rint',
-    np.sign: lambda args: args[0] + "==0 ? 0 : " + args[0] + ">0 ? 1 : 0",
-    np.signbit: lambda args: args[0] + " < 0",
     np.sin: 'sin',
     np.sinh: 'sinh',
     np.sqrt: 'sqrt',
-    np.square: lambda args: args[0] + " * " + args[0],
-    np.subtract: lambda args: args[0] + " - " + args[1],
     np.tan: 'tan',
     np.tanh: 'tanh',
     math.acos: 'acos',
@@ -110,13 +76,11 @@ function_map = {
     math.asin: 'asin',
     math.asinh: 'asinh',
     math.atan: 'atan',
-    math.atan2: 'atan2',
     math.atanh: 'atanh',
     math.ceil: 'ceil',
     math.copysign: 'copysign',
     math.cos: 'cos',
     math.cosh: 'cosh',
-    math.degrees: lambda args: args[0] + " * 180 * M_1_PI",
     math.erf: 'erf',
     math.erfc: 'erfc',
     math.exp: 'exp',
@@ -124,7 +88,6 @@ function_map = {
     math.fabs: 'fabs',
     math.floor: 'floor',
     math.fmod: 'fmod',
-    math.gamma: lambda args: 'exp(lgamma(' + args[0] + '))',
     math.hypot: 'hypot',
     math.isinf: 'isinf',
     math.isnan: 'isnan',
@@ -141,8 +104,131 @@ function_map = {
     math.tanh: 'tanh',
     }
 
+### List of functions that are supported, but cannot be directly mapped onto
+### a unary OCL function
+indirect_funcs = {
+    np.add: lambda x, y: BinExp(x, '+', y),
+    np.arctan2: lambda x, y: FuncExp('atan2', x, y),
+    np.asarray: lambda x: x,
+    np.bitwise_and: lambda x, y: BinExp(x, '&', y),
+    np.bitwise_not: lambda x: UnaryExp('~', x),
+    np.bitwise_or: lambda x, y: BinExp(x, '|', y),
+    np.bitwise_xor: lambda x, y: BinExp(x, '^', y),
+    np.deg2rad: np.radians,
+    np.degrees: lambda x: BinExp(
+        x, '*', BinExp(NumExp(180), '*', VarExp('M_1_PI'))),
+    np.divide: lambda x, y: BinExp(x, '/', y),
+    np.equal: lambda x, y: BinExp(x, '==', y),
+    np.floor_divide: lambda x, y: FuncExp('floor', BinExp(x, '/', y)),
+    np.fmax: lambda x, y: FuncExp('fmax', x, y),
+    np.fmin: lambda x, y: FuncExp('fmin', x, y),
+    np.fmod: lambda x, y: FuncExp('fmod', x, y),
+    np.greater: lambda x, y: BinExp(x, '>', y),
+    np.greater_equal: lambda x, y: BinExp(x, '>=', y),
+    np.invert: lambda x: UnaryExp('~', x),
+    np.left_shift: lambda x, y: BinExp(x, '<<', y),
+    np.less: lambda x, y: BinExp(x, '<', y),
+    np.less_equal: lambda x, y: BinExp(x, '<=', y),
+    np.logaddexp: lambda x, y: FuncExp(
+            'log', BinExp(FuncExp('exp', x), '+', FuncExp('exp', y))),
+    np.logaddexp2: lambda x, y: FuncExp(
+            'log2', BinExp(FuncExp('exp2', x), '+', FuncExp('exp2', y))),
+    np.logical_and: lambda x, y: BinExp(x, '&&', y),
+    np.logical_not: lambda x: UnaryExp('!', x),
+    np.logical_or: lambda x, y: BinExp(x, '||', y),
+    np.logical_xor: lambda x, y: BinExp(x, '^^', y),
+    np.maximum: np.fmax,
+    np.minimum: np.fmin,
+    np.multiply: lambda x, y: BinExp(x, '*', y),
+    np.negative: lambda x: UnaryExp('-', x),
+    np.prod: lambda x, y: BinExp(x, '*', y),
+    np.product: lambda x, y: BinExp(x, '*', y),
+    np.rad2deg: np.degrees,
+    np.radians: lambda x: BinExp(
+        x, '*', BinExp(VarExp('M_PI'), '/', NumExp(180))),
+    np.reciprocal: lambda x: BinExp(NumExp(1.), '/', x),
+    np.sign: lambda x: IfExp(
+        BinExp(x, '<=', NumExp(0)),
+        IfExp(BinExp(x, '<', NumExp(0)), NumExp(-1), NumExp(0)), NumExp(1)),
+    np.signbit: lambda x: BinExp(x, '<', NumExp(0)),
+    np.square: lambda x: BinExp(x, '*', x),
+    np.subtract: lambda x, y: BinExp(x, '-', y),
+    math.atan2: np.arctan2,
+    math.degrees: np.degrees,
+    math.gamma: lambda x: FuncExp('exp', FuncExp('lgamma', x)),
+    math.radians: np.radians,
+    }
+
 INPUT_NAME = "__INPUT__"
 OUTPUT_NAME = "__OUTPUT__"
+
+class Expression(object):
+    """Represents a numerical expression"""
+    def to_ocl(self, wrap=False):
+        raise NotImplementedError()
+
+    def __str__(self):
+        return self.to_ocl()
+
+class VarExp(Expression):
+    def __init__(self, name):
+        self.name = name
+
+    def to_ocl(self, wrap=False):
+        return self.name
+
+class NumExp(Expression):
+    def __init__(self, value):
+        self.value = value
+
+    def to_ocl(self, wrap=False):
+        if isinstance(self.value, float):
+            ### Append an 'f' to floats, o.w. some calls (e.g. pow) ambiguous
+            ### TODO: can we get around putting the 'f' afterwards?
+            return "%sf" % self.value
+        else:
+            return str(self.value)
+
+class UnaryExp(Expression):
+    def __init__(self, op, right):
+        self.op, self.right = op, right
+
+    def to_ocl(self, wrap=False):
+        if isinstance(self.right, NumExp) and self.right.value < 0:
+            s = "%s(%s)" % (self.op, self.right.to_ocl())
+        else:
+            s = "%s%s" % (self.op, self.right.to_ocl(wrap=True))
+        return ("(%s)" % s) if wrap else s
+
+class BinExp(Expression):
+    def __init__(self, left, op, right):
+        self.left, self.op, self.right = left, op, right
+
+    def to_ocl(self, wrap=False):
+        s = "%s %s %s" % (
+            self.left.to_ocl(wrap=True), self.op, self.right.to_ocl(wrap=True))
+        return ("(%s)" % s) if wrap else s
+
+class FuncExp(Expression):
+    def __init__(self, fn, args):
+        if not isinstance(args, list):
+            args = [args]
+        self.fn, self.args = fn, args
+
+    def to_ocl(self, wrap=False):
+        args = [arg.to_ocl() for arg in self.args]
+        return "%s(%s)" % (self.fn, ', '.join(args))
+
+class IfExp(Expression):
+    def __init__(self, cond, true, false):
+        self.cond, self.true, self.false = cond, true, false
+
+    def to_ocl(self, wrap=False):
+        s = "%s ? %s : %s" % (
+            self.cond.to_ocl(wrap=True), self.true.to_ocl(wrap=True),
+            self.false.to_ocl(wrap=True))
+        return ("(%s)" % s) if wrap else s
+
 
 class OCL_Translator(ast.NodeVisitor):
     def __init__(self, source, globals_dict, closure_dict, filename=None):
@@ -163,15 +249,15 @@ class OCL_Translator(ast.NodeVisitor):
         self.init = collections.OrderedDict()
         self.body = self.visit_block(function_def.body)
 
-    def _var_to_string(self, var):
-        if isinstance(var, str):
+    def _parse_var(self, var):
+        if isinstance(var, (float, int)):
+            return NumExp(var)
+        elif isinstance(var, str):
             return '"%s"' % var
-        elif isinstance(var, float):
-            ### TODO: can we get around putting the 'f' afterwards?
-            ### Append an 'f' to floats, o.w. some calls (e.g. pow) ambiguous
-            return "%sf" % var
-        elif isinstance(var, int):
-            return str(var)
+        elif isinstance(var, (list, np.ndarray)):
+            if isinstance(var, np.ndarray):
+                var = var.tolist()
+            return [self._parse_var(v) for v in var]
         else:
             raise NotImplementedError(
                 "Python objects of type %s are not supported" %
@@ -185,24 +271,27 @@ class OCL_Translator(ast.NodeVisitor):
     def visit_Name(self, expr):
         name = expr.id
         if name in self.arg_names:
-            return '%s[0]' % name
+            return VarExp('%s[0]' % name)
         elif name in self.closures:
-            return self._var_to_string(self.closures[name])
+            return self._parse_var(self.closures[name])
         elif name in self.globals:
-            return self._var_to_string(self.globals[name])
+            return self._parse_var(self.globals[name])
         elif name in self.init:
-            return name
+            return VarExp(name)
         else:
             raise ValueError("Unrecognized name '%s'" % name)
 
     def visit_Num(self, expr):
-        return self._var_to_string(expr.n)
+        return self._parse_var(expr.n)
 
     def visit_Str(self, expr):
-        return self._var_to_string(expr.s)
+        return self._parse_var(expr.s)
 
     def visit_Index(self, expr):
-        return self.visit(expr.value)
+        value = self.visit(expr.value)
+        assert (isinstance(value, NumExp) and isinstance(value.value, int)), (
+            "Only integer indices allowed")
+        return value.to_ocl()
 
     def visit_Ellipsis(self, expr):
         raise NotImplementedError("Ellipsis")
@@ -213,48 +302,49 @@ class OCL_Translator(ast.NodeVisitor):
     def visit_ExtSlice(self, expr):
         raise NotImplementedError("ExtSlice")
 
-    def _needs_wrapping(self, expr):
-        if isinstance(expr, (ast.Num, ast.Name, ast.Call, ast.Subscript)):
-            return False
-        elif isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Pow):
-            return False
+    def _visit_unary_op(self, op, operand):
+        opt = type(op)
+        value = self.visit(operand)
+        if opt in prefix_unary_ops:
+            return UnaryExp(prefix_unary_ops[opt], value)
         else:
-            return True
+            raise NotImplementedError(
+                "'%s' operator is not supported" % opt.__name__)
 
     def _visit_binary_op(self, op, left, right):
         s_left = self.visit(left)
         s_right = self.visit(right)
-        if self._needs_wrapping(left): s_left = "(%s)" % s_left
-        if self._needs_wrapping(right): s_right = "(%s)" % s_right
 
         opt = type(op)
         if opt in infix_binary_ops:
-            return "%s %s %s" % (s_left, infix_binary_ops[opt], s_right)
+            return BinExp(s_left, infix_binary_ops[opt], s_right)
         elif opt is ast.Pow:
-            if isinstance(right, ast.Num):
-                if isinstance(right.n, int):
-                    return "pown(%s, %s)" % (s_left, s_right)
-                elif right.n > 0:
-                    return "powr(%s, %s)" % (s_left, s_right)
-            return "pow(%s, %s)" % (s_left, s_right)
+            if isinstance(s_right, NumExp):
+                if isinstance(s_right.value, int):
+                    if s_right.value == 2:
+                        return BinExp(s_left, '*', s_left)
+                    else:
+                        return FuncExp("pown", [s_left, s_right])
+                elif s_right.value > 0:
+                    return FuncExp("powr", [s_left, s_right])
+            return FuncExp("pow", [s_left, s_right])
         else:
             raise NotImplementedError(
                 "'%s' operator is not supported" % opt.__name__)
 
     def visit_UnaryOp(self, expr):
-        value = self.visit(expr.operand)
-        opt = type(expr.op)
-        if opt in prefix_unary_ops:
-            return "%s%s" % (prefix_unary_ops[opt], value)
-        else:
-            raise NotImplementedError(
-                "'%s' operator is not supported" % opt.__name__)
+        return self._visit_unary_op(expr.op, expr.operand)
 
     def visit_BinOp(self, expr):
         return self._visit_binary_op(expr.op, expr.left, expr.right)
 
     def visit_BoolOp(self, expr):
-        raise NotImplementedError("BoolOp")
+        if len(expr.values) == 1:
+            return self._visit_unary_op(expr.op, expr.values[0])
+        elif len(expr.values) == 2:
+            return self._visit_binary_op(expr.op, *expr.values)
+        else:
+            raise NotImplementedError("values > 2 not supported")
 
     def visit_Compare(self, expr):
         assert len(expr.ops) == 1
@@ -264,10 +354,8 @@ class OCL_Translator(ast.NodeVisitor):
 
     def visit_Subscript(self, expr):
         assert isinstance(expr.value, ast.Name)
-        assert isinstance(expr.slice, ast.Index), "Slicing is not supported"
-        # var = self.visit(expr.value)
         index = self.visit(expr.slice)
-        return "%s[%s]" % (expr.value.id, index)
+        return VarExp("%s[%s]" % (expr.value.id, index))
 
     def visit_Call(self, expr):
         assert expr.kwargs is None, "kwargs not implemented"
@@ -279,20 +367,23 @@ class OCL_Translator(ast.NodeVisitor):
             else:
                 return getattr(get_handle(expr.value), expr.attr)
         handle = get_handle(expr.func)
+        args = [self.visit(arg) for arg in expr.args]
 
-        if handle in function_map:
-            value = function_map[handle]
-            args = [self.visit(arg) for arg in expr.args]
-            if callable(value):
-                return "(%s)" % value(args)
-            else:
-                return "%s(%s)" % (value, ', '.join(args))
-        else:
-            raise NotImplementedError(
-                "'%s' function is not supported" % handle.__name__)
+        if handle in direct_funcs and len(args) == 1:
+            return FuncExp(direct_funcs[handle], args[0])
+        elif handle in indirect_funcs:
+            indirect = handle
+            while indirect in indirect_funcs:
+                indirect = indirect_funcs[indirect]
+            if indirect.func_code.co_argcount == len(args):
+                return indirect(*args)
+
+        raise NotImplementedError(
+            "'%s' function is not supported for %d arguments"
+            % (handle.__name__, len(args)))
 
     def visit_List(self, expr):
-        raise NotImplementedError("List")
+        return [self.visit(elt) for elt in expr.elts]
 
     def visit_Expr(self, expr):
         raise NotImplementedError("Expr")
@@ -313,7 +404,7 @@ class OCL_Translator(ast.NodeVisitor):
         cond = self.visit(expr.test)
         true = self.visit(expr.body)
         false = self.visit(expr.orelse)
-        return "%s ? %s : %s" % (cond, true, false)
+        return IfExp(cond, true, false)
 
     def visit_Print(self, expr):
         assert expr.dest is None, "other dests not implemented"
@@ -324,13 +415,13 @@ class OCL_Translator(ast.NodeVisitor):
             # we're using string formatting
             stmt = self.visit(expr.values[0].left)[:-1] + '\\n"'
             if isinstance(expr.values[0].right, ast.Tuple):
-                args = [self.visit(arg) for arg in expr.values[0].right.elts]
+                args = [str(self.visit(arg)) for arg in expr.values[0].right.elts]
             else:
-                args = [self.visit(expr.values[0].right)]
+                args = [str(self.visit(expr.values[0].right))]
             return ["printf(%s);" % ', '.join([stmt] + args)]
         else:
             stmt = '"' + ' '.join(['%s' for arg in expr.values]) + '\\n"'
-            args = ', '.join([self.visit(arg) for arg in expr.values])
+            args = ', '.join([str(self.visit(arg)) for arg in expr.values])
             return ["printf(%s, %s);" % (stmt, args)]
 
     def visit_lhs(self, lhs):
@@ -348,9 +439,10 @@ class OCL_Translator(ast.NodeVisitor):
 
     def visit_Assign(self, expr):
         assert len(expr.targets) == 1, "Multiple targets not implemented"
-        rhs = self.visit(expr.value)
         lhs = self.visit_lhs(expr.targets[0])
-        return ["%s = %s;" % (lhs, rhs)]
+        rhs = self.visit(expr.value)
+        assert isinstance(rhs, Expression), "Can only assign math expressions"
+        return ["%s = %s;" % (lhs, rhs.to_ocl())]
 
     def visit_AugAssign(self, expr):
         new_value = self.visit_lhs(expr.target)
@@ -358,18 +450,27 @@ class OCL_Translator(ast.NodeVisitor):
         return ["%s = %s;" % (new_value, target)]
 
     def visit_Return(self, expr):
-        if isinstance(expr.value, ast.List):
-            return ["%s[%d] = %s;" % (OUTPUT_NAME, i, self.visit(elt))
-                    for i, elt in enumerate(expr.value.elts)]
+        value = self.visit(expr.value)
+        if isinstance(value, list):
+            for v in value:
+                if not isinstance(v, Expression):
+                    raise ValueError(
+                        "Can only return list of mathematical expressions")
+            return ["%s[%d] = %s;" % (OUTPUT_NAME, i, v.to_ocl())
+                    for i, v in enumerate(value)] + ["return;"]
+        elif isinstance(value, Expression):
+            return ["%s[0] = %s;" % (OUTPUT_NAME, value.to_ocl()), "return;"]
         else:
-            return ["%s[0] = %s;" % (OUTPUT_NAME, self.visit(expr.value))]
+            raise ValueError("Can only return mathematical expressions, "
+                             "or lists of expressions")
 
     def visit_If(self, expr):
-        return ["if (%s) {" % self.visit(expr.test),
-                self.visit_block(expr.body),
-                "} else {",
-                self.visit_block(expr.orelse),
-                "}"]
+        a = ["if (%s) {" % self.visit(expr.test), self.visit_block(expr.body)]
+        orelse = self.visit_block(expr.orelse)
+        if len(orelse) == 0:
+            return a + ["}"]
+        else:
+            return a + ["} else {", orelse, "}"]
 
     def visit_While(self, expr):
         raise NotImplementedError("While")
@@ -412,7 +513,7 @@ class OCL_Function(object):
     def get_ocl_translator(self):
         if self._is_lambda(self.fn):
             raise NotImplementedError("No lambda functions")
-        elif self.fn in function_map:
+        elif self.fn in direct_funcs or self.fn in indirect_funcs:
             function = self.fn
             def dummy(x):
                 return function(x)
@@ -456,7 +557,7 @@ class OCL_Function(object):
         lines = []
         for b in blocks:
             if isinstance(b, list):
-                lines.extend(flatten(b, indent+4))
+                lines.extend(self._flatten(b, indent+4))
             else:
                 lines.append("".join([" "]*indent) + b)
         return lines
@@ -471,38 +572,116 @@ class OCL_Function(object):
 
 
 if __name__ == '__main__':
-    # @OCL_Function
-    # def square(x):
-    #     print "wow: %f, %d, %s" % (0.3, 9, "hello")
-    #     if x < 0.5 - 0.1:
-    #         x = 2. * x
-    #         x -= 4 + (3 if x > 99 else 2)
-    #     elif x == 2:
-    #         x *= 9.12
-    #         x = 4*(x - 2)
-    #     else:
-    #         x = 9*x
-    #         x += x**(-1.1)
 
-    #     return np.sin(multiplier * (x * x))
+    multiplier = 3842.012
+    @OCL_Function
+    def square(x):
+        print "wow: %f, %d, %s" % (0.3, 9, "hello")
+        if x < 0.5 - 0.1:
+            y = 2. * x
+            z -= 4 + (3 if x > 99 else 2)
+        elif x == 2:
+            y *= 9.12
+            z = 4*(x - 2)
+        else:
+            y = 9*x
+            z += x**(-1.1)
+
+        return np.sin(multiplier * (y * z) + np.square(y))
 
     # print square(4)
-    # print square.get_ocl_code()
+    print square.init
+    print square.code
 
-    # multiplier = 3.14
-
-    # def slicing(x):
-    #     y = x**3
-    #     return x[0] * x[1]
-    #     # return [x * x, multiplier*y]
-
-    # function = np.sin
-
-    def function(dede):
-        return np.subtract(dede, dede)
+    print '*' * 5 + 'Unary minus' + '*' * 50
+    insert = -0.5
+    def function(x):
+        return x * -insert
 
     ocl_fn = OCL_Function(function)
     print ocl_fn.init
     print ocl_fn.code
 
+    print '*' * 5 + 'Subtract' + '*' * 50
+    def function(x):
+        return np.subtract(x[1], x[0])
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print '*' * 5 + 'List' + '*' * 50
+    def function(y):
+        z = y[0] * y[1]
+        return [y[1], z]
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print '*' * 5 + 'Array' + '*' * 50
+    value = np.arange(3)
+    def function(y):
+        return value
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print '*' * 5 + 'AsArray' + '*' * 50
+    def function(y):
+        return np.asarray([y[0], y[1], 3])
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print '*' * 5 + 'IfExp' + '*' * 50
+    def function(y):
+        return 5 if y > 3 else 0
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print '*' * 5 + 'Sign' + '*' * 50
+    def function(y):
+        return np.sign(y)
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print '*' * 5 + 'Radians' + '*' * 50
+    power = 2
+    def function(y):
+        return np.radians(y**power)
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print '*' * 5 + 'Boolop' + '*' * 50
+    power = 3.2
+    def function(y):
+        if y > 3 and y < 5:
+            return y**power
+        else:
+            return np.sign(y)
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print '*' * 5 + 'Nested return' + '*' * 50
+    power = 3.2
+    def function(y):
+        if y > 3 and y < 5:
+            return y**power
+
+        return np.sign(y)
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code
 
