@@ -4,7 +4,7 @@ This file holds a parser to turn simple Python functions into OCL code
 TODO:
 """
 
-import inspect, ast, collections
+import inspect, ast, _ast, collections
 import numpy as np
 import math
 
@@ -85,7 +85,6 @@ direct_funcs = {
     np.log10: 'log10',
     np.log1p: 'log1p',
     np.log2: 'log2',
-    np.rint: 'rint',
     np.sin: 'sin',
     np.sinh: 'sinh',
     np.sqrt: 'sqrt',
@@ -230,6 +229,22 @@ class IfExp(Expression):
         return ("(%s)" % s) if wrap else s
 
 
+class Function_Finder(ast.NodeVisitor):
+    # Finds a FunctionDef or Lambda in an Abstract Syntax Tree
+
+    def __init__(self):
+        self.fn_node = None
+
+    def generic_visit(self, stmt):
+        if isinstance(stmt, _ast.Lambda) or isinstance(stmt, _ast.FunctionDef):
+            if self.fn_node is None:
+                self.fn_node = stmt
+            else:
+                raise NotImplementedError("The source code associated with the function contains more than one function definition")
+
+        super(self.__class__, self).generic_visit(stmt)
+
+
 class OCL_Translator(ast.NodeVisitor):
     def __init__(self, source, globals_dict, closure_dict, filename=None):
         self.source = source
@@ -239,15 +254,31 @@ class OCL_Translator(ast.NodeVisitor):
 
         ### parse and make code
         a = ast.parse(source)
-        function_def = a.body[0]
+        ff = Function_Finder()
+        ff.visit(a);
+        function_def = ff.fn_node
 
-        self.arg_names = [arg.id for arg in function_def.args.args]
+        if isinstance(function_def, _ast.FunctionDef):
+            self.function_name = function_def.name
+            self.arg_names = [arg.id for arg in function_def.args.args]
+            self.body = self.visit_block(function_def.body)
+        elif isinstance(function_def, _ast.Lambda):
+            if hasattr(function_def, 'targets'):
+                self.function_name = function_def.targets[0].id
+            else:
+                self.function_name = "<lambda>"
+
+            self.arg_names = [arg.id for arg in function_def.args.args]
+            r = _ast.Return() #wrap lambda expression to look like a one-line function
+            r.value = function_def.body
+            r.lineno = 1
+            r.col_offset = 4
+            self.body = self.visit_block([r])
+        else:
+            raise RuntimeError("Expected function definition or lambda function assignment, got " + str(type(function_def)))
 
         self.filename = filename
-        self.function_name = function_def.name
-
         self.init = collections.OrderedDict()
-        self.body = self.visit_block(function_def.body)
 
     def _parse_var(self, var):
         if isinstance(var, (float, int)):
@@ -513,9 +544,11 @@ class OCL_Function(object):
         return isinstance(v, type(lambda: None)) and v.__name__ == '<lambda>'
 
     def get_ocl_translator(self):
-        if self._is_lambda(self.fn):
-            raise NotImplementedError("No lambda functions")
-        elif self.fn in direct_funcs or self.fn in indirect_funcs:
+        # if self._is_lambda(self.fn):
+        #     raise NotImplementedError("No lambda functions")
+        # elif self.fn in direct_funcs or self.fn in indirect_funcs:
+
+        if self.fn in function_map:
             function = self.fn
             def dummy(x):
                 return function(x)
