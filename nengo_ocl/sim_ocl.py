@@ -85,10 +85,6 @@ class Simulator(sim_npy.Simulator):
                 assert unit_stride(sig_in.elemstrides)
                 assert unit_stride(sig_out.elemstrides)
 
-            x = np.zeros(in_dim)
-            y = np.asarray(fn(x))
-            assert y.size == out_dim
-
             ### try to get OCL code
             try:
                 ocl_fn = OCL_Function(fn)
