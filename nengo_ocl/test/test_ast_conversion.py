@@ -21,7 +21,7 @@ def OclSimulator(model):
     return sim_ocl.Simulator(model, ctx)
 
 class TestAstConversion(unittest.TestCase):
-    def _test_fn(self, fn, in_dims, low=-10, high=10, in_nengo=True):
+    def _test_fn(self, fn, in_dims, low=-10, high=10, in_nengo=True, int_inds=[]):
         """Test an arbitrary function"""
         
         seed = sum(map(ord, fn.__name__)) % 2**30
@@ -29,6 +29,11 @@ class TestAstConversion(unittest.TestCase):
 
         n = 20
         x = rng.uniform(low=low, high=high, size=(n, in_dims))
+        
+        # some functions only accept integers for some inputs
+        for i in int_inds: 
+            print("integer index: " + str(i))
+            x[:,i] = np.round(x[:,i])
             
         y = map(fn, x)
         out_dims = np.asarray(y[0]).size
@@ -181,34 +186,31 @@ class TestAstConversion(unittest.TestCase):
             np.sqrt: positive_range, 
             
         }
-        integer_functions = {
-            np.bitwise_and: [1, 2],
-            np.bitwise_not: [1, 2],
-            np.bitwise_or: [1, 2],
-            np.bitwise_xor: [1, 2],
-            math.pow: 1} 
-         
+        
+        #TODO: this makes _test_fn round input values, which isn't useful very often -- figure out a good way to deal with integer args 
+        integer_arg_inds = {   
+            math.pow: [1]}         
          
         for pyfun, mapping in ast_conversion.function_map.items():
-            if not pyfun in integer_functions: 
-#                 print(pyfun)
-                num_args = 1 #default
-                             
-                if isinstance(pyfun, np.ufunc): 
-                    num_args = pyfun.nargs - 1
-                else:
-                    if pyfun in two_arg_functions: 
-                        num_args = 2
-                    
-                if num_args == 1:
-                    def fn(x): 
-                        return pyfun(x)
-                else: 
-                    def fn(x):
-                        return pyfun(x[0], x[1])
- 
-                r = custom_ranges.get(pyfun, [-10, 10])
-                in_nengo = pyfun not in custom_ranges
-                      
-                self._test_fn(fn, num_args, low=r[0], high=r[1], in_nengo=in_nengo)
+            
+            int_inds = integer_arg_inds.get(pyfun, [])
+            
+            num_args = 1 #default
+            if isinstance(pyfun, np.ufunc): 
+                num_args = pyfun.nargs - 1
+            else:
+                if pyfun in two_arg_functions: 
+                    num_args = 2
+                
+            if num_args == 1:
+                def fn(x): 
+                    return pyfun(x)
+            else: 
+                def fn(x):
+                    return pyfun(x[0], x[1])
+            
+            r = custom_ranges.get(pyfun, [-10, 10])
+            in_nengo = pyfun not in custom_ranges
+                  
+            self._test_fn(fn, num_args, low=r[0], high=r[1], in_nengo=in_nengo, int_inds=int_inds)
          
