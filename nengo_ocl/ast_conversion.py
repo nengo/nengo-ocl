@@ -2,6 +2,14 @@
 This file holds a parser to turn simple Python functions into OCL code
 
 TODO:
+* get binary_and, or, xor, etc. functions working (priority = low)
+  - this will require the ability to specify integer input variables
+  - or perhaps just cast inputs to these functions to integers
+* a danger right now is that there is no check that the user uses all passed
+  inputs in their function. For example, if the fn is meant to act on three
+  arguments, and the user makes a mistake in their model that passes a
+  5-vector to the function, no warning is issued. There's no obvious way to
+  deal with this better, though.
 """
 
 import inspect, ast, _ast, collections
@@ -110,10 +118,10 @@ indirect_funcs = {
     np.add: lambda x, y: BinExp(x, '+', y),
     np.arctan2: math.atan2,
     np.asarray: lambda x: x,
-    np.bitwise_and: lambda x, y: BinExp(x, '&', y),
-    np.bitwise_not: lambda x: UnaryExp('~', x),
-    np.bitwise_or: lambda x, y: BinExp(x, '|', y),
-    np.bitwise_xor: lambda x, y: BinExp(x, '^', y),
+    # np.bitwise_and: lambda x, y: BinExp(x, '&', y),
+    # np.bitwise_not: lambda x: UnaryExp('~', x),
+    # np.bitwise_or: lambda x, y: BinExp(x, '|', y),
+    # np.bitwise_xor: lambda x, y: BinExp(x, '^', y),
     # np.copysign: ,
     np.deg2rad: math.radians,
     np.degrees: math.degrees,
@@ -126,19 +134,19 @@ indirect_funcs = {
     np.greater: lambda x, y: BinExp(x, '>', y),
     np.greater_equal: lambda x, y: BinExp(x, '>=', y),
     np.hypot: math.hypot,
-    np.invert: lambda x: UnaryExp('~', x),
+    # np.invert: lambda x: UnaryExp('~', x),
     np.ldexp: math.ldexp,
-    np.left_shift: lambda x, y: BinExp(x, '<<', y),
+    # np.left_shift: lambda x, y: BinExp(x, '<<', y),
     np.less: lambda x, y: BinExp(x, '<', y),
     np.less_equal: lambda x, y: BinExp(x, '<=', y),
     np.logaddexp: lambda x, y: FuncExp(
             'log', BinExp(FuncExp('exp', x), '+', FuncExp('exp', y))),
     np.logaddexp2: lambda x, y: FuncExp(
             'log2', BinExp(FuncExp('exp2', x), '+', FuncExp('exp2', y))),
-    np.logical_and: lambda x, y: BinExp(x, '&&', y),
-    np.logical_not: lambda x: UnaryExp('!', x),
-    np.logical_or: lambda x, y: BinExp(x, '||', y),
-    np.logical_xor: lambda x, y: BinExp(x, '^^', y),
+    # np.logical_and: lambda x, y: BinExp(x, '&&', y),
+    # np.logical_not: lambda x: UnaryExp('!', x),
+    # np.logical_or: lambda x, y: BinExp(x, '||', y),
+    # np.logical_xor: lambda x, y: BinExp(x, '^^', y),
     np.maximum: np.fmax,
     np.minimum: np.fmin,
     np.mod: math.fmod,
@@ -151,7 +159,8 @@ indirect_funcs = {
     np.rad2deg: math.degrees,
     np.radians: math.radians,
     np.reciprocal: lambda x: BinExp(NumExp(1.), '/', x),
-    np.remainder: math.fmod,
+    np.remainder: lambda x, y: BinExp(
+        x, '-', BinExp(FuncExp('floor', BinExp(x, '/', y)), '*', y)),
     np.sign: lambda x: IfExp(
         BinExp(x, '<=', NumExp(0)),
         IfExp(BinExp(x, '<', NumExp(0)), NumExp(-1), NumExp(0)), NumExp(1)),
@@ -236,11 +245,13 @@ class Function_Finder(ast.NodeVisitor):
         self.fn_node = None
 
     def generic_visit(self, stmt):
-        if isinstance(stmt, _ast.Lambda) or isinstance(stmt, _ast.FunctionDef):
+        if isinstance(stmt, ast.Lambda) or isinstance(stmt, ast.FunctionDef):
             if self.fn_node is None:
                 self.fn_node = stmt
             else:
-                raise NotImplementedError("The source code associated with the function contains more than one function definition")
+                raise NotImplementedError(
+                    "The source code associated with the function "
+                    "contains more than one function definition")
 
         super(self.__class__, self).generic_visit(stmt)
 
@@ -252,33 +263,35 @@ class OCL_Translator(ast.NodeVisitor):
         self.closures = closure_dict
         self.filename = filename
 
+        # self.init: key=local variable name, value=initialization statement
+        self.init = collections.OrderedDict()
+
         ### parse and make code
         a = ast.parse(source)
         ff = Function_Finder()
         ff.visit(a);
         function_def = ff.fn_node
 
-        if isinstance(function_def, _ast.FunctionDef):
+        if isinstance(function_def, ast.FunctionDef):
             self.function_name = function_def.name
             self.arg_names = [arg.id for arg in function_def.args.args]
             self.body = self.visit_block(function_def.body)
-        elif isinstance(function_def, _ast.Lambda):
+        elif isinstance(function_def, ast.Lambda):
             if hasattr(function_def, 'targets'):
                 self.function_name = function_def.targets[0].id
             else:
                 self.function_name = "<lambda>"
 
             self.arg_names = [arg.id for arg in function_def.args.args]
-            r = _ast.Return() #wrap lambda expression to look like a one-line function
+            r = ast.Return() #wrap lambda expression to look like a one-line function
             r.value = function_def.body
             r.lineno = 1
             r.col_offset = 4
             self.body = self.visit_block([r])
         else:
-            raise RuntimeError("Expected function definition or lambda function assignment, got " + str(type(function_def)))
-
-        self.filename = filename
-        self.init = collections.OrderedDict()
+            raise RuntimeError(
+                "Expected function definition or lambda function assignment, "
+                "got " + str(type(function_def)))
 
     def _parse_var(self, var):
         if isinstance(var, (float, int)):
@@ -548,7 +561,7 @@ class OCL_Function(object):
         #     raise NotImplementedError("No lambda functions")
         # elif self.fn in direct_funcs or self.fn in indirect_funcs:
 
-        if self.fn in function_map:
+        if self.fn in direct_funcs or self.fn in indirect_funcs:
             function = self.fn
             def dummy(x):
                 return function(x)
