@@ -1,3 +1,8 @@
+"""
+This file holds a parser to turn simple Python functions into OCL code
+
+TODO:
+"""
 
 import inspect, ast, collections
 import numpy as np
@@ -30,6 +35,33 @@ prefix_unary_ops = {
 
 ### list of functions that we can map directly onto OCL (all unary)
 direct_funcs = {
+    math.acos: 'acos',
+    math.acosh: 'acosh',
+    math.asin: 'asin',
+    math.asinh: 'asinh',
+    math.atan: 'atan',
+    math.atanh: 'atanh',
+    math.ceil: 'ceil',
+    math.cos: 'cos',
+    math.cosh: 'cosh',
+    math.erf: 'erf',
+    math.erfc: 'erfc',
+    math.exp: 'exp',
+    math.expm1: 'expm1',
+    math.fabs: 'fabs',
+    math.floor: 'floor',
+    math.isinf: 'isinf',
+    math.isnan: 'isnan',
+    math.lgamma: 'lgamma',
+    math.log: 'log',
+    math.log10: 'log10',
+    math.log1p: 'log1p',
+    # math.modf: # TODO: return integer and fractional parts of x
+    math.sin: 'sin',
+    math.sinh: 'sinh',
+    math.sqrt: 'sqrt',
+    math.tan: 'tan',
+    math.tanh: 'tanh',
     np.abs: 'fabs',
     np.absolute: 'fabs',
     np.arccos: 'acos',
@@ -39,7 +71,6 @@ direct_funcs = {
     np.arctan: 'atan',
     np.arctanh: 'atanh',
     np.ceil: 'ceil',
-    np.copysign: 'copysign',
     np.cos: 'cos',
     np.cosh: 'cosh',
     np.exp: 'exp',
@@ -47,85 +78,57 @@ direct_funcs = {
     np.expm1: 'expm1',
     np.fabs: 'fabs',
     np.floor: 'floor',
-    np.fmax: 'fmax',
-    np.fmin: 'fmin',
-    np.fmod: 'fmod',
-    np.hypot: 'hypot',
     np.isfinite: 'isfinite',
     np.isinf: 'isinf',
     np.isnan: 'isnan',
-    np.ldexp: 'ldexp',
     np.log: 'log',
     np.log10: 'log10',
     np.log1p: 'log1p',
     np.log2: 'log2',
-    np.maximum: 'fmax',
-    np.minimum: 'fmin',
-    np.mod: 'remainder',
-    np.nextafter: 'nextafter',
-    np.power: 'pow',
-    np.remainder: 'remainder',
     np.rint: 'rint',
     np.sin: 'sin',
     np.sinh: 'sinh',
     np.sqrt: 'sqrt',
     np.tan: 'tan',
     np.tanh: 'tanh',
-    math.acos: 'acos',
-    math.acosh: 'acosh',
-    math.asin: 'asin',
-    math.asinh: 'asinh',
-    math.atan: 'atan',
-    math.atanh: 'atanh',
-    math.ceil: 'ceil',
-    math.copysign: 'copysign',
-    math.cos: 'cos',
-    math.cosh: 'cosh',
-    math.erf: 'erf',
-    math.erfc: 'erfc',
-    math.exp: 'exp',
-    math.expm1: 'expm1',
-    math.fabs: 'fabs',
-    math.floor: 'floor',
-    math.fmod: 'fmod',
-    math.hypot: 'hypot',
-    math.isinf: 'isinf',
-    math.isnan: 'isnan',
-    math.ldexp: 'ldexp',
-    math.lgamma: 'lgamma',
-    math.log: 'log',
-    math.log10: 'log10',
-    math.log1p: 'log1p',
-    math.pow: 'pow',
-    math.sin: 'sin',
-    math.sinh: 'sinh',
-    math.sqrt: 'sqrt',
-    math.tan: 'tan',
-    math.tanh: 'tanh',
     }
 
 ### List of functions that are supported, but cannot be directly mapped onto
 ### a unary OCL function
 indirect_funcs = {
+    math.atan2: lambda x, y: FuncExp('atan2', x, y),
+    # math.copysign: TODO,
+    math.degrees: lambda x: BinExp(
+        x, '*', BinExp(NumExp(180), '*', VarExp('M_1_PI'))),
+    math.fmod: lambda x, y: FuncExp('fmod', x, y),
+    math.gamma: lambda x: FuncExp('exp', FuncExp('lgamma', x)),
+    math.hypot: lambda x, y: FuncExp(
+        'sqrt', BinExp(BinExp(x, '*', x), '+', BinExp(y, '*', y))),
+    math.ldexp: lambda x, y: BinExp(x, '*', FuncExp('pow', NumExp(2), y)),
+    math.pow: lambda x, y: FuncExp('pow', x, y),
+    math.radians: lambda x: BinExp(
+        x, '*', BinExp(VarExp('M_PI'), '/', NumExp(180))),
     np.add: lambda x, y: BinExp(x, '+', y),
-    np.arctan2: lambda x, y: FuncExp('atan2', x, y),
+    np.arctan2: math.atan2,
     np.asarray: lambda x: x,
     np.bitwise_and: lambda x, y: BinExp(x, '&', y),
     np.bitwise_not: lambda x: UnaryExp('~', x),
     np.bitwise_or: lambda x, y: BinExp(x, '|', y),
     np.bitwise_xor: lambda x, y: BinExp(x, '^', y),
-    np.deg2rad: np.radians,
-    np.degrees: lambda x: BinExp(
-        x, '*', BinExp(NumExp(180), '*', VarExp('M_1_PI'))),
+    # np.copysign: ,
+    np.deg2rad: math.radians,
+    np.degrees: math.degrees,
     np.divide: lambda x, y: BinExp(x, '/', y),
     np.equal: lambda x, y: BinExp(x, '==', y),
     np.floor_divide: lambda x, y: FuncExp('floor', BinExp(x, '/', y)),
     np.fmax: lambda x, y: FuncExp('fmax', x, y),
     np.fmin: lambda x, y: FuncExp('fmin', x, y),
-    np.fmod: lambda x, y: FuncExp('fmod', x, y),
+    np.fmod: math.fmod,
     np.greater: lambda x, y: BinExp(x, '>', y),
     np.greater_equal: lambda x, y: BinExp(x, '>=', y),
+    np.hypot: math.hypot,
     np.invert: lambda x: UnaryExp('~', x),
+    np.ldexp: math.ldexp,
     np.left_shift: lambda x, y: BinExp(x, '<<', y),
     np.less: lambda x, y: BinExp(x, '<', y),
     np.less_equal: lambda x, y: BinExp(x, '<=', y),
@@ -139,24 +142,23 @@ indirect_funcs = {
     np.logical_xor: lambda x, y: BinExp(x, '^^', y),
     np.maximum: np.fmax,
     np.minimum: np.fmin,
+    np.mod: math.fmod,
     np.multiply: lambda x, y: BinExp(x, '*', y),
     np.negative: lambda x: UnaryExp('-', x),
-    np.prod: lambda x, y: BinExp(x, '*', y),
-    np.product: lambda x, y: BinExp(x, '*', y),
-    np.rad2deg: np.degrees,
-    np.radians: lambda x: BinExp(
-        x, '*', BinExp(VarExp('M_PI'), '/', NumExp(180))),
+    # np.nextafter: # TODO,
+    np.power: math.pow,
+    # np.prod: # TODO: multiplies array els along axis,
+    # np.product: np.prod,
+    np.rad2deg: math.degrees,
+    np.radians: math.radians,
     np.reciprocal: lambda x: BinExp(NumExp(1.), '/', x),
+    np.remainder: math.fmod,
     np.sign: lambda x: IfExp(
         BinExp(x, '<=', NumExp(0)),
         IfExp(BinExp(x, '<', NumExp(0)), NumExp(-1), NumExp(0)), NumExp(1)),
     np.signbit: lambda x: BinExp(x, '<', NumExp(0)),
     np.square: lambda x: BinExp(x, '*', x),
     np.subtract: lambda x, y: BinExp(x, '-', y),
-    math.atan2: np.arctan2,
-    math.degrees: np.degrees,
-    math.gamma: lambda x: FuncExp('exp', FuncExp('lgamma', x)),
-    math.radians: np.radians,
     }
 
 INPUT_NAME = "__INPUT__"
@@ -210,9 +212,7 @@ class BinExp(Expression):
         return ("(%s)" % s) if wrap else s
 
 class FuncExp(Expression):
-    def __init__(self, fn, args):
-        if not isinstance(args, list):
-            args = [args]
+    def __init__(self, fn, *args):
         self.fn, self.args = fn, args
 
     def to_ocl(self, wrap=False):
@@ -324,10 +324,10 @@ class OCL_Translator(ast.NodeVisitor):
                     if s_right.value == 2:
                         return BinExp(s_left, '*', s_left)
                     else:
-                        return FuncExp("pown", [s_left, s_right])
+                        return FuncExp("pown", s_left, s_right)
                 elif s_right.value > 0:
-                    return FuncExp("powr", [s_left, s_right])
-            return FuncExp("pow", [s_left, s_right])
+                    return FuncExp("powr", s_left, s_right)
+            return FuncExp("pow", s_left, s_right)
         else:
             raise NotImplementedError(
                 "'%s' operator is not supported" % opt.__name__)
@@ -357,16 +357,17 @@ class OCL_Translator(ast.NodeVisitor):
         index = self.visit(expr.slice)
         return VarExp("%s[%s]" % (expr.value.id, index))
 
+    def _get_handle(self, expr):
+        """Used to get handle on attribute or function"""
+        if isinstance(expr, ast.Name):
+            return (self.closures[expr.id] if expr.id in self.closures
+                    else self.globals[expr.id])
+        else:
+            return getattr(self._get_handle(expr.value), expr.attr)
+
     def visit_Call(self, expr):
         assert expr.kwargs is None, "kwargs not implemented"
-
-        def get_handle(expr):
-            if isinstance(expr, ast.Name):
-                return (self.closures[expr.id] if expr.id in self.closures
-                        else self.globals[expr.id])
-            else:
-                return getattr(get_handle(expr.value), expr.attr)
-        handle = get_handle(expr.func)
+        handle = self._get_handle(expr.func)
         args = [self.visit(arg) for arg in expr.args]
 
         if handle in direct_funcs and len(args) == 1:
@@ -382,6 +383,10 @@ class OCL_Translator(ast.NodeVisitor):
             "'%s' function is not supported for %d arguments"
             % (handle.__name__, len(args)))
 
+    def visit_Attribute(self, expr):
+        handle = self._get_handle(expr)
+        return self._parse_var(handle)
+
     def visit_List(self, expr):
         return [self.visit(elt) for elt in expr.elts]
 
@@ -393,9 +398,6 @@ class OCL_Translator(ast.NodeVisitor):
 
     def visit_ListComp(self, expr):
         raise NotImplementedError("ListComp")
-
-    def visit_Attribute(self, expr):
-        raise NotImplementedError("Attribute")
 
     def visit_Tuple(self, expr):
         raise NotImplementedError("Tuple")
@@ -685,3 +687,10 @@ if __name__ == '__main__':
     print ocl_fn.init
     print ocl_fn.code
 
+    print '*' * 5 + 'Math constants' + '*' * 50
+    def function(y):
+        return np.sin(np.pi * y) + np.e
+
+    ocl_fn = OCL_Function(function)
+    print ocl_fn.init
+    print ocl_fn.code

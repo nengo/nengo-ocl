@@ -137,13 +137,12 @@ def plan_direct(queue, code, init, Xname, X, Y, tag=None):
             __global const ${INtype} *${arg} = ${IN}data + ${IN}starts[n];
             __global ${OUTtype} *${OUT} = ${OUT}data + ${OUT}starts[n];
 
-            //vvvvv USER DECLARATIONS BELOW vvvvv
+            /////vvvvv USER DECLARATIONS BELOW vvvvv
 ${init}
-            //^^^^^ USER DECLARATIONS ABOVE ^^^^^
 
             /////vvvvv USER COMPUTATIONS BELOW vvvvv
 ${code}
-            /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
+            // END OF FUNC: put nothing after user code, since it can return
         }
         """
 
