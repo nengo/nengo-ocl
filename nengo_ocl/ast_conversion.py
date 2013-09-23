@@ -1,5 +1,5 @@
 
-import inspect, ast, collections
+import inspect, ast, _ast, collections
 import numpy as np
 import math
 
@@ -38,11 +38,11 @@ function_map = {
     np.arcsinh: 'asinh',
     np.arctan: 'atan',
     np.arctan2: 'atan2',
-    np.arctanh: 'atanh',
-    np.bitwise_and: lambda args: args[0] + " & " + args[1],
-    np.bitwise_not: lambda args: "~" + args[0],
-    np.bitwise_or: lambda args: args[0] + " | " + args[1],
-    np.bitwise_xor: lambda args: args[0] + " ^ " + args[1],
+    np.arctanh: 'atanh', 
+#     np.bitwise_and: lambda args: args[0] + " & " + args[1],
+#     np.bitwise_not: lambda args: "~" + args[0],
+#     np.bitwise_or: lambda args: args[0] + " | " + args[1],
+#     np.bitwise_xor: lambda args: args[0] + " ^ " + args[1],
     np.ceil: 'ceil',
     np.copysign: 'copysign',
     np.cos: 'cos',
@@ -63,40 +63,39 @@ function_map = {
     np.greater: lambda args: args[0] + " > " + args[1],
     np.greater_equal: lambda args: args[0] + " >= " + args[1],
     np.hypot: "hypot",
-    np.invert: lambda args: "~" + args[0],
+#     np.invert: lambda args: "~" + args[0],
     np.isfinite: 'isfinite',
     np.isinf: 'isinf',
     np.isnan: 'isnan',
-    np.ldexp: 'ldexp',
-    np.left_shift: lambda args: "<<" + args[0],
+#     np.ldexp: 'ldexp',
+#     np.left_shift: lambda args: "<<" + args[0],
     np.less: lambda args: args[0] + " < " + args[1],
     np.less_equal: lambda args: args[0] + " <= " + args[1],
     np.log: 'log',
     np.log10: 'log10',
     np.log1p: 'log1p',
     np.log2: 'log2',
-    np.logaddexp: lambda args: "log(exp(" + args[0] + "), exp(" + args[1] + "))",
-    np.logaddexp: lambda args: "log2(exp2(" + args[0] + "), exp2(" + args[1] + "))",
-    np.logical_and: lambda args: args[0] + " && " + args[1],
-    np.logical_not: lambda args: "!" + args[0],
-    np.logical_or: lambda args: args[0] + " || " + args[1],
-    np.logical_xor: lambda args: args[0] + " ^^ " + args[1],
+#     np.logaddexp: lambda args: "log(exp(" + args[0] + "), exp(" + args[1] + "))",
+#     np.logaddexp2: lambda args: "log2(exp2(" + args[0] + "), exp2(" + args[1] + "))",
+#     np.logical_and: lambda args: args[0] + " && " + args[1],
+#     np.logical_not: lambda args: "!" + args[0],
+#     np.logical_or: lambda args: args[0] + " || " + args[1],
+#     np.logical_xor: lambda args: args[0] + " ^^ " + args[1],
     np.maximum: 'fmax',
     np.minimum: 'fmin',
-    np.mod: 'remainder',
-    np.modf: lambda args: "floor(" + args[0] + ")" if len(args)==1 else 'modf(' + args[0] + ", *" + args[2] + ")",
+#     np.mod: 'fmod', # doesn't work 
+#     np.modf: lambda args: "floor(" + args[0] + ")" if len(args)==1 else 'modf(' + args[0] + ", *" + args[2] + ")",
     np.multiply: lambda args: args[0] + " * " + args[1],
     np.negative: lambda args: "-" + args[0],
     np.nextafter: 'nextafter',
-    np.power: 'pow',
-    np.prod: lambda args: args[0] + " * " + args[1],
-    np.product: lambda args: args[0] + " * " + args[1],
+#     np.power: 'pow', #doesn't work
     np.rad2deg: lambda args: args[0] + " * 180 * M_1_PI",
     np.radians: lambda args: args[0] + " * M_PI / 180",
     np.reciprocal: lambda args: "1 / " + args[0],
-    np.remainder: 'remainder',
+#     np.remainder: 'remainder', #doesn't work
     np.rint: 'rint',
-    np.sign: lambda args: args[0] + "==0 ? 0 : " + args[0] + ">0 ? 1 : 0",
+    np.round: 'rint', 
+#     np.sign: lambda args: args[0] + "==0 ? 0 : " + args[0] + ">0 ? 1 : 0", # doesn't work
     np.signbit: lambda args: args[0] + " < 0",
     np.sin: 'sin',
     np.sinh: 'sinh',
@@ -128,7 +127,7 @@ function_map = {
     math.hypot: 'hypot',
     math.isinf: 'isinf',
     math.isnan: 'isnan',
-    math.ldexp: 'ldexp',
+#     math.ldexp: 'ldexp',
     math.lgamma: 'lgamma',
     math.log: 'log',
     math.log10: 'log10',
@@ -144,6 +143,22 @@ function_map = {
 INPUT_NAME = "__INPUT__"
 OUTPUT_NAME = "__OUTPUT__"
 
+class Function_Finder(ast.NodeVisitor):
+    # Finds a FunctionDef or Lambda in an Abstract Syntax Tree
+    
+    def __init__(self):
+        self.fn_node = None
+
+    def generic_visit(self, stmt):
+        if isinstance(stmt, _ast.Lambda) or isinstance(stmt, _ast.FunctionDef):
+            if self.fn_node is None: 
+                self.fn_node = stmt
+            else: 
+                raise NotImplementedError("The source code associated with the function contains more than one function definition")
+
+        super(self.__class__, self).generic_visit(stmt)
+            
+
 class OCL_Translator(ast.NodeVisitor):
     def __init__(self, source, globals_dict, closure_dict, filename=None):
         self.source = source
@@ -153,15 +168,31 @@ class OCL_Translator(ast.NodeVisitor):
 
         ### parse and make code
         a = ast.parse(source)
-        function_def = a.body[0]
-
-        self.arg_names = [arg.id for arg in function_def.args.args]
-
+        ff = Function_Finder()
+        ff.visit(a);
+        function_def = ff.fn_node
+        
+        if isinstance(function_def, _ast.FunctionDef):
+            self.function_name = function_def.name
+            self.arg_names = [arg.id for arg in function_def.args.args]
+            self.body = self.visit_block(function_def.body)
+        elif isinstance(function_def, _ast.Lambda):
+            if hasattr(function_def, 'targets'):
+                self.function_name = function_def.targets[0].id
+            else:
+                self.function_name = "<lambda>"
+                 
+            self.arg_names = [arg.id for arg in function_def.args.args]
+            r = _ast.Return() #wrap lambda expression to look like a one-line function
+            r.value = function_def.body
+            r.lineno = 1
+            r.col_offset = 4            
+            self.body = self.visit_block([r])
+        else:
+            raise RuntimeError("Expected function definition or lambda function assignment, got " + str(type(function_def)))
+        
         self.filename = filename
-        self.function_name = function_def.name
-
         self.init = collections.OrderedDict()
-        self.body = self.visit_block(function_def.body)
 
     def _var_to_string(self, var):
         if isinstance(var, str):
@@ -410,9 +441,7 @@ class OCL_Function(object):
         return isinstance(v, type(lambda: None)) and v.__name__ == '<lambda>'
 
     def get_ocl_translator(self):
-        if self._is_lambda(self.fn):
-            raise NotImplementedError("No lambda functions")
-        elif self.fn in function_map:
+        if self.fn in function_map:
             function = self.fn
             def dummy(x):
                 return function(x)
