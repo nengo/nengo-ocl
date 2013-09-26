@@ -1,5 +1,5 @@
 
-import sys, os
+import sys
 import datetime
 import time
 import numpy as np
@@ -11,35 +11,29 @@ import nengo
 from nengo.templates import EnsembleArray
 from nengo.networks.circularconvolution import circconv, CircularConvolution
 
-from nengo_ocl import sim_npy, sim_ocl
+from nengo_ocl import sim_ocl
 
 def ReferenceSimulator(model):
-    return nengo.simulator.Simulator(model)
+    return ('ref', nengo.simulator.Simulator(model))
 
-def NumpySimulator(model):
-    return sim_npy.Simulator(model)
-
-def CpuOclSimulator(model):
-    os.environ['PYOPENCL_CTX'] = '1'
+def OclSimulator(model):
     ctx = cl.create_some_context()
-    return sim_ocl.Simulator(model, ctx)
+    name = ctx.devices[0].name
+    return (name, sim_ocl.Simulator(model, ctx))
 
-def GpuOclSimulator(model):
-    os.environ['PYOPENCL_CTX'] = '0'
-    ctx = cl.create_some_context()
-    return sim_ocl.Simulator(model, ctx)
+if sys.argv[1] == 'ref':
+    sim_classes = [ReferenceSimulator]
+elif sys.argv[1] == 'ocl':
+    sim_classes = [OclSimulator]
+else:
+    raise Exception('unknown sim', sys.argv[1])
 
-sim_classes = [ReferenceSimulator, NumpySimulator,
-               CpuOclSimulator, GpuOclSimulator]
+dims = map(int, sys.argv[2].split(','))
 
-# dims = [2, 5]
-dims = [5, 10, 20, 50, 100]
-# dims = [10, 50, 100, 500]
-neurons_per_product = 50
+neurons_per_product = 128
 simtime = 1.0
 
-runtimes = []
-exceptions = []
+records = []
 
 for i, dim in enumerate(dims):
 
@@ -74,35 +68,49 @@ for i, dim in enumerate(dims):
     model.probe(C, filter=0.03)
     model.probe(D, filter=0.03)
 
-    sim_runtimes = []
-    sim_exceptions = []
-    for j, sim_class in enumerate(sim_classes):
-        sim_name = sim_class.__name__
-        try:
-            ### simulation
-            sim = model.simulator(sim_class=sim_class)
+    try:
+        ### simulation
+        t_start = time.time()
+        sim_name, sim = model.simulator(sim_class=sim_classes[0])
 
-            timer = time.time()
-            sim.run(simtime)
-            timer = time.time() - timer
+        # -- warmup
+        t_sim = time.time()
+        sim.run(0.01)
+        t_warm = time.time()
 
-            sim_runtimes.append(timer)
-            sim_exceptions.append(None)
-            print "%s, dims=%d successful" % (sim_name, dim)
-        except Exception as e:
-            sim_runtimes.append(np.nan)
-            sim_exceptions.append(e)
-            print "%s, dims=%d exception" % (sim_name, dim)
-            print e
+        # -- long-term timing
+        sim.run(simtime)
+        t_run = time.time()
 
-    runtimes.append(sim_runtimes)
-    exceptions.append(sim_exceptions)
+        records.append({
+            'benchmark': 'circ-conv',
+            'name': sim_name,
+            'dim': dim,
+            'simtime': simtime,
+            'neurons_per_product': neurons_per_product,
+            'status': 'ok',
+            'profiling': getattr(sim, 'profiling', 0),
+            'buildtime': t_sim - t_start,
+            'warmtime': t_warm - t_sim,
+            'runtime': t_run - t_warm,
+            })
+        print "%s, dims=%d successful" % (sim_name, dim)
+    except Exception as e:
+        records.append({
+            'benchmark': 'circ-conv',
+            'name': sim_name,
+            'dim': dim,
+            'simtime': simtime,
+            'neurons_per_product': neurons_per_product,
+            'status': 'exception',
+            'exception': str(e)
+            })
+        print "%s, dims=%d exception" % (sim_name, dim)
+        print e
 
-filename = "benchmark_circconv_%s.pkl" % ((
+filename = "records_circconv_%s.pkl" % ((
     datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")))
 f = open(filename, 'w')
-pickle.dump(dict(
-    dims=dims, neurons_per_product=neurons_per_product, simtime=simtime,
-    sim_class_names=map(lambda x: x.__name__, sim_classes),
-    runtimes=runtimes, exceptions=exceptions), f)
+pickle.dump(records, f)
 f.close()
+
