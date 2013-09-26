@@ -3,21 +3,22 @@ import pyopencl as cl
 
 
 class BasePlan(object):
-    def __init__(self, name="", tag="", **kwargs):
+    def __init__(self, name="", tag="",
+                 flops_per_call=None):
         self.name = name
         self.tag = tag
-        self.kwargs = kwargs
         self.atimes = []
         self.btimes = []
         self.ctimes = []
         self.n_calls = 0
+        self.flops_per_call = flops_per_call
 
     def __str__(self):
-        return '%s{%s %s %s}' % (
+        return '%s{%s %s}' % (
             self.__class__.__name__,
             self.name,
             self.tag,
-            self.kwargs)
+            )
 
 
 class PythonPlan(BasePlan):
@@ -77,8 +78,7 @@ class Plan(BasePlan):
             self.queue,
             self.kern,
             self.gsize,
-            self.lsize,
-            self.kwargs)
+            self.lsize)
 
 
 class Prog(object):

@@ -34,6 +34,17 @@ def float_cl_clra(queue, arg, cl_dtype, N):
     return float_arg, cl_arg, clra_arg
 
 
+def flops_from_geometry(geometry, items):
+    flops = 0
+    for ii in items:
+        gi = geometry[ii]
+        for dotinfo in gi['dots']:
+            flops += dotinfo['a_shape1'] * gi['y_len'] * 2
+        # XXX Generously assuming alpha & beta in use
+        flops += gi['y_len'] * 3
+    return flops
+
+
 class gemv_prog(Prog):
     def __init__(self,
             queue, alpha, A, A_js, X, X_js,
@@ -343,7 +354,8 @@ def ref_impl(p, items):
     #print [str(arr.dtype)[0] for arr in full_args]
     fn.set_args(*[arr.data for arr in full_args])
     rval = Plan(p.queue, fn, gsize, lsize, name="clra_gemv.ref_impl",
-            tag=p.tag)
+        tag=p.tag,
+        flops_per_call=flops_from_geometry(p.geometry, items))
     rval.full_args = full_args  # prevent GC the args
     return rval
 
@@ -561,8 +573,10 @@ def reduce_impl(p, items,
 
     fn.set_args(*[arr.data for arr in full_args])
     rval = Plan(p.queue, fn, gsize, lsize,
-            name='clra_gemv.reduce_impl',
-            tag=p.tag)
+        name='clra_gemv.reduce_impl',
+        tag=p.tag,
+        flops_per_call=flops_from_geometry(p.geometry, items),
+        )
     rval.full_args = full_args  # prevent GC the args
     return rval
 
@@ -741,8 +755,10 @@ def many_dots_impl(p, items):
 
     fn.set_args(*[arr.data for arr in full_args])
     rval = Plan(p.queue, fn, gsize, lsize,
-            name='clra_gemv.many_dots_impl',
-            tag=p.tag)
+        name='clra_gemv.many_dots_impl',
+        tag=p.tag,
+        flops_per_call=flops_from_geometry(p.geometry, items),
+        )
     rval.full_args = full_args  # prevent GC the args
     return rval
 

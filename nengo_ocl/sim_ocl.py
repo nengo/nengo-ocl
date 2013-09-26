@@ -189,9 +189,20 @@ class Simulator(sim_npy.Simulator):
         unknowns = []
         for p in self._plan:
             if isinstance(p, BasePlan):
-                table.append(
-                    (p.n_calls, sum(p.ctimes), sum(p.btimes), sum(p.atimes),
-                    p.name, p.tag))
+                if p.flops_per_call is None:
+                    table.append(
+                        (p.n_calls, sum(p.ctimes),
+                         0,
+                         0,
+                        p.name, p.tag))
+                else:
+                    table.append(
+                        (p.n_calls,
+                         sum(p.ctimes),
+                         (p.n_calls * p.flops_per_call / sum(p.ctimes) / 1.0e9),
+                         0,
+                         p.name,
+                         p.tag))
             else:
                 unknowns.append((str(p), getattr(p, 'cumtime', '<unknown>')))
 
