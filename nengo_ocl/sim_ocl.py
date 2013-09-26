@@ -94,7 +94,7 @@ class Simulator(sim_npy.Simulator):
                 plan = plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
                                    Xname, X, Y, tag=fn_name)
                 plans.append(plan)
-            except NotImplementedError, AssertionError:
+            except (NotImplementedError, AssertionError), e:
                 logger.warning("Function '%s' could not be converted to OCL"
                                % fn_name)
 
