@@ -642,6 +642,9 @@ def many_dots_impl(p, items):
     assert p.float_alpha is not None
     assert p.float_gamma is not None
 
+    if p.A_js is None:
+        # -- easy probably, but not done
+        raise NotImplementedError()
     A_js_shape0s = p.A_js.shape0s
     cl_gstructure, textconf = p.cl_geometry_and_textconf(items)
 
