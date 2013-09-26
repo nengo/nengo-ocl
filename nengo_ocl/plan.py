@@ -4,14 +4,19 @@ import pyopencl as cl
 
 class BasePlan(object):
     def __init__(self, name="", tag="",
-                 flops_per_call=None):
+                 flops_per_call=None,
+                 bw_per_call=None
+                ):
         self.name = name
         self.tag = tag
         self.atimes = []
         self.btimes = []
         self.ctimes = []
         self.n_calls = 0
+        # -- floating-point ops per call
         self.flops_per_call = flops_per_call
+        # -- bandwidth requirement per call
+        self.bw_per_call = bw_per_call
 
     def __str__(self):
         return '%s{%s %s}' % (

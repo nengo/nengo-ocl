@@ -44,6 +44,29 @@ def flops_from_geometry(geometry, items):
         flops += gi['y_len'] * 3
     return flops
 
+def bw_from_geometry(geometry, items):
+    n_bytes = 0
+    elemsize = 4
+    for ii in items:
+        gi = geometry[ii]
+        for dotinfo in gi['dots']:
+            # -- load A
+            n_bytes += elemsize * dotinfo['a_shape1'] * gi['y_len']
+            # -- load X
+            n_bytes += elemsize * dotinfo['a_shape1']
+
+        # -- load alpha scalar, beta scalar
+        #    XXX: Account for a possible full vector read
+        #    XXX: Account for a possible alpha vector read
+        n_bytes += 2 * elemsize
+
+        # -- load Y_in
+        n_bytes += elemsize * gi['y_len']
+
+        # -- write Y_out
+        n_bytes += elemsize * gi['y_len']
+    return n_bytes
+
 
 class gemv_prog(Prog):
     def __init__(self,
@@ -355,6 +378,7 @@ def ref_impl(p, items):
     fn.set_args(*[arr.data for arr in full_args])
     rval = Plan(p.queue, fn, gsize, lsize, name="clra_gemv.ref_impl",
         tag=p.tag,
+        bw_per_call=bw_from_geometry(p.geometry, items),
         flops_per_call=flops_from_geometry(p.geometry, items))
     rval.full_args = full_args  # prevent GC the args
     return rval
@@ -575,6 +599,7 @@ def reduce_impl(p, items,
     rval = Plan(p.queue, fn, gsize, lsize,
         name='clra_gemv.reduce_impl',
         tag=p.tag,
+        bw_per_call=bw_from_geometry(p.geometry, items),
         flops_per_call=flops_from_geometry(p.geometry, items),
         )
     rval.full_args = full_args  # prevent GC the args
@@ -757,6 +782,7 @@ def many_dots_impl(p, items):
     rval = Plan(p.queue, fn, gsize, lsize,
         name='clra_gemv.many_dots_impl',
         tag=p.tag,
+        bw_per_call=bw_from_geometry(p.geometry, items),
         flops_per_call=flops_from_geometry(p.geometry, items),
         )
     rval.full_args = full_args  # prevent GC the args

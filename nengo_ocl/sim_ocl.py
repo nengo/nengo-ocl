@@ -188,21 +188,22 @@ class Simulator(sim_npy.Simulator):
         table = []
         unknowns = []
         for p in self._plan:
+            gflops_per_sec = 0
+            gbytes_per_sec = 0
             if isinstance(p, BasePlan):
-                if p.flops_per_call is None:
-                    table.append(
-                        (p.n_calls, sum(p.ctimes),
-                         0,
-                         0,
-                        p.name, p.tag))
-                else:
-                    table.append(
-                        (p.n_calls,
-                         sum(p.ctimes),
-                         (p.n_calls * p.flops_per_call / sum(p.ctimes) / 1.0e9),
-                         0,
-                         p.name,
-                         p.tag))
+                if p.flops_per_call is not None:
+                    gflops_per_sec = (p.n_calls * p.flops_per_call
+                                      / (sum(p.ctimes) * 1.0e9))
+                if p.bw_per_call is not None:
+                    gbytes_per_sec = (p.n_calls * p.bw_per_call
+                                      / (sum(p.ctimes) * 1.0e9))
+                table.append((
+                    p.n_calls,
+                    sum(p.ctimes),
+                    gflops_per_sec,
+                    gbytes_per_sec,
+                    p.name,
+                    p.tag))
             else:
                 unknowns.append((str(p), getattr(p, 'cumtime', '<unknown>')))
 
@@ -212,7 +213,7 @@ class Simulator(sim_npy.Simulator):
 
         ### printing
         print '-' * 80
-        print '%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'q-time', 'subtime')
+        print '%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'GF/s', 'GB/s')
 
         for r in table:
             print '%i\t%2.3f\t%2.3f\t%2.3f\t<%s, tag=%s>' % r
