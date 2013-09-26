@@ -27,6 +27,7 @@ setup(
     long_description="",
     requires=[
         "numpy (>=1.5.0)",
+        "networkx",
         "nengo",
         "pyopencl",
     ],
