@@ -123,6 +123,26 @@ and then `pip install pyopencl`.
 
 Install Nvidia OCL on Debian/Ubuntu Linux
 --------------------------------------
-Can be tricky: Nvidia provides binary drivers but does not seem to want people
-to use them.
-TODO: make some and put them on PyOpenCL wiki.
+Debian (at least the rolling "sid" distribution)
+provides easily-installable .deb files for OpenCL:
+
+```
+sudo apt-get install nvidia-opencl-common nvidia-libopencl1
+
+```
+
+N.B. that at the time of writing (Sept 2013) these drivers provide only
+OpenCL-1.1 rather than the more current OpenCL-1.2.
+Consequently, you may find that pyopencl's default build
+creates a binary Python module (_cl.so) that cannot be loaded (i.e.
+`import pyopencl` fails in the Python interpreter).
+You can fix this one of two ways:
+
+1. Use the generic libOpenCL.so driver-loading library
+   from another provider (by e.g. following the Intel
+   instructions above), and simply don't try to use new 1.2 features on
+   NVidia devices,
+2. Follow PyOpenCL's build instructions to compile an OpenCL-1.1 version of
+   PyOpenCL.
+
+It's nice to have a CPU OpenCL driver, so we recommend option (1).
