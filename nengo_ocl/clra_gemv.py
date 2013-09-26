@@ -39,6 +39,9 @@ def flops_from_geometry(geometry, items):
     for ii in items:
         gi = geometry[ii]
         for dotinfo in gi['dots']:
+            # -- for every value of A, we
+            #    (1) mult with some x
+            #    (2) add to a resulting inner-product
             flops += dotinfo['a_shape1'] * gi['y_len'] * 2
         # XXX Generously assuming alpha & beta in use
         flops += gi['y_len'] * 3
@@ -823,16 +826,20 @@ class plan_ragged_gather_gemv(gemv_prog):
                 for ii in remaining_items
                 if ii not in long_dots]
 
-        many_dots = [ii
-            for ii in remaining_items
-            if len(self.geometry[ii]['dots']) > 3]
+        #many_dots = [ii
+            #for ii in remaining_items
+            #if len(self.geometry[ii]['dots']) > 3]
+        many_dots = remaining_items
         if many_dots:
-            many_plan = many_dots_impl(self, many_dots)
-            many_plan.tag += '-many%i' % len(many_dots)
-            plans.append(many_plan)
-            remaining_items = [ii
-                for ii in remaining_items
-                if ii not in many_dots]
+            try:
+                many_plan = many_dots_impl(self, many_dots)
+                many_plan.tag += '-many%i' % len(many_dots)
+                plans.append(many_plan)
+                remaining_items = [ii
+                    for ii in remaining_items
+                    if ii not in many_dots]
+            except NotImplementedError:
+                pass
 
         if remaining_items:
             remaining_plan = ref_impl(self, remaining_items)
