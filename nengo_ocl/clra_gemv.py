@@ -223,7 +223,7 @@ def ref_impl(p, items):
         raise NotImplementedError()
     cl_items = to_device(p.queue,
         np.asarray(items, dtype='int32'))
-    if 1:
+    if 0:
         if len(items) < 10:
             print 'Falling back on reference implementation'
             p.print_geometry_summary(items, full=True)
