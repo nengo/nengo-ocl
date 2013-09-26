@@ -12,7 +12,7 @@ TODO:
   deal with this better, though.
 """
 
-import inspect, ast, _ast, collections
+import inspect, ast, collections
 import numpy as np
 import math
 
@@ -315,6 +315,7 @@ class OCL_Translator(ast.NodeVisitor):
     def visit_Name(self, expr):
         name = expr.id
         if name in self.arg_names:
+            raise NotImplementedError('ambiguous: vectorize or not?')
             return VarExp('%s[0]' % name)
         elif name in self.closures:
             return self._parse_var(self.closures[name])
