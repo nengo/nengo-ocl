@@ -94,8 +94,10 @@ for i, dim in enumerate(dims):
             'warmtime': t_warm - t_sim,
             'runtime': t_run - t_warm,
             })
+        print records[-1]
         print "%s, dims=%d successful" % (sim_name, dim)
     except Exception as e:
+        raise
         records.append({
             'benchmark': 'circ-conv',
             'name': sim_name,
@@ -105,6 +107,7 @@ for i, dim in enumerate(dims):
             'status': 'exception',
             'exception': str(e)
             })
+        print records[-1]
         print "%s, dims=%d exception" % (sim_name, dim)
         print e
 
