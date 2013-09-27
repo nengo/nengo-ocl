@@ -27,8 +27,12 @@ class Simulator(sim_npy.Simulator):
         else:
             return CLRaggedArray(self.queue, val)
 
-    def __init__(self, model, context, n_prealloc_probes=1000,
+    def __init__(self, model, context=None, n_prealloc_probes=1000,
                  profiling=None):
+        if context is None:
+            print 'No context argument was provided to sim_ocl.Simulator'
+            print "Calling pyopencl.create_some_context() for you now:"
+            context = cl.create_some_context()
         if profiling is None:
             profiling = int(os.getenv("NENGO_OCL_PROFILING", 0))
         self.context = context
