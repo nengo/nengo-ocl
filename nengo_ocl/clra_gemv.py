@@ -2,7 +2,7 @@ import math
 from collections import defaultdict
 import numpy as np
 import pyopencl as cl
-from plan import Plan, Prog
+from plan import Plan
 from mako.template import Template
 from clarray import to_device
 from clraggedarray import CLRaggedArray
@@ -71,7 +71,7 @@ def bw_from_geometry(geometry, items):
     return n_bytes
 
 
-class gemv_prog(Prog):
+class gemv_prog(object):
     def __init__(self,
             queue, alpha, A, A_js, X, X_js,
             beta, Y, Y_in=None, tag=None, seq=None, gamma=0.0):
@@ -100,8 +100,7 @@ class gemv_prog(Prog):
         self.seq = seq
 
         self.geometry = self._geometry()
-        plans = self.choose_plans()
-        Prog.__init__(self, plans)
+        self.plans = self.choose_plans()
 
     def print_geometry_summary(self, items=None, full=False):
         print 'geometry_summary: tag=%s' % self.tag
@@ -850,5 +849,4 @@ class plan_ragged_gather_gemv(gemv_prog):
             plans.append(remaining_plan)
 
         return plans
-
 
