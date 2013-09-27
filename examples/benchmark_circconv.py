@@ -113,7 +113,7 @@ for i, dim in enumerate(dims):
 
 filename = "records_circconv_%s.pkl" % ((
     datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")))
-f = open(filename, 'w')
+f = open(filename, 'wb')
 pickle.dump(records, f)
 f.close()
 
