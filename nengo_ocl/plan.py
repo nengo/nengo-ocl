@@ -63,23 +63,30 @@ class Plan(BasePlan):
         self.kern = kern
         self.gsize = gsize
         self.lsize = lsize
+        self._evs = []
 
     def __call__(self, profiling=False):
         ev = self.enqueue()
-        self.queue.finish()
-        if profiling:
-            self.update_from_event(ev)
+        ev.wait()
 
-    def update_from_event(self, ev):
-        self.atimes.append(1e-9 * (ev.profile.submit - ev.profile.queued))
-        self.btimes.append(1e-9 * (ev.profile.start - ev.profile.submit))
-        self.ctimes.append(1e-9 * (ev.profile.end - ev.profile.start))
-        self.n_calls += 1
+    def update_from_enqueued_events(self, profiling):
+        if profiling:
+            for ev in self._evs:
+                self.atimes.append(
+                    1e-9 * (ev.profile.submit - ev.profile.queued))
+                self.btimes.append(
+                    1e-9 * (ev.profile.start - ev.profile.submit))
+                self.ctimes.append(
+                    1e-9 * (ev.profile.end - ev.profile.start))
+                self.n_calls += 1
+        self._evs[:] = []
 
     def enqueue(self, wait_for=None):
-        return cl.enqueue_nd_range_kernel(
+        ev = cl.enqueue_nd_range_kernel(
             self.queue, self.kern, self.gsize, self.lsize,
             wait_for=wait_for)
+        self._evs.append(ev)
+        return ev
 
     def __str__(self):
         return '%s{%s, %s, %s, %s, tag=%s, name=%s}' % (
@@ -128,14 +135,13 @@ class DAG(object):
         if all(hasattr(p, 'enqueue') for p in self.order):
             last_ev, all_evs = self.enqueue_n_times(n)
             last_ev.wait()
+            if self.profiling:
+                for p in self.order:
+                    p.update_from_enqueued_events(self.profiling)
         else:
             for ii in range(n):
                 for p in self.order:
                     p(self.profiling)
-        #if self.profiling:
-            #for evs in all_evs:
-                #for ev, plan in zip(evs, self.plans):
-                    #plan.update_from_event(ev)
 
     def enqueue_n_times(self, n):
         if self.overlap:
