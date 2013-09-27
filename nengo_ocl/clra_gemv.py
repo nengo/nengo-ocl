@@ -70,6 +70,28 @@ def bw_from_geometry(geometry, items):
         n_bytes += elemsize * gi['y_len']
     return n_bytes
 
+class DotSignature(object):
+    def __init__(self, dct):
+        self.y_len = dct['y_len']
+        self.Ax_dims = tuple([(d['a_shape1'], d['a_stride0']) for d in dct['dots']])
+
+    def __eq__(self, other):
+        return type(self) == type(other) \
+                and self.y_len == other.y_len \
+                and self.Ax_dims == other.Ax_dims
+
+    def __hash__(self):
+        return hash((self.y_len, self.Ax_dims))
+
+    def __str__(self):
+        counts = defaultdict(lambda: 0)
+        for dim_stride in self.Ax_dims:
+            counts[dim_stride] += 1
+        return 'yd=%s <- %s' % (
+            self.y_len,
+            ', '.join(('(%s x d=%s,s=%s)' % (counts[(d, s)], d, s))
+                      for (d, s) in counts))
+
 
 class gemv_prog(object):
     def __init__(self,
@@ -108,19 +130,13 @@ class gemv_prog(object):
             gg = self.geometry
         else:
             gg = map(self.geometry.__getitem__, items)
-        print 'Y lens', dhist(ggi['y_len'] for ggi in gg)
-        print 'ndots', dhist(len(ggi['dots']) for ggi in gg)
-        Ks = []
-        for ggi in gg:
-            Ks.extend(ddb['a_shape1'] for ddb in ggi['dots'])
-        print 'Ks', dhist(Ks)
-        if full:
-            for ggi in gg:
-                tmp = dict(ggi)
-                del tmp['dots']
-                print tmp
-                for dot in ggi['dots']:
-                    print '  ', dot
+
+        ds = map(DotSignature, gg)
+        counts = defaultdict(lambda: 0)
+        for dsi in ds:
+            counts[dsi] += 1
+        for dsi in sorted(counts):
+            print '  %6s\t%s' % (counts[dsi], dsi)
 
     def _geometry(self):
         A_starts = self.A.starts
