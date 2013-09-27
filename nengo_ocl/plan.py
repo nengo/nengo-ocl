@@ -1,5 +1,8 @@
 import time
 import pyopencl as cl
+from collections import defaultdict
+import networkx as nx
+PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 
 class BasePlan(object):
@@ -73,55 +76,113 @@ class Plan(BasePlan):
         self.ctimes.append(1e-9 * (ev.profile.end - ev.profile.start))
         self.n_calls += 1
 
-    def enqueue(self):
+    def enqueue(self, wait_for=None):
         return cl.enqueue_nd_range_kernel(
-            self.queue, self.kern, self.gsize, self.lsize)
+            self.queue, self.kern, self.gsize, self.lsize,
+            wait_for=wait_for)
 
     def __str__(self):
-        return '%s{%s, %s, %s, %s, %s}' % (
+        return '%s{%s, %s, %s, %s, tag=%s, name=%s}' % (
             self.__class__.__name__,
             self.queue,
             self.kern,
             self.gsize,
-            self.lsize)
+            self.lsize, 
+            self.tag,
+            self.name)
 
 
-class Prog(object):
-    def __init__(self, plans):
-        self.plans = plans
-        self.queues = [p.queue for p in self.plans]
-        self.kerns = [p.kern for p in self.plans]
-        self.gsizes = [p.gsize for p in self.plans]
-        self.lsizes = [p.lsize for p in self.plans]
-        self.map_args = (cl.enqueue_nd_range_kernel,
-                         self.queues, self.kerns, self.gsizes, self.lsizes)
+class Marker(Plan):
+    def __init__(self, queue):
+        dummy = cl.Program(queue.context, """
+        __kernel void dummy() {}
+        """).build().dummy
+        Plan.__init__(self, queue, dummy, (1,), None)
 
-    def __call__(self, profiling=False):
-        if profiling:
-            for p in self.plans:
-                p(profiling=profiling)
+
+class DAG(object):
+    def __init__(self, context, marker, plandict, profiling, overlap=False):
+        self.overlap = overlap
+        self.context = context
+        self.marker = marker
+        self.plandict = plandict
+        self.clients = defaultdict(list)
+        self.profiling = profiling
+        self.dg = nx.DiGraph()
+        for plan, waits_on in plandict.items():
+            if self.overlap:
+                # XXX THIS IS PROBABLY A BUG WAITING TO HAPPEN!! #XXX
+                plan.queue = cl.CommandQueue(context)
+            self.dg.add_node(plan)
+            for other in waits_on:
+                self.clients[other].append(plan)
+                self.dg.add_edge(other, plan)
+        self.order = nx.topological_sort(self.dg)
+        #for plan in self.order:
+            #print 'order', plan
+
+    def __call__(self):
+        return self.call_n_times(1)
+
+    def call_n_times(self, n):
+        if all(hasattr(p, 'enqueue') for p in self.order):
+            last_ev, all_evs = self.enqueue_n_times(n)
+            last_ev.wait()
         else:
-            map(*self.map_args)
-            self.queues[-1].flush()
+            for ii in range(n):
+                for p in self.order:
+                    p(self.profiling)
+        #if self.profiling:
+            #for evs in all_evs:
+                #for ev, plan in zip(evs, self.plans):
+                    #plan.update_from_event(ev)
 
-    def enqueue(self):
-        return map(*self.map_args)
+    def enqueue_n_times(self, n):
+        if self.overlap:
+            return self._enqueue_n_times_parallel(n)
+        else:
+            return self._enqueue_n_times_serial(n)
 
-    def call_n_times(self, n, profiling=False):
-        all_evs = self.enqueue_n_times(n, profiling)
-        self.queues[-1].finish()
-        if profiling:
-            for evs in all_evs:
-                for ev, plan in zip(evs, self.plans):
-                    plan.update_from_event(ev)
-
-    def enqueue_n_times(self, n, profiling=False):
-        map_args = self.map_args
-        flush = self.queues[-1].flush
+    def _enqueue_n_times_serial(self, n):
         all_evs = []
         for ii in range(n):
-            evs = map(*map_args)
-            flush()
-            if profiling:
-                all_evs.append(evs)
-        return all_evs
+            evs_ii = []
+            for plan in self.order:
+                ev = plan.enqueue()
+                evs_ii.append(ev)
+            plan.queue.flush()
+            all_evs.append(evs_ii)
+        return ev, all_evs
+
+    def _enqueue_n_times_parallel(self, n):
+        boundary = self.marker.enqueue()
+        all_evs = [boundary]
+        stuff = []
+        def remember(obj):
+            stuff.append(obj)
+        for ii in range(n):
+            preconditions = defaultdict(list)
+            evs_ii = []
+            for plan in self.order:
+                if self.overlap:
+                    tmp = [boundary] + preconditions[plan]
+                else:
+                    tmp = None
+                #print 'tmp', tmp
+                ev = plan.enqueue(wait_for=tmp)
+                plan.queue.flush()
+                for client in self.clients[plan]:
+                    preconditions[client].append(ev)
+                evs_ii.append(ev)
+                remember(tmp)
+            if self.overlap:
+                boundary = self.marker.enqueue(wait_for=evs_ii)
+            all_evs.append(evs_ii)
+        if not self.overlap:
+            # -- the last `ev` we created
+            boundary = ev
+        return boundary, (all_evs, stuff)
+
+
+
+

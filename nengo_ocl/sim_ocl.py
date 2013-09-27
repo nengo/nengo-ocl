@@ -1,6 +1,5 @@
 
 import os
-import time
 import collections
 import numpy as np
 import pyopencl as cl
@@ -11,11 +10,13 @@ from .clraggedarray import CLRaggedArray
 from .clra_gemv import plan_ragged_gather_gemv
 from .clra_nonlinearities import \
     plan_lif, plan_lif_rate, plan_direct, plan_probes
-from .plan import BasePlan, PythonPlan, Plan, Prog
+from .plan import BasePlan, PythonPlan, DAG, Marker
 from .ast_conversion import OCL_Function
+from .tricky_imports import OrderedDict
 
 import logging
 logger = logging.getLogger(__name__)
+
 
 class Simulator(sim_npy.Simulator):
 
@@ -32,20 +33,37 @@ class Simulator(sim_npy.Simulator):
             profiling = int(os.getenv("NENGO_OCL_PROFILING", 0))
         self.context = context
         self.profiling = profiling
-        if profiling:
-            self.queue = cl.CommandQueue(
-                context,
-                properties=cl.command_queue_properties.PROFILING_ENABLE)
-        else:
-            self.queue = cl.CommandQueue(context)
+        # -- this queue is just for moving data around, not for running
+        #    the simulator steps, so we don't enable profiling on it.
+        self.queue = cl.CommandQueue(context)
+
         self.n_prealloc_probes = n_prealloc_probes
-        sim_npy.Simulator.__init__(self,
-                                   model,
-                                   )
-        if all(isinstance(p, Plan) for p in self._plan):
-            self._prog = Prog(self._plan)
-        else:
-            self._prog = None
+        # -- allocate data
+        sim_npy.Simulator.__init__(self, model)
+
+        # -- set up the DAG for executing OCL kernels
+        self._plandict = OrderedDict()
+        self.step_marker = Marker(self.queue)
+        # -- marker is used to do the op_groups in order
+        deps = []
+        for op_type, op_list in self.op_groups:
+            deps = self.plandict_op_group(op_type, op_list, deps)
+        probe_plans = self.plan_probes()
+        for p in probe_plans:
+            self._plandict[p] = deps
+        self._dag = DAG(context, self.step_marker,
+                           self._plandict,
+                           self.profiling)
+
+    def plan_op_group(self, *args):
+        # -- HACK: SLOWLY removing sim_npy from the project...
+        return []
+
+    def plandict_op_group(self, op_type, op_list, deps):
+        plans = getattr(self, 'plan_' + op_type.__name__)(op_list)
+        for p in plans:
+            self._plandict[p] = deps
+        return plans
 
     def _prep_all_data(self):
         # -- replace the numpy-allocated RaggedArray with OpenCL one
@@ -232,7 +250,6 @@ class Simulator(sim_npy.Simulator):
         return self.run_steps(1)
 
     def run_steps(self, N, verbose=False):
-        profiling = self.profiling
         # -- precondition: the probe buffers have been drained
         bufpositions = self._cl_probe_plan.cl_bufpositions.get()
         assert np.all(bufpositions == 0)
@@ -241,13 +258,7 @@ class Simulator(sim_npy.Simulator):
         #    the probe buffers after each group of B
         while N:
             B = min(N, self._max_steps_between_probes)
-            if self._prog is None:
-                for bb in xrange(B):
-                    for fn in self._plan:
-                        fn(profiling)
-                    self.sim_step += 1
-            else:
-                self._prog.call_n_times(B, self.profiling)
+            self._dag.call_n_times(B)
             self.drain_probe_buffers()
             N -= B
         if self.profiling > 1:
