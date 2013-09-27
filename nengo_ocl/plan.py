@@ -45,12 +45,6 @@ class PythonPlan(BasePlan):
             self.ctimes.append(t1 - t0)
             self.n_calls += 1
 
-    def update_from_event(self, ev):
-        self.atimes.append(1e-9 * (ev.profile.submit - ev.profile.queued))
-        self.btimes.append(1e-9 * (ev.profile.start - ev.profile.submit))
-        self.ctimes.append(1e-9 * (ev.profile.end - ev.profile.start))
-        self.n_calls += 1
-
 
 class Plan(BasePlan):
     def __init__(self, queue, kern, gsize, lsize, **kwargs):
