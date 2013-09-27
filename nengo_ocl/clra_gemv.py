@@ -156,11 +156,13 @@ class gemv_prog(object):
             rval.append(dbb)
         return rval
 
-    def cl_geometry_and_textconf(self, items):
+    def cl_geometry_and_textconf(self, items, padding=4):
         p = self
         max_n_dots = max(len(p.geometry[ii]['dots']) for ii in items)
         n_structure_vars = 4 * max_n_dots + 5
-        gstructure = np.zeros((len(items), n_structure_vars), dtype='int32')
+        structure_vars_stride = int(
+            padding * math.ceil(float(n_structure_vars) / padding))
+        gstructure = np.zeros((len(items), structure_vars_stride), dtype='int32')
         A_starts = p.A.starts
         X_starts = p.X.starts
         Y_starts = p.Y.starts
@@ -190,6 +192,7 @@ class gemv_prog(object):
 
         textconf = {
             'n_structure_vars': n_structure_vars,
+            'structure_vars_stride': structure_vars_stride,
             'x_starts': 'lstructure[0 * %s + ii]' % max_n_dots,
             'a_starts': 'lstructure[1 * %s + ii]' % max_n_dots,
             'a_s0'    : 'lstructure[2 * %s + ii]' % max_n_dots,
@@ -487,13 +490,13 @@ def reduce_impl(p, items,
                  ii += ${local_count})
         {
             lstructure[ii] = gstructure[
-                get_global_id(2) * ${n_structure_vars} + ii];
+                get_global_id(2) * ${structure_vars_stride} + ii];
         }
     % else :
         if (local_idx < ${n_structure_vars})
         {
             lstructure[local_idx] = gstructure[
-                get_global_id(2) * ${n_structure_vars} + local_idx];
+                get_global_id(2) * ${structure_vars_stride} + local_idx];
         }
     % endif
         barrier(CLK_LOCAL_MEM_FENCE);
@@ -710,7 +713,7 @@ def many_dots_impl(p, items):
         for (int ii = local_idx; ii < ${n_structure_vars}; ii += ${n_locals})
         {
             lstructure[ii] = gstructure[
-                get_global_id(2) * ${n_structure_vars} + ii];
+                get_global_id(2) * ${structure_vars_stride} + ii];
         }
         barrier(CLK_LOCAL_MEM_FENCE);
 
