@@ -1,4 +1,3 @@
-
 import numpy as np
 import math
 import inspect
@@ -89,7 +88,7 @@ class TestAstConversion(unittest.TestCase):
 
         out = []
         for s in output_signals:
-            out.append(sim.signals[sim.copied(s)])
+            out.append(sim.signals[sim.model.memo[id(s)]])
 
         return out
 
@@ -249,3 +248,6 @@ class TestAstConversion(unittest.TestCase):
                            "to OCL with multiple lambda functions in a source line")
         except NotImplementedError:
             pass
+
+if __name__ == '__main__':
+   unittest.main()
