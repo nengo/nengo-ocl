@@ -885,7 +885,7 @@ class Simulator(object):
         try:
             return self.all_data[self.sidx[item]]
         except KeyError:
-            return self.all_data[self.sidx[self.copied(item)]]
+            return self.all_data[self.sidx[self.model.memo[id(item)]]]
 
     @property
     def signals(self):
@@ -899,7 +899,7 @@ class Simulator(object):
                 try:
                     raw = self.all_data[self.sidx[item]]
                 except KeyError:
-                    raw = self.all_data[self.sidx[self.copied(item)]]
+                    raw = self.all_data[self.sidx[self.model.memo[id(item)]]]
                 assert raw.ndim == 2
                 if item.ndim == 0:
                     return raw[0, 0]
@@ -912,7 +912,7 @@ class Simulator(object):
 
             def __setitem__(_, item, val):
                 if item not in self.sidx:
-                    item = self.copied(item)
+                    item = self.model.memo[id(item)]
                 raw = self.all_data[self.sidx[item]]
                 assert raw.ndim == 2
                 incoming = np.asarray(val)
@@ -937,7 +937,7 @@ class Simulator(object):
 
         return Accessor()
 
-    def copied(self, obj):
+    def get(self, obj):
         """Get the simulator's copy of a model object.
 
         Parameters
@@ -952,15 +952,20 @@ class Simulator(object):
 
         Examples
         --------
-        Manually set a raw signal value to ``5`` in the simulator
-        (advanced usage). [TODO: better example]
+        Get the simulator's version of an ensemble
+        in order to plot tuning curves
 
         >>> model = nengo.Model()
-        >>> foo = m.add(Signal(n=1))
+        >>> model.make_ensemble("A", nengo.LIF(4), 1)
         >>> sim = model.simulator()
-        >>> sim.signals[sim.copied(foo)] = np.asarray([5])
+        >>> A = sim.get("A")
+        >>> from nengo.helpers import tuning_curves
+        >>> print tuning_curves(A)
         """
-        return self.model.memo[id(obj)]
+        toret = self.model.get(obj, "NotFound")
+        if toret == "NotFound":
+            toret = self.model.memo[id(obj)]
+        return toret
 
     def plan_probes(self):
         if self.model.probes:
@@ -1028,4 +1033,3 @@ class Simulator(object):
             else:
                 probe = self.model.probed[self.model.memo[id(probe)]]
         return self.probe_data(probe)
-
