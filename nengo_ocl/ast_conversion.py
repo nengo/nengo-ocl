@@ -163,8 +163,9 @@ indirect_funcs = {
     np.remainder: lambda x, y: BinExp(
         x, '-', BinExp(FuncExp('floor', BinExp(x, '/', y)), '*', y)),
     np.sign: lambda x: IfExp(
-        BinExp(x, '<=', NumExp(0)),
-        IfExp(BinExp(x, '<', NumExp(0)), NumExp(-1), NumExp(0)), NumExp(1)),
+        BinExp(x, '<=', NumExp(0.)),
+        IfExp(BinExp(x, '<', NumExp(0.)), NumExp(-1.), NumExp(0.)),
+        NumExp(1.)),
     np.signbit: lambda x: BinExp(x, '<', NumExp(0)),
     np.square: lambda x: BinExp(x, '*', x),
     np.subtract: lambda x, y: BinExp(x, '-', y),
