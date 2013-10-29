@@ -18,10 +18,8 @@ critical = logger.critical
 
 import numpy as np
 
-from nengo.core import Signal, Probe, Constant
-from nengo.core import SignalView
-from nengo.core import LIF, LIFRate, Direct
-from nengo import simulator as sim
+from nengo import builder as nb
+from nengo.nonlinearities import LIF, LIFRate, Direct
 
 from .ra_gemv import ragged_gather_gemv
 from .raggedarray import RaggedArray as _RaggedArray
@@ -29,7 +27,7 @@ from .raggedarray import RaggedArray as _RaggedArray
 from .plan import PythonPlan
 
 
-class MultiProdUpdate(sim.Operator):
+class MultiProdUpdate(nb.Operator):
     """
     y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)
     """
@@ -39,13 +37,13 @@ class MultiProdUpdate(sim.Operator):
         if Y.shape != Y_in.shape:
             raise TypeError()
         try:
-            if isinstance(beta, Constant):
+            if isinstance(beta, nb.Constant):
                 self._float_beta = float(beta.value)
             else:
                 self._float_beta = float(beta)
             self._signal_beta = None
         except:
-            assert isinstance(beta, SignalView)
+            assert isinstance(beta, nb.SignalView)
             self._float_beta = None
             self._signal_beta = beta
             if beta.shape != Y.shape:
@@ -69,20 +67,20 @@ class MultiProdUpdate(sim.Operator):
             assert rval.incs == op.incs
             assert rval.sets == op.sets
             assert set(rval.updates) == set(op.updates), (rval.updates, op.updates)
-        if isinstance(op, sim.Reset):
+        if isinstance(op, nb.Reset):
             rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value, as_update=False,
                     tag=getattr(op, 'tag', ''))
             assert_ok()
-        elif isinstance(op, sim.Copy):
+        elif isinstance(op, nb.Copy):
             rval = cls(op.dst, op.src, beta=1, gamma=0,
                     as_update=len(op.updates) == 1, tag=op.tag)
             assert_ok()
-        elif isinstance(op, sim.DotInc):
+        elif isinstance(op, nb.DotInc):
             rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=False,
                     tag=op.tag)
             rval.add_AX(op.A, op.X, op.xT)
             assert_ok()
-        elif isinstance(op, sim.ProdUpdate):
+        elif isinstance(op, nb.ProdUpdate):
             rval = cls(op.Y, op.Y, beta=op.B, gamma=0, as_update=True,
                     tag=op.tag)
             rval.add_AX(op.A, op.X, False)
@@ -188,7 +186,7 @@ class MultiProdUpdate(sim.Operator):
 
 
 def is_op(op):
-    return isinstance(op, sim.Operator)
+    return isinstance(op, nb.Operator)
 
 
 _TimerCumulative = defaultdict(float)
@@ -529,24 +527,22 @@ class Simulator(object):
 
     profiling = False
 
-    def __init__(self, model,
+    def __init__(self, model, dt=0.001, seed=None, builder=None,
             planner=greedy_planner,
             ):
 
-        if not hasattr(model, 'dt'):
-            raise ValueError("Model does not appear to be built. "
-                             "See Model.prep_for_simulation.")
+        if builder is None:
+            builder = nb.Builder(copy=True)
 
-        self.model = model
-        #dt = model.dt
-        operators = map(MultiProdUpdate.convert_to, model._operators)
+        self.model = builder(model, dt)
+        operators = map(MultiProdUpdate.convert_to, self.model.operators)
         operators = MultiProdUpdate.compress(operators)
         self.operators = operators
         all_signals = signals_from_operators(operators)
         all_bases = stable_unique([sig.base for sig in all_signals])
 
-        _shares_memory_with = getattr(model, '_shares_memory_with', {})
-        indep_cliques = getattr(model, '_independent_view_cliques', {})
+        _shares_memory_with = getattr(self.model, '_shares_memory_with', {})
+        indep_cliques = getattr(self.model, '_independent_view_cliques', {})
         def share_memory(a, b):
             if a.base is not b.base:
                 return False
@@ -580,10 +576,10 @@ class Simulator(object):
         # -- map from Signal.base -> ndarray
         sigdict = SignalDict()
         for op in operators:
-            op.init_sigdict(sigdict, model.dt)
+            op.init_sigdict(sigdict, self.model.dt)
 
         self.sim_step = 0
-        self.probe_outputs = dict((probe, []) for probe in model.probes)
+        self.probe_outputs = dict((probe, []) for probe in self.model.probes)
 
         self.all_data = _RaggedArray(
                 [sigdict[sb] for sb in all_bases],
@@ -777,7 +773,7 @@ class Simulator(object):
             for op in ops:
                 J = self.all_data[self.sidx[op.J]]
                 output = self.all_data[self.sidx[op.output]]
-                output[:] = dt * op.nl.math(J)
+                output[:] = op.nl.math(dt, J)
         return [lif_rate]
 
     def RaggedArray(self, *args, **kwargs):
@@ -1027,7 +1023,7 @@ class Simulator(object):
         data : ndarray
             TODO: what are the dimensions?
         """
-        if not isinstance(probe, Probe):
+        if not isinstance(probe, nb.Probe):
             if isinstance(probe, str):
                 probe = self.model.probed[probe]
             else:

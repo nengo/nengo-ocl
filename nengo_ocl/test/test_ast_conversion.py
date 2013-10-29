@@ -3,9 +3,7 @@ import math
 import inspect
 
 import nengo
-import nengo.core
-import nengo.simulator
-from nengo.core import Signal
+from nengo.builder import Signal, Constant, SimDirect
 
 import nengo_ocl
 from nengo_ocl.tricky_imports import unittest
@@ -79,8 +77,8 @@ class TestAstConversion(unittest.TestCase):
         output_signals = []
         for i, xx in enumerate(x):
             s = model.add(Signal(n=out_dims, name="output_%d" % i))
-            model._operators.append(nengo.simulator.SimDirect(
-                    s, nengo.core.Constant(xx, name="input_%d" % i), FunctionObject))
+            model._operators.append(SimDirect(
+                    s, Constant(xx, name="input_%d" % i), FunctionObject))
             output_signals.append(s)
 
         sim = model.simulator(sim_class=OclSimulator)

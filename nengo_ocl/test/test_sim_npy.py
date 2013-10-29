@@ -14,11 +14,11 @@ from nengo.tests.helpers import NengoTestLoader
 from nengo.tests.helpers import load_nengo_tests
 from nengo_ocl import sim_npy
 
-def Npy2Simulator(model):
-    return sim_npy.Simulator(model)
+from nengo.tests.test_simulator import TestSimulator, TestNonlinear
+TestSimulator.Simulator = sim_npy.Simulator
+TestNonlinear.Simulator = sim_npy.Simulator
 
-load_tests = load_nengo_tests(Npy2Simulator)
+load_tests = load_nengo_tests(sim_npy.Simulator)
 
 if __name__ == '__main__':
-   unittest.main(testLoader=NengoTestLoader(Npy2Simulator))
-
+   unittest.main(testLoader=NengoTestLoader(sim_npy.Simulator))

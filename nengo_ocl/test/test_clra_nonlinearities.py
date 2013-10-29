@@ -2,7 +2,7 @@ import numpy as np
 from nengo_ocl.tricky_imports import unittest
 
 import nengo
-from nengo.core import LIF, LIFRate, Direct
+from nengo.nonlinearities import LIF, LIFRate, Direct
 
 import pyopencl as cl
 ctx = cl.create_some_context()
