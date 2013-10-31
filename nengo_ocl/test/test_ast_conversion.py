@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 queue = cl.CommandQueue(ctx)
 
 def OclSimulator(model):
-    return sim_ocl.Simulator(model, ctx)
+    return sim_ocl.Simulator(model, ctx, ocl_only=True)
 
 class _ArgGen(object):
     def __init__(self, low=-10, high=10, integer=False):
@@ -144,7 +144,7 @@ class TestAstConversion(unittest.TestCase):
 
         self._test_fn(product, 2)
 
-    def test_function_maps(self):
+    def test_functions(self):
         """Test the function maps in ast_converter.py"""
 
         AG = _ArgGen
@@ -214,6 +214,31 @@ class TestAstConversion(unittest.TestCase):
         self.assertTrue(all_passed, "Some functions failed, "
                         "see logger warnings for details")
 
+    def test_vector_functions(self):
+        d = 5
+        boolean = [any, all, np.any, np.all]
+        funcs = ast_conversion.vector_funcs.keys()
+        all_passed = True
+        for fn in funcs:
+            try:
+                if fn in boolean:
+                    def wrapper(x):
+                        return fn(np.asarray(x) > 0)
+                else:
+                    def wrapper(x):
+                        return fn(x)
+
+                self._test_fn(wrapper, d)
+
+                logger.info("Function `%s` passed" % fn.__name__)
+            except Exception as e:
+                all_passed = False
+                logger.warning("Function `%s` failed with:\n    %s: %s"
+                               % (fn.__name__, e.__class__.__name__, e.message))
+
+        self.assertTrue(all_passed, "Some functions failed, "
+                        "see logger warnings for details")
+
     def test_lambda(self):
         # Test various ways of using lambda functions
 
@@ -239,11 +264,8 @@ class TestAstConversion(unittest.TestCase):
 
         # this shouldn't convert to OCL b/c it has two lambdas on one line
         d = egg(lambda x: x[0]**2, lambda y: y[0]**3)
-        self._test_fn(d, 1) # this should pass because a warning
-                            # is issued and fn kept in python
         try:
-            of = ast_conversion.OCL_Function(d)
-            of.translator()
+            self._test_fn(d, 1)
             assert False, ("This should fail because we don't support conversion"
                            "to OCL with multiple lambda functions in a source line")
         except NotImplementedError:

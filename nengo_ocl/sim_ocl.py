@@ -30,7 +30,7 @@ class Simulator(sim_npy.Simulator):
             return CLRaggedArray(self.queue, val)
 
     def __init__(self, model, context=None, n_prealloc_probes=1000,
-                 profiling=None):
+                 profiling=None, ocl_only=False):
         if context is None:
             print 'No context argument was provided to sim_ocl.Simulator'
             print "Calling pyopencl.create_some_context() for you now:"
@@ -46,6 +46,8 @@ class Simulator(sim_npy.Simulator):
             self.queue = cl.CommandQueue(context)
 
         self.n_prealloc_probes = n_prealloc_probes
+        self.ocl_only = ocl_only
+
         # -- allocate data
         sim_npy.Simulator.__init__(self, model)
 
@@ -113,7 +115,7 @@ class Simulator(sim_npy.Simulator):
 
             ### try to get OCL code
             try:
-                ocl_fn = OCL_Function(fn)
+                ocl_fn = OCL_Function(fn, in_dim=in_dim, out_dim=out_dim)
                 Xname = ocl_fn.translator.arg_names[0]
                 X = self.all_data[[self.sidx[i] for i in signals['in']]]
                 Y = self.all_data[[self.sidx[i] for i in signals['out']]]
@@ -121,8 +123,12 @@ class Simulator(sim_npy.Simulator):
                                    Xname, X, Y, tag=fn_name)
                 plans.append(plan)
             except (NotImplementedError, AssertionError), e:
-                logger.warning("Function '%s' could not be converted to OCL"
-                               % fn_name)
+                if self.ocl_only:
+                    raise e
+
+                logger.warning(
+                    "Function '%s' could not be converted to OCL (%s: %s)"
+                               % (fn_name, e.__class__.__name__, e.message))
 
                 ### Need wrapper function so that variables get copied
                 def make_temp():
