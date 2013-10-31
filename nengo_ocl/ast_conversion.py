@@ -2,6 +2,8 @@
 This file holds a parser to turn simple Python functions into OCL code
 
 TODO:
+* better testing, i.e., write test cases for all the test functions
+  at the bottom of this file.
 * get binary_and, or, xor, etc. functions working (priority = low)
   - this will require the ability to specify integer input variables
   - or perhaps just cast inputs to these functions to integers
@@ -12,9 +14,13 @@ TODO:
   deal with this better, though.
 """
 
+import __builtin__
 import inspect, ast, collections
 import numpy as np
 import math
+
+def iterable(x):
+    return isinstance(x, collections.Iterable)
 
 infix_binary_ops = {
     ast.Add: '+',
@@ -212,6 +218,16 @@ OUTPUT_NAME = "__OUTPUT__"
 
 class Expression(object):
     """Represents a numerical expression"""
+
+    def _init_expr(self, expr):
+        """Initialize ast.Expr, for use in 'simplify'"""
+        expr.lineno = 1
+        expr.col_offset = 0
+        return expr
+
+    def simplify(self):
+        return self  # by default, don't simplify
+
     def to_ocl(self, wrap=False):
         raise NotImplementedError()
 
@@ -234,40 +250,142 @@ class NumExp(Expression):
             ### Append an 'f' to floats, o.w. some calls (e.g. pow) ambiguous
             ### TODO: can we get around putting the 'f' afterwards?
             return "%sf" % self.value
+        elif isinstance(self.value, bool):
+            return "1" if self.value else "0"
         else:
             return str(self.value)
 
 class UnaryExp(Expression):
     def __init__(self, op, right):
+        assert isinstance(right, Expression)
         self.op, self.right = op, right
 
-    def to_ocl(self, wrap=False):
-        if isinstance(self.right, NumExp) and self.right.value < 0:
-            s = "%s(%s)" % (self.op, self.right.to_ocl())
+    def simplify(self):
+        op, right = self.op, self.right
+        if isinstance(right, NumExp) and not isinstance(op, str):
+            # simplify and return NumExp
+            a = self._init_expr(ast.Num(right.value))
+            c = self._init_expr(ast.UnaryOp(op, a))
+            return NumExp(eval(compile(ast.Expression(c), '<string>', 'eval')))
         else:
-            s = "%s%s" % (self.op, self.right.to_ocl(wrap=True))
+            return self
+
+    def to_ocl(self, wrap=False):
+        if isinstance(self.op, str):
+            op = self.op
+        else:
+            op = prefix_unary_ops.get(type(self.op))
+            if op is None:
+                raise NotImplementedError(
+                    "'%s' operator is not supported" % type(self.op).__name__)
+
+        if isinstance(self.right, NumExp) and self.right.value < 0:
+            s = "%s(%s)" % (op, self.right.to_ocl())
+        else:
+            s = "%s%s" % (op, self.right.to_ocl(wrap=True))
         return ("(%s)" % s) if wrap else s
 
 class BinExp(Expression):
     def __init__(self, left, op, right):
+        assert isinstance(right, Expression) and isinstance(left, Expression)
         self.left, self.op, self.right = left, op, right
 
+    def simplify(self):
+        left, op, right = self.left, self.op, self.right
+        if (isinstance(left, NumExp) and isinstance(right, NumExp)
+            and not isinstance(op, str)):
+            # simplify and return NumExp
+            a = self._init_expr(ast.Num(left.value))
+            b = self._init_expr(ast.Num(right.value))
+            if isinstance(self.op, ast.cmpop):
+                c = self._init_expr(ast.Compare(a, [op], [b]))
+            else:
+                c = self._init_expr(ast.BinOp(a, op, b))
+            return NumExp(eval(compile(ast.Expression(c), '<string>', 'eval')))
+        else:
+            return self
+
     def to_ocl(self, wrap=False):
-        s = "%s %s %s" % (
-            self.left.to_ocl(wrap=True), self.op, self.right.to_ocl(wrap=True))
+        left, right = self.left, self.right
+
+        if isinstance(self.op, str):
+            op = self.op
+        else:
+            opt = type(self.op)
+            op = infix_binary_ops.get(opt)
+            if op is None and opt is ast.Pow:
+                if isinstance(right, NumExp):
+                    if isinstance(right.value, int):
+                        if right.value == 2:
+                            return BinExp(left, '*', left).to_ocl(wrap=wrap)
+                        else:
+                            return FuncExp(
+                                "pown", left, right).to_ocl(wrap=wrap)
+                    elif right.value > 0:
+                        return FuncExp("powr", left, right).to_ocl(wrap=wrap)
+                return FuncExp("pow", left, right).to_ocl(wrap=wrap)
+            elif op is None:
+                raise NotImplementedError(
+                    "'%s' operator is not supported" % opt.__name__)
+
+        s = "%s %s %s" % (left.to_ocl(wrap=True), op, right.to_ocl(wrap=True))
         return ("(%s)" % s) if wrap else s
 
 class FuncExp(Expression):
     def __init__(self, fn, *args):
         self.fn, self.args = fn, args
 
+    def simplify(self):
+        is_num = lambda x: isinstance(x, NumExp)
+        if isinstance(self.fn, str):
+            return self  # cannot simplify
+        elif all(map(is_num, self.args)):
+            # simplify scalar function
+            return NumExp(self.fn(*[a.value for a in self.args]))
+        elif all(is_num(a) or iterable(a) and all(map(is_num, a))
+                 for a in self.args):
+            # simplify vector function
+            return NumExp(self.fn(
+                    [[aa.value for aa in a] if iterable(a) else a.value
+                     for a in self.args]))
+        else:
+            return self  # cannot simplify
+
     def to_ocl(self, wrap=False):
-        args = [arg.to_ocl() for arg in self.args]
-        return "%s(%s)" % (self.fn, ', '.join(args))
+        if isinstance(self.fn, str):
+            args = [arg.to_ocl() for arg in self.args]
+            return "%s(%s)" % (self.fn, ', '.join(args))
+        else:
+            fn, args = self.fn, self.args
+            if fn in vector_funcs:
+                converter = vector_funcs[fn]
+            elif fn in direct_funcs:
+                converter = lambda x: FuncExp(direct_funcs[fn], x)
+            elif fn in indirect_funcs:
+                converter = fn
+                while converter in indirect_funcs:
+                    converter = indirect_funcs[converter]
+            else:
+                raise NotImplementedError(
+                "'%s' function is not supported" % (fn.__name__))
+
+            if converter.func_code.co_argcount != len(args):
+                raise NotImplementedError(
+                    "'%s' function is not supported for %d arguments"
+                    % (handle.__name__, len(args)))
+
+            exp = converter(*args)
+            return exp.to_ocl(wrap=wrap)
 
 class IfExp(Expression):
     def __init__(self, cond, true, false):
         self.cond, self.true, self.false = cond, true, false
+
+    def simplify(self):
+        if isinstance(self.cond, NumExp):
+            return self.true if self.cond.value else self.false
+        else:
+            return self
 
     def to_ocl(self, wrap=False):
         s = "%s ? %s : %s" % (
@@ -295,6 +413,15 @@ class Function_Finder(ast.NodeVisitor):
 
 
 class OCL_Translator(ast.NodeVisitor):
+
+    MAX_VECTOR_LENGTH = 25
+    builtins = __builtin__.__dict__
+
+    def _check_vector_length(self, length):
+        if length > self.MAX_VECTOR_LENGTH:
+            raise ValueError("Vectors of length >%s are not supported"
+                             % self.MAX_VECTOR_LENGTH)
+
     def __init__(self, source, globals_dict, closure_dict,
                  in_dim=None, out_dim=None):
         self.source = source
@@ -342,6 +469,7 @@ class OCL_Translator(ast.NodeVisitor):
         elif isinstance(var, (list, np.ndarray)):
             if isinstance(var, np.ndarray):
                 var = var.tolist()
+            self._check_vector_length(len(var))
             return [self._parse_var(v) for v in var]
         else:
             raise NotImplementedError(
@@ -349,7 +477,6 @@ class OCL_Translator(ast.NodeVisitor):
                 var.__class__.__name__)
 
     def visit(self, node):
-        # print "visiting " + node.__class__.__name__
         res = ast.NodeVisitor.visit(self, node)
         return res
 
@@ -360,6 +487,7 @@ class OCL_Translator(ast.NodeVisitor):
         elif name in self.arg_names:
             assert self.in_dim is not None, (
                 "Must provide input dimensionality to use vectorized arguments")
+            self._check_vector_length(self.in_dim)
             return [VarExp('%s[%d]' % (name, i)) for i in xrange(self.in_dim)]
         elif name in self.init:
             return VarExp(name)
@@ -378,8 +506,14 @@ class OCL_Translator(ast.NodeVisitor):
 
     def visit_Index(self, expr):
         value = self.visit(expr.value)
-        assert (isinstance(value, NumExp) and isinstance(value.value, int)), (
-            "Only integer indices allowed")
+        assert isinstance(value, NumExp), "Index must be a number"
+        assert isinstance(value.value, int), "Index must be an integer"
+        if value.value < 0:
+            raise NotImplementedError("Negative indices not supported")
+        if self.in_dim is not None and value.value >= self.in_dim:
+            raise IndexError(
+                "Index '%s' must be less than number of inputs '%s'"
+                % (value.value, self.in_dim))
         return value.to_ocl()
 
     def visit_Ellipsis(self, expr):
@@ -392,7 +526,8 @@ class OCL_Translator(ast.NodeVisitor):
         raise NotImplementedError("ExtSlice")
 
     def _broadcast_args(self, func, args):
-        as_list = lambda x: [x] if not isinstance(x, list) else x
+        """Apply 'func' element-wise to lists of args"""
+        as_list = lambda x: list(x) if iterable(x) else [x]
         args = map(as_list, args)
         arg_lens = map(len, args)
         max_len = max(arg_lens)
@@ -401,41 +536,16 @@ class OCL_Translator(ast.NodeVisitor):
 
         result = [func(*[a[i] if len(a) > 1 else a[0] for a in args])
                   for i in xrange(max_len)]
+        result = [r.simplify() for r in result]
         return result[0] if len(result) == 1 else result
 
     def _visit_unary_op(self, op, operand):
-        opt = type(op)
-        def _visitor(value):
-            if opt in prefix_unary_ops:
-                return UnaryExp(prefix_unary_ops[opt], value)
-            else:
-                raise NotImplementedError(
-                    "'%s' operator is not supported" % opt.__name__)
-        return self._broadcast_args(_visitor, [self.visit(operand)])
+        return self._broadcast_args(lambda a: UnaryExp(op, a),
+                                    [self.visit(operand)])
 
     def _visit_binary_op(self, op, left, right):
-        s_left = self.visit(left)
-        s_right = self.visit(right)
-
-        opt = type(op)
-        def _visitor(s_left, s_right):
-            if opt in infix_binary_ops:
-                return BinExp(s_left, infix_binary_ops[opt], s_right)
-            elif opt is ast.Pow:
-                if isinstance(s_right, NumExp):
-                    if isinstance(s_right.value, int):
-                        if s_right.value == 2:
-                            return BinExp(s_left, '*', s_left)
-                        else:
-                            return FuncExp("pown", s_left, s_right)
-                    elif s_right.value > 0:
-                        return FuncExp("powr", s_left, s_right)
-                return FuncExp("pow", s_left, s_right)
-            else:
-                raise NotImplementedError(
-                    "'%s' operator is not supported" % opt.__name__)
-
-        return self._broadcast_args(_visitor, [s_left, s_right])
+        return self._broadcast_args(lambda a, b: BinExp(a, op, b),
+                                    [self.visit(left), self.visit(right)])
 
     def visit_UnaryOp(self, expr):
         return self._visit_unary_op(expr.op, expr.operand)
@@ -469,8 +579,8 @@ class OCL_Translator(ast.NodeVisitor):
                 return self.closures[expr.id]
             elif expr.id in self.globals:
                 return self.globals[expr.id]
-            elif expr.id in __builtins__.__dict__:
-                return __builtins__.__dict__[expr.id]
+            elif expr.id in self.builtins:
+                return self.builtins[expr.id]
             else:
                 raise ValueError("Name '%s' could not be resolved" % expr.id)
         else:
@@ -480,33 +590,11 @@ class OCL_Translator(ast.NodeVisitor):
         assert expr.kwargs is None, "kwargs not implemented"
         handle = self._get_handle(expr.func)
         args = [self.visit(arg) for arg in expr.args]
-
-        wrong_args = NotImplementedError(
-            "'%s' function is not supported for %d arguments"
-            % (handle.__name__, len(args)))
-
-        list_args = any([isinstance(arg, list) for arg in args])
-        if handle in vector_funcs and list_args:
-            func = vector_funcs[handle]
-            if func.func_code.co_argcount != len(args):
-                raise wrong_args
-
-            return func(*args)
-        elif handle in direct_funcs or handle in indirect_funcs:
-            if handle in direct_funcs:
-                func = lambda x: FuncExp(direct_funcs[handle], x)
-            else:
-                func = handle
-                while func in indirect_funcs:
-                    func = indirect_funcs[func]
-
-            if func.func_code.co_argcount != len(args):
-                raise wrong_args
-
-            return self._broadcast_args(func, args)
+        if handle in vector_funcs:
+            return FuncExp(handle, *args)
         else:
-            raise NotImplementedError(
-            "'%s' function is not supported" % (handle.__name__))
+            return self._broadcast_args(
+                lambda *args: FuncExp(handle, *args), args)
 
     def visit_Attribute(self, expr):
         handle = self._get_handle(expr)
@@ -533,6 +621,7 @@ class OCL_Translator(ast.NodeVisitor):
         temp_name = gen.target.id
         assert temp_name not in self.temp_names
 
+        self._check_vector_length(n.value)
         result = []
         for v in xrange(n.value):
             self.temp_names[temp_name] = NumExp(v)
@@ -591,19 +680,19 @@ class OCL_Translator(ast.NodeVisitor):
         return ["%s = %s;" % (lhs, rhs.to_ocl())]
 
     def visit_AugAssign(self, expr):
-        new_value = self._visit_lhs(expr.target)
-        target = self._visit_binary_op(expr.op, expr.target, expr.value)
+        lhs = self._visit_lhs(expr.target)
+        rhs = self._visit_binary_op(expr.op, expr.target, expr.value)
         assert isinstance(rhs, Expression), (
-            "Can only assign math expressions, not '%s'" % type(target))
-        return ["%s = %s;" % (new_value, target)]
+            "Can only assign math expressions, not '%s'" % type(rhs))
+        return ["%s = %s;" % (lhs, rhs.to_ocl())]
 
     def visit_Return(self, expr):
         value = self.visit(expr.value)
-        if isinstance(value, list):
-            for v in value:
-                if not isinstance(v, Expression):
-                    raise ValueError(
-                        "Can only return list of mathematical expressions")
+        if iterable(value):
+            self._check_vector_length(len(value))
+            if not all(isinstance(v, Expression) for v in value):
+                raise ValueError(
+                    "Can only return a list of mathematical expressions")
             return ["%s[%d] = %s;" % (OUTPUT_NAME, i, v.to_ocl())
                     for i, v in enumerate(value)] + ["return;"]
         elif isinstance(value, Expression):
@@ -656,14 +745,13 @@ class OCL_Function(object):
         self.fn = fn
         self.in_dim = in_dim
         self.out_dim = out_dim
-        # self.__name__ = self.fn.__name__
         self._translator = None
 
     @staticmethod
     def _is_lambda(v):
         return isinstance(v, type(lambda: None)) and v.__name__ == '<lambda>'
 
-    def get_ocl_translator(self):
+    def _get_ocl_translator(self):
         if self.fn in direct_funcs or self.fn in indirect_funcs:
             assert self.in_dim is not None, (
                 "Must supply input dimensionality for raw function")
@@ -686,25 +774,11 @@ class OCL_Function(object):
         return OCL_Translator(source, globals_dict, closure_dict,
                               in_dim=self.in_dim, out_dim=self.out_dim)
 
-        # try:
-        #     return OCL_Translator(source, globals_dict, free_vars,
-        #                           closure_cells, filename=filename)
-        # # except AssertionError as e:
-        # #     print "Could not translate to OCL: %s" % e.strerror
-        # # except NotImplementedError as e:
-        # except Exception as e:
-        #     print "Could not translate to OCL: %s" % e.message
-        # return None
-
     @property
     def translator(self):
         if self._translator is None:
-            self._translator = self.get_ocl_translator()
+            self._translator = self._get_ocl_translator()
         return self._translator
-
-    # @property
-    # def can_translate(self):
-    #     return self.translator is not None
 
     def _flatten(self, blocks, indent=0):
         lines = []
@@ -734,11 +808,12 @@ if __name__ == '__main__':
     multiplier = 3842.012
     def square(x):
         print "wow: %f, %d, %s" % (0.3, 9, "hello")
-        if x < 0.5 - 0.1:
+        # if x < 0.5 - 0.1:
+        if 1 + (2 == 2):
             y = 2. * x
             z -= 4 + (3 if x > 99 else 2)
         elif x == 2:
-            y *= 9.12
+            y *= 9.12 if 3 > 4 else 0
             z = 4*(x - 2)
         else:
             y = 9*x
@@ -755,9 +830,24 @@ if __name__ == '__main__':
     print '*' * 5 + 'Vector lambda' + '*' * 50
     insert = -0.5
     func = lambda x: x + 3 if all(x > 2) else x - 1
-    ocl_fn = OCL_Function(func, in_dim=2)
+    ocl_fn = OCL_Function(func, in_dim=3)
     print ocl_fn.init
     print ocl_fn.code
+
+    print '*' * 5 + 'Large input' + '*' * 50
+    insert = -0.5
+    func = lambda x: [x[1] * x[1051], x[3] * x[62]];
+    ocl_fn = OCL_Function(func, in_dim=1100)
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print '*' * 5 + 'List comprehension' + '*' * 50
+    insert = -0.5
+    func = lambda x: [np.maximum(0.1, np.sin(2)) * x[4 - i] for i in xrange(5)]
+    ocl_fn = OCL_Function(func, in_dim=5)
+    print ocl_fn.init
+    print ocl_fn.code
+
 
     # print '*' * 5 + 'Unary minus' + '*' * 50
     # insert = -0.5
