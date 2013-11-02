@@ -37,7 +37,7 @@ class MultiProdUpdate(nb.Operator):
         if Y.shape != Y_in.shape:
             raise TypeError()
         try:
-            if isinstance(beta, nb.Constant):
+            if hasattr(beta, 'value'):
                 self._float_beta = float(beta.value)
             else:
                 self._float_beta = float(beta)
