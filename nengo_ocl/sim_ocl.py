@@ -107,7 +107,7 @@ class Simulator(sim_npy.Simulator):
             in_dim = signals['in'][0].size
             out_dim = signals['out'][0].size
             for sig_in, sig_out in zip(signals['in'], signals['out']):
-                assert sig_in.n == in_dim and sig_out.n == out_dim
+                assert sig_in.size == in_dim and sig_out.size == out_dim
                 assert vector_dims(sig_in.shape, in_dim)
                 assert vector_dims(sig_out.shape, out_dim)
                 assert unit_stride(sig_in.elemstrides)
