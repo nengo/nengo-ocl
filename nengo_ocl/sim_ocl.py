@@ -264,16 +264,20 @@ class Simulator(sim_npy.Simulator):
         return self.run_steps(1)
 
     def run_steps(self, N, verbose=False):
-        # -- precondition: the probe buffers have been drained
-        bufpositions = self._cl_probe_plan.cl_bufpositions.get()
-        assert np.all(bufpositions == 0)
+        has_probes = hasattr(self, '_cl_probe_plan')
+
+        if has_probes:
+            # -- precondition: the probe buffers have been drained
+            bufpositions = self._cl_probe_plan.cl_bufpositions.get()
+            assert np.all(bufpositions == 0)
         # -- we will go through N steps of the simulator
         #    in groups of up to B at a time, draining
         #    the probe buffers after each group of B
         while N:
-            B = min(N, self._max_steps_between_probes)
+            B = min(N, self._max_steps_between_probes) if has_probes else N
             self._dag.call_n_times(B)
-            self.drain_probe_buffers()
+            if has_probes:
+                self.drain_probe_buffers()
             N -= B
         if self.profiling > 1:
             self.print_profiling()
