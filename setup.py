@@ -22,7 +22,7 @@ setup(
     packages=['nengo_ocl'],
     scripts=[],
     url="https://github.com/ctn-waterloo/nengo_theano",
-    license="BSD",
+    license="GPLv3",
     description=description,
     long_description="",
     requires=[
