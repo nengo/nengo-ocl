@@ -53,7 +53,6 @@ class MultiProdUpdate(nb.Operator):
         self.as_update = as_update
         self.As = []
         self.Xs = []
-        self.xTs = []
         self._incs_Y = (
                 self._signal_beta is None
                 and self._float_beta == 1
@@ -78,21 +77,20 @@ class MultiProdUpdate(nb.Operator):
         elif isinstance(op, nb.DotInc):
             rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=False,
                     tag=op.tag)
-            rval.add_AX(op.A, op.X, op.xT)
+            rval.add_AX(op.A, op.X)
             assert_ok()
         elif isinstance(op, nb.ProdUpdate):
             rval = cls(op.Y, op.Y, beta=op.B, gamma=0, as_update=True,
                     tag=op.tag)
-            rval.add_AX(op.A, op.X, False)
+            rval.add_AX(op.A, op.X)
             assert_ok()
         else:
             return op
         return rval
 
-    def add_AX(self, A, X, xT):
+    def add_AX(self, A, X):
         self.As.append(A)
         self.Xs.append(X)
-        self.xTs.append(xT)
 
     @property
     def reads(self):
@@ -136,8 +134,8 @@ class MultiProdUpdate(nb.Operator):
             beta = self._signal_beta
 
         dots = []
-        for A, X, xT in zip(self.As, self.Xs, self.xTs):
-            dots.append('dot(%s, %s, xT=%s)' % (A, X, xT))
+        for A, X in zip(self.As, self.Xs):
+            dots.append('dot(%s, %s)' % (A, X))
         return ('<MultiProdUpdate(tag=%s, as_update=%s, Y=%s,'
                 ' Y_in=%s, beta=%s,'
                 ' gamma=%s, dots=[%s]'
@@ -175,7 +173,6 @@ class MultiProdUpdate(nb.Operator):
             for inc_op in incs[view]:
                 set_op.As.extend(inc_op.As)
                 set_op.Xs.extend(inc_op.Xs)
-                set_op.xTs.extend(inc_op.xTs)
                 done.add(inc_op)
             rval.append(set_op)
         for view, inc_ops in incs.items():
@@ -628,8 +625,12 @@ class Simulator(object):
                 return view.reshape(1, 1)
             elif view.ndim == 1:
                 return view.reshape(view.shape[0], 1)
+            elif view.ndim == 2:
+                return view
             else:
-                return Y
+                raise ValueError(
+                    "No support for tensors with %d dimensions" % view.ndim)
+
         if not hasattr(self, '_YYB_views'):
             self._YYB_views = {}
 
@@ -642,58 +643,24 @@ class Simulator(object):
                 YYB_views = [Y_view, Y_in_view]
             AX_views = []
             for A, X in zip(op.As, op.Xs):
-                if A.ndim == 0:
-                    A_view = A.reshape((1, 1))
-                    if X.ndim == 1:
-                        X_view = as2d(X)
-                    else:
-                        if op.xT:
-                            X_view = X_view.T
-                    if X_view.shape != Y_view.shape or X_view.shape[1] != 1:
-                        raise ValueError('shape mismach in DotInc',
-                            (A.shape, X.shape, op.Y.shape))
-                    # -- scalar AX_views can be done as reverse multiplication
-                    AX_views.extend([X_view, A_view])
-                elif A.ndim == 1:
-                    if X.ndim == 0:
-                        raise NotImplementedError()
-                    elif X.ndim == 1:
-                        A_view = A.reshape((1, A.shape[0]))
-                        X_view = as2d(X)
-                        AX_views.extend([A_view, X_view])
-                    elif X.ndim == 2:
-                        A_view = as2d(A)
-                        if op.xT:
-                            # -- dot(vecA, matX.T) -> vecY
-                            #    = dot(mat, vecA) -> vecY
-                            X_view = X
-                        else:
-                            # -- dot(vecA, matX) -> vecY
-                            #    = dot(matX.T, vecA) -> vecY
-                            X_view = X.T
-                        AX_views.extend([X_view, A_view])
-                    else:
-                        raise NotImplementedError()
-                elif A.ndim == 2:
-                    if X.ndim == 0:
-                        raise NotImplementedError()
-                    elif X.ndim == 1:
-                        X_view = as2d(X)
-                        AX_views.extend([A, X_view])
-                    elif X.ndim == 2:
-                        if op.xT:
-                            X_view = X.T
-                            AX_views.extend([A, X_view])
-                        else:
-                            # -- dot(vecA, matX) -> vecY
-                            #    = dot(matX.T, vecA) -> vecY
-                            #self._DotInc_views[op] = (A, X, Y)
-                            AX_views.extend([A, X])
-                    else:
-                        raise NotImplementedError()
-
+                X_view = as2d(X)
+                if A.ndim == 1 and X.ndim == 1:
+                    A_view = A.reshape((1, A.shape[0])) # vector dot
                 else:
-                    raise NotImplementedError()
+                    A_view = as2d(A)
+
+                if A_view.shape == (1, 1):
+                    # -- scalar AX_views can be done as reverse multiplication
+                    A_view, X_view = X_view, A_view
+
+                if not (X_view.shape[0] == A_view.shape[1] and
+                        X_view.shape[1] == Y_view.shape[1] and
+                        A_view.shape[0] == Y_view.shape[0]):
+                    raise ValueError('shape mismach (A: %s, X: %s, Y: %s)' %
+                                     (A.shape, X.shape, op.Y.shape))
+
+                AX_views.extend([A_view, X_view])
+
             map(view_builder.append_view,
                 op.all_signals + AX_views + YYB_views)
             self._AX_views[op] = AX_views

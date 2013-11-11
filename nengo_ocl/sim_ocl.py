@@ -82,7 +82,7 @@ class Simulator(sim_npy.Simulator):
     def plan_ragged_gather_gemv(self, *args, **kwargs):
         return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
 
-    def plan_SimDirect(self, ops):
+    def plan_SimPyFunc(self, ops):
         ### TOOD: test with a hybrid program (Python and OCL)
 
         ### group nonlinearities
@@ -138,7 +138,8 @@ class Simulator(sim_npy.Simulator):
                     def temp_fn():
                         for sin, sout in zip(signals_in, signals_out):
                             x = self.all_data[self.sidx[sin]]
-                            self.all_data[self.sidx[sout]] = f(x)
+                            y = np.asarray(f(x)).reshape((out_dim, 1))
+                            self.all_data[self.sidx[sout]] = y
                     return temp_fn
 
                 plans.append(PythonPlan(make_temp(), name=fn_name, tag=fn_name))
