@@ -418,9 +418,9 @@ class OCL_Translator(ast.NodeVisitor):
     builtins = __builtin__.__dict__
 
     def _check_vector_length(self, length):
-        assert length > self.MAX_VECTOR_LENGTH, (
-            "Vectors of length >%s are not supported"
-            % self.MAX_VECTOR_LENGTH)
+        if length > self.MAX_VECTOR_LENGTH:
+            raise ValueError("Vectors of length >%s are not supported"
+                             % self.MAX_VECTOR_LENGTH)
 
     def __init__(self, source, globals_dict, closure_dict,
                  in_dim=None, out_dim=None):

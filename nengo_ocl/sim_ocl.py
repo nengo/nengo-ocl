@@ -122,7 +122,7 @@ class Simulator(sim_npy.Simulator):
                 plan = plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
                                    Xname, X, Y, tag=fn_name)
                 plans.append(plan)
-            except (NotImplementedError, AssertionError), e:
+            except Exception as e:
                 if self.ocl_only:
                     raise e
 
