@@ -82,8 +82,8 @@ class Simulator(sim_npy.Simulator):
     def plan_ragged_gather_gemv(self, *args, **kwargs):
         return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
 
-    def plan_SimPyFunc(self, ops):
-        ### TOOD: test with a hybrid program (Python and OCL)
+    def plan_SimDirect(self, ops):
+        ### TODO: test with a hybrid program (Python and OCL)
 
         ### group nonlinearities
         unique_ops = collections.OrderedDict()
@@ -145,6 +145,66 @@ class Simulator(sim_npy.Simulator):
                 plans.append(PythonPlan(make_temp(), name=fn_name, tag=fn_name))
 
         return plans
+
+    def plan_SimPyFunc(self, ops):
+        ### TODO: test with a hybrid program (Python and OCL)
+        ### TODO: consolidate this logic with plan_Direct above
+
+        ### group nonlinearities
+        unique_ops = collections.OrderedDict()
+        for op in ops:
+            op_key = (op.fn, op.n_args)
+            if op_key not in unique_ops:
+                unique_ops[op_key] = {'in': [], 'out': []}
+            assert op.n_args in (1, 2), op.n_args
+            if op.n_args == 2:
+                unique_ops[op_key]['in'].append(op.J)
+            unique_ops[op_key]['out'].append(op.output)
+
+        ### make plans
+        plans = []
+        for (fn, n_args), signals in unique_ops.items():
+            fn_name = fn.__name__
+            if fn_name == "<lambda>":
+                fn_name += "%d" % len(plans)
+
+            logger.warning(
+                "Node '%s' could not be converted to OCL"
+                           % (fn_name, ))
+
+            ### Need wrapper function so that variables get copied
+            dt = self.model.dt
+            if n_args == 1:
+                def make_temp():
+                    f = fn
+                    signals_out = signals['out'][:]
+                    def temp_fn():
+                        t = self.all_data[self.sidx[self._time]][0, 0]
+                        for sout in signals_out:
+                            y = np.asarray(f(t - dt))
+                            if y.ndim == 1:
+                                y = y[:, None]
+                            self.all_data[self.sidx[sout]] = y
+                    return temp_fn
+            else:
+                def make_temp():
+                    f = fn
+                    signals_in = signals['in'][:]
+                    signals_out = signals['out'][:]
+                    def temp_fn():
+                        t = self.all_data[self.sidx[self._time]][0, 0]
+                        for sin, sout in zip(signals_in, signals_out):
+                            x = self.all_data[self.sidx[sin]]
+                            y = np.asarray(f(t - dt, x))
+                            if y.ndim == 1:
+                                y = y[:, None]
+                            self.all_data[self.sidx[sout]] = y
+                    return temp_fn
+
+            plans.append(PythonPlan(make_temp(), name=fn_name, tag=fn_name))
+
+        return plans
+
 
     def plan_SimLIF(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
@@ -280,6 +340,7 @@ class Simulator(sim_npy.Simulator):
             if has_probes:
                 self.drain_probe_buffers()
             N -= B
+            self.n_steps += B
         if self.profiling > 1:
             self.print_profiling()
 
