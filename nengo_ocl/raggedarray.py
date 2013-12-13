@@ -7,6 +7,7 @@ import numpy as np
 
 def shape0(obj):
     try:
+        # assert obj.shape[0] -- empty lists are OK
         return obj.shape[0]
     except IndexError:
         return 1
@@ -14,6 +15,7 @@ def shape0(obj):
 
 def shape1(obj):
     try:
+        assert obj.shape[1]  #-- sanity check, should never be 0
         return obj.shape[1]
     except IndexError:
         return 1
@@ -73,6 +75,7 @@ class RaggedArray(object):
         else:
             assert len(names) == len(stride0s)
             self.names = names
+        assert 0 not in shape1s
 
     def __str__(self):
         sio = StringIO.StringIO()
@@ -99,6 +102,8 @@ class RaggedArray(object):
         #assert start + length <= len(self.buf)
         # -- creates copies, same semantics
         #    as OCL version
+        assert 0 not in shape0s
+        assert 0 not in shape1s
         self.starts = self.starts + starts
         self.shape0s = self.shape0s + shape0s
         self.shape1s = self.shape1s + shape1s
@@ -130,8 +135,12 @@ class RaggedArray(object):
                 itemsize * self.stride0s[item],
                 itemsize * self.stride1s[item])
             shape = self.shape0s[item], self.shape1s[item]
-            if shape[0] * shape[1] == 0:
+            if shape[0] == 0:
+                # -- The list of A_js for example can be
+                #    an empty list.
                 return []
+            elif shape[1] == 0:
+                raise ValueError('empty array', item)
             try:
                 view = np.ndarray(
                     shape=shape,

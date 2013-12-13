@@ -104,7 +104,7 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
             try:
                 y_i = gamma[i] + beta[i] * Y_in[i]  # -- ragged getitem
             except:
-                print i, gamma[i], beta, Y_in
+                print i, gamma[i], beta[i], Y_in[i]
                 raise
             alpha_i = alpha[i]
             #print 'Gemv:',

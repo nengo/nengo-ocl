@@ -5,7 +5,7 @@ TestCase classes are added automatically from
 nengo.tests.helpers.simulator_test_cases, but
 you can still run individual test files like this:
 
-    nosetests -sv test/test_sim_ocl.py:TestSimulator.test_simple_direct_mode
+$ python test/test_sim_ocl.py test_ensemble.TestEnsemble.test_lifrate
 
 """
 
@@ -22,6 +22,8 @@ def Ocl2Simulator(*args, **kwargs):
     kwargs['context'] = ctx
     return sim_ocl.Simulator(*args, **kwargs)
 
+# -- see comments in test_sim_npy.py for why these two
+#    classes are treated differently.
 from nengo.tests.test_simulator import TestSimulator, TestNonlinear
 TestSimulator.Simulator = staticmethod(Ocl2Simulator)
 TestNonlinear.Simulator = staticmethod(Ocl2Simulator)

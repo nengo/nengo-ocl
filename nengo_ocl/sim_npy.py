@@ -18,6 +18,7 @@ critical = logger.critical
 
 import numpy as np
 
+import nengo
 from nengo import builder as nb
 from nengo.nonlinearities import LIF, LIFRate, Direct
 
@@ -65,6 +66,7 @@ class MultiProdUpdate(nb.Operator):
             assert set(op.reads).issuperset(rval.reads), (rval.reads, op.reads)
             assert rval.incs == op.incs
             assert rval.sets == op.sets
+            assert all(s.size for s in rval.all_signals), op
             assert set(rval.updates) == set(op.updates), (rval.updates, op.updates)
         if isinstance(op, nb.Reset):
             rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value, as_update=False,
@@ -471,6 +473,10 @@ class ViewBuilder(object):
         #self.base_starts = self.all_data_A.starts
 
     def append_view(self, obj):
+        assert obj.size
+        shape0(obj)
+        shape1(obj)
+
         if obj in self.sidx:
             return
             #raise KeyError('sidx already contains object', obj)
@@ -531,12 +537,38 @@ class Simulator(object):
         if builder is None:
             builder = nb.Builder(copy=True)
 
+        # -- map from Signal.base -> ndarray
+        sigdict = SignalDict()
+        self._step = nb.Signal(np.asarray(0.0, dtype=np.float64), name='step')
+        self._time = nb.Signal(np.asarray(0.0, dtype=np.float64), name='time')
+        self._one = nb.Signal(np.asarray(1.0, dtype=np.float64), name='ONE')
+        self._zero = nb.Signal(np.asarray(0.0, dtype=np.float64), name='ZERO')
+        self._dt = nb.Signal(np.asarray(dt, dtype=np.float64), name='DT')
+
+        # -- possibly make a copy of the model
         self.model = builder(model, dt)
+        
+        # -- add some time-keeping to the copied model
+        #    this will be used by e.g. plan_SimPyFunc
+        self.model.operators.append(
+            nb.ProdUpdate(self._one, self._one, self._one, self._step))
+        self.model.operators.append(
+            nb.Reset(self._time))
+        self.model.operators.append(
+            nb.DotInc(self._dt, self._step, self._time))
+        self.model.operators.append(
+            nb.DotInc(self._dt, self._one, self._time))
+
+        # -- convert DotInc, Reset, Copy, and ProdUpdate to MultiProdUpdate
         operators = map(MultiProdUpdate.convert_to, self.model.operators)
         operators = MultiProdUpdate.compress(operators)
         self.operators = operators
         all_signals = signals_from_operators(operators)
         all_bases = stable_unique([sig.base for sig in all_signals])
+        # -- print ORIGINAL operators
+        #print '=' * 80
+        #for op in self.model.operators:
+            #print op
 
         _shares_memory_with = getattr(self.model, '_shares_memory_with', {})
         indep_cliques = getattr(self.model, '_independent_view_cliques', {})
@@ -570,18 +602,19 @@ class Simulator(object):
         #print '-' * 80
         #self.print_op_groups()
 
-        # -- map from Signal.base -> ndarray
-        sigdict = SignalDict()
         for op in operators:
             op.init_sigdict(sigdict, self.model.dt)
 
-        self.sim_step = 0
+
+        self.n_steps = 0
         self.probe_outputs = dict((probe, []) for probe in self.model.probes)
 
         self.all_data = _RaggedArray(
                 [sigdict[sb] for sb in all_bases],
                 [getattr(sb, 'name', '') for ss in all_bases]
                 )
+        #for k in all_bases:
+            #print k, k.shape#, sigdict[k]
 
         builder = ViewBuilder(all_bases, self.all_data)
         #self._DotInc_views = {}
@@ -722,6 +755,30 @@ class Simulator(object):
                     #print op.output, self.all_data[sidx[op.output]]
         return [direct]
 
+    def plan_SimPyFunc(self, ops):
+        dt = self.model.dt
+        sidx = self.sidx
+        t = self.all_data[sidx[self._time]]
+        def pyfunc(profiling=False):
+            for op in ops:
+                output = self.all_data[sidx[op.output]]
+                # -- YEP, subtracting off DT is crazy
+                #    but it makes nengo's tests pass.
+                #    See nengo ticket #234 for potential resolution.
+                if op.n_args == 2:
+                    J = self.all_data[sidx[op.J]]
+                    out = op.fn(t[0, 0] - dt, J)
+                else:
+                    out = op.fn(t[0, 0] - dt)
+                out = np.asarray(out)
+                if out.ndim == 1:
+                    output[...] = out[:, None]
+                else:
+                    #print output.shape, out.shape, op.fn, op
+                    #print self._time.shape, t.shape
+                    output[...] = out
+        return [pyfunc]
+
     def plan_SimLIF(self, ops):
         dt = self.model.dt
         sidx = self.sidx
@@ -859,6 +916,12 @@ class Simulator(object):
                 return iter(self.all_bases)
 
             def __getitem__(_, item):
+                # -- handle a few special keys
+                item = {
+                    '__time__': self._time,
+                    '__step__': self._step,
+                }.get(item, item)
+
                 try:
                     raw = self.all_data[self.sidx[item]]
                 except KeyError:
@@ -937,7 +1000,7 @@ class Simulator(object):
                 probes = self.model.probes
                 for probe in probes:
                     period = int(probe.dt // self.model.dt)
-                    if self.sim_step % period == 0:
+                    if self.n_steps % period == 0:
                         self.probe_outputs[probe].append(
                             self.signals[probe.sig].copy())
                 t1 = time.time()
@@ -951,13 +1014,13 @@ class Simulator(object):
         profiling = self.profiling
         for fn in self._plan:
             fn(profiling)
-        self.sim_step += 1
+        self.n_steps += 1
 
     def run(self, time_in_seconds):
         """Simulate for the given length of time."""
         steps = int(np.round(float(time_in_seconds) / self.model.dt))
         logger.debug("Running %s for %f seconds, or %d steps",
-                     self.model.name, time_in_seconds, steps)
+                     self.model.label, time_in_seconds, steps)
         self.run_steps(steps)
 
     def run_steps(self, N, verbose=False):
@@ -990,9 +1053,14 @@ class Simulator(object):
         data : ndarray
             TODO: what are the dimensions?
         """
-        if not isinstance(probe, nb.Probe):
-            if isinstance(probe, str):
-                probe = self.model.probed[probe]
-            else:
-                probe = self.model.probed[self.model.memo[id(probe)]]
-        return self.probe_data(probe)
+        probe_cpy = self.model.memo[id(probe)]
+        return self.probe_data(probe_cpy.probe)
+
+    def trange(self, dt=None):
+        last_t = (self.n_steps - 1) * self.model.dt
+        dt = self.model.dt if dt is None else dt
+        n_steps = self.n_steps if dt is None else int(
+            self.n_steps / (dt / self.model.dt))
+        return np.linspace(0, last_t, n_steps)
+
+# -- for flake-8
