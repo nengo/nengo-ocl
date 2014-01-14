@@ -251,9 +251,9 @@ def ref_impl(p, items):
 
     assert all(s == 1 for s in p.A.stride1s)
     assert all(s == 1 for s in p.X.stride1s)
-    assert all(s == 1 for s in p.Y.stride0s)
+    #assert all(s == 1 for s in p.Y.stride0s)
     assert all(s == 1 for s in p.Y.stride1s)
-    assert all(s == 1 for s in p.Y_in.stride0s)
+    #assert all(s == 1 for s in p.Y_in.stride0s)
     assert all(s == 1 for s in p.Y_in.stride1s)
 
     text = """
@@ -287,18 +287,31 @@ def ref_impl(p, items):
             __global ${cl_gamma.ocldtype} * gammas,
     % endif
             __global int *Y_in_starts,
+            __global int *Y_in_stride0s,
             __global ${Y_in.cl_buf.ocldtype} *Y_in_data,
             __global int *Y_starts,
             __global int *Y_shape0s,
-            __global ${Y.cl_buf.ocldtype} *Y_data)
+            __global int *Y_stride0s,
+            __global ${Y.cl_buf.ocldtype} *Y_data,
+            __global int *Y_index,
+            __global int *Y_column_index)
         {
             const int mm = get_global_id(0);
-            const int bb = items[get_global_id(1)];
-            const int M = Y_shape0s[bb];
+            //const int bb = items[get_global_id(1)];
+            const int bb = get_global_id(1);
+
+            const int yy = Y_index[bb];
+            const int cc = Y_column_index[bb];
+
+            const int M = Y_shape0s[yy];
+
             if (mm < M)
             {
-                const int y_offset = Y_starts[bb];
-                const int y_in_offset = Y_in_starts[bb];
+                const int y_offset = Y_starts[yy];
+                const int y_in_offset = Y_in_starts[yy];
+
+                const int YsM = Y_stride0s[yy];
+                const int YinsM = Y_in_stride0s[yy];
 
     % if float_beta is not None:
                 const ${Y.cl_buf.ocldtype} beta = ${float_beta};
@@ -316,13 +329,13 @@ def ref_impl(p, items):
                 const ${cl_gamma.ocldtype} gamma = gammas[bb];
     % endif
 
-                Y_data[y_offset + mm] = gamma + beta * Y_in_data[y_in_offset + mm];
+                Y_data[y_offset + mm * YsM + cc] = gamma + beta * Y_in_data[y_in_offset + mm * YinsM + cc];
 
     % if (A_js is not None) :
 
-                const int n_dot_products = A_js_shape0s[bb];
-                X_js_data += X_js_starts[bb];
-                A_js_data += A_js_starts[bb];
+                const int n_dot_products = A_js_shape0s[yy];
+                X_js_data += X_js_starts[yy];
+                A_js_data += A_js_starts[yy];
 
                 ${Y.cl_buf.ocldtype} y_sum = 0;
                 for (int ii = 0; ii < n_dot_products; ++ii)
@@ -337,14 +350,14 @@ def ref_impl(p, items):
 
                     for (int nn = 0; nn < N_i; ++nn)
                     {
-                        y_sum += X_data[x_offset + nn * XsM]
+                        y_sum += X_data[x_offset + nn * XsM + cc]
                                  * A_data[a_offset + mm * AsM + nn];
                     }
                 }
         % if float_alpha is not None:
-                Y_data[y_offset + mm] += ${float_alpha} * y_sum;
+                Y_data[y_offset + mm * YsM + cc] += ${float_alpha} * y_sum;
         % elif cl_alpha is not None:
-                Y_data[y_offset + mm] += alphas[bb] * y_sum;
+                Y_data[y_offset + mm * YsM + cc] += alphas[bb] * y_sum;
         % endif
     % endif
             }
@@ -355,9 +368,23 @@ def ref_impl(p, items):
     text = Template(text, output_encoding='ascii').render(**p.__dict__)
     #print text
 
+    total_columns = sum([p.Y.shape1s[ii] for ii in items])
+
+    #make Y_index
+    Y_index = [[index] * p.Y.shape1s[index]
+               for index in items]
+    Y_index = np.asarray([index for l in Y_index for index in l], dtype='int32')
+    cl_Y_index = to_device(p.queue, Y_index)
+
+    #make Y_column_index
+    Y_column_index = [range(ncols) for ncols in p.Y.shape1s]
+    Y_column_index = np.asarray([index for l in Y_column_index for index in l], dtype='int32')
+    cl_Y_column_index = to_device(p.queue, Y_column_index)
+
     gsize = (
         max(p.geometry[ii]['y_len'] for ii in items),
-        len(items))
+        total_columns)
+
     lsize = None
     fn = cl.Program(p.queue.context, text).build().fn
     full_args = [cl_items]
@@ -390,10 +417,14 @@ def ref_impl(p, items):
 
     full_args += [
         p.Y_in.cl_starts,
+        p.Y_in.cl_stride0s,
         p.Y_in.cl_buf,
         p.Y.cl_starts,
         p.Y.cl_shape0s,
-        p.Y.cl_buf]
+        p.Y.cl_stride0s,
+        p.Y.cl_buf,
+        cl_Y_index,
+        cl_Y_column_index]
 
     #print [str(arr.dtype)[0] for arr in full_args]
     fn.set_args(*[arr.data for arr in full_args])
@@ -829,6 +860,12 @@ class plan_ragged_gather_gemv(gemv_prog):
 
     def choose_plans(self):
         remaining_items = range(len(self.Y))
+
+        #use ref_impl if Y's are matrices
+        matrix_filter = lambda ii: self.Y.shape1s[ii] > 1
+        Y_is_matrix = filter(matrix_filter, remaining_items)
+        remaining_items = filter(lambda ii: not matrix_filter(ii), remaining_items)
+
         plans = []
 
         long_dots = [ii
@@ -862,6 +899,7 @@ class plan_ragged_gather_gemv(gemv_prog):
             except NotImplementedError:
                 pass
 
+        remaining_items += Y_is_matrix
         if remaining_items:
             remaining_plan = ref_impl(self, remaining_items)
             remaining_plan.tag += '-remaining%i' % len(remaining_items)
