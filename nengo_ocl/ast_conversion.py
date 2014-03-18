@@ -19,8 +19,15 @@ import inspect, ast, collections
 import numpy as np
 import math
 
+def number(x):
+    return isinstance(x, (int, float))
+
 def iterable(x):
     return isinstance(x, collections.Iterable)
+
+def symbolic(x):
+    return isinstance(x, Expression) or (
+        iterable(x) and all(isinstance(xx, Expression) for xx in x))
 
 infix_binary_ops = {
     ast.Add: '+',
@@ -212,9 +219,8 @@ vector_funcs = {
     np.sum: _sum_func,
     }
 
+OUTPUT_NAME = "OUTPUT__"
 
-INPUT_NAME = "__INPUT__"
-OUTPUT_NAME = "__OUTPUT__"
 
 class Expression(object):
     """Represents a numerical expression"""
@@ -234,12 +240,14 @@ class Expression(object):
     def __str__(self):
         return self.to_ocl()
 
+
 class VarExp(Expression):
     def __init__(self, name):
         self.name = name
 
     def to_ocl(self, wrap=False):
         return self.name
+
 
 class NumExp(Expression):
     def __init__(self, value):
@@ -254,6 +262,7 @@ class NumExp(Expression):
             return "1" if self.value else "0"
         else:
             return str(self.value)
+
 
 class UnaryExp(Expression):
     def __init__(self, op, right):
@@ -284,6 +293,7 @@ class UnaryExp(Expression):
         else:
             s = "%s%s" % (op, self.right.to_ocl(wrap=True))
         return ("(%s)" % s) if wrap else s
+
 
 class BinExp(Expression):
     def __init__(self, left, op, right):
@@ -331,9 +341,11 @@ class BinExp(Expression):
         s = "%s %s %s" % (left.to_ocl(wrap=True), op, right.to_ocl(wrap=True))
         return ("(%s)" % s) if wrap else s
 
+
 class FuncExp(Expression):
     def __init__(self, fn, *args):
-        self.fn, self.args = fn, args
+        self.fn = fn
+        self.args = args
 
     def simplify(self):
         is_num = lambda x: isinstance(x, NumExp)
@@ -376,6 +388,7 @@ class FuncExp(Expression):
 
             exp = converter(*args)
             return exp.to_ocl(wrap=wrap)
+
 
 class IfExp(Expression):
     def __init__(self, cond, true, false):
@@ -423,12 +436,10 @@ class OCL_Translator(ast.NodeVisitor):
                              % self.MAX_VECTOR_LENGTH)
 
     def __init__(self, source, globals_dict, closure_dict,
-                 in_dim=None, out_dim=None):
+                 in_dims=None, out_dim=None):
         self.source = source
         self.globals = globals_dict
         self.closures = closure_dict
-        self.in_dim = in_dim
-        self.out_dim = out_dim
 
         # self.init: key=local variable name, value=initialization statement
         self.init = collections.OrderedDict()
@@ -440,9 +451,15 @@ class OCL_Translator(ast.NodeVisitor):
         ff.visit(a);
         function_def = ff.fn_node
 
+        self.arg_names = [arg.id for arg in function_def.args.args]
+        if in_dims is None:
+            in_dims = [None] * len(self.arg_names)
+        self.arg_dims = in_dims
+        self.out_dim = out_dim
+        assert len(self.arg_names) == len(self.arg_dims)
+
         if isinstance(function_def, ast.FunctionDef):
             self.function_name = function_def.name
-            self.arg_names = [arg.id for arg in function_def.args.args]
             self.body = self.visit_block(function_def.body)
         elif isinstance(function_def, ast.Lambda):
             if hasattr(function_def, 'targets'):
@@ -485,10 +502,11 @@ class OCL_Translator(ast.NodeVisitor):
         if name in self.temp_names:
             return self.temp_names[name]
         elif name in self.arg_names:
-            assert self.in_dim is not None, (
+            dim = self.arg_dims[self.arg_names.index(name)]
+            assert dim is not None, (
                 "Must provide input dimensionality to use vectorized arguments")
-            self._check_vector_length(self.in_dim)
-            return [VarExp('%s[%d]' % (name, i)) for i in xrange(self.in_dim)]
+            self._check_vector_length(dim)
+            return [VarExp('%s[%d]' % (name, i)) for i in xrange(dim)]
         elif name in self.init:
             return VarExp(name)
         elif name in self.closures:
@@ -504,26 +522,35 @@ class OCL_Translator(ast.NodeVisitor):
     def visit_Str(self, expr):
         return self._parse_var(expr.s)
 
+    def _visit_index(self, ast_num):
+        if ast_num is None:
+            return None
+        else:
+            index = self.visit(ast_num)
+            assert isinstance(index, NumExp), "Index must be a number"
+            assert isinstance(index.value, int), "Index must be an integer"
+            return index.value
+
     def visit_Index(self, expr):
-        value = self.visit(expr.value)
-        assert isinstance(value, NumExp), "Index must be a number"
-        assert isinstance(value.value, int), "Index must be an integer"
-        if value.value < 0:
-            raise NotImplementedError("Negative indices not supported")
-        if self.in_dim is not None and value.value >= self.in_dim:
-            raise IndexError(
-                "Index '%s' must be less than number of inputs '%s'"
-                % (value.value, self.in_dim))
-        return value.to_ocl()
+        return self._visit_index(expr.value)
 
     def visit_Ellipsis(self, expr):
         raise NotImplementedError("Ellipsis")
 
     def visit_Slice(self, expr):
-        raise NotImplementedError("Slice")
+        lower = self._visit_index(expr.lower)
+        upper = self._visit_index(expr.upper)
+        step = self._visit_index(expr.step)
+        return slice(lower, upper, step)
 
     def visit_ExtSlice(self, expr):
         raise NotImplementedError("ExtSlice")
+
+    def visit_Subscript(self, expr):
+        assert isinstance(expr.value, ast.Name)
+        var = self.visit(expr.value)
+        s = self.visit(expr.slice)
+        return var[s]
 
     def _broadcast_args(self, func, args):
         """Apply 'func' element-wise to lists of args"""
@@ -567,11 +594,6 @@ class OCL_Translator(ast.NodeVisitor):
         return self._visit_binary_op(
             expr.ops[0], expr.left, expr.comparators[0])
 
-    def visit_Subscript(self, expr):
-        assert isinstance(expr.value, ast.Name)
-        index = self.visit(expr.slice)
-        return VarExp("%s[%s]" % (expr.value.id, index))
-
     def _get_handle(self, expr):
         """Used to get handle on attribute or function"""
         if isinstance(expr, ast.Name):
@@ -590,11 +612,14 @@ class OCL_Translator(ast.NodeVisitor):
         assert expr.kwargs is None, "kwargs not implemented"
         handle = self._get_handle(expr.func)
         args = [self.visit(arg) for arg in expr.args]
-        if handle in vector_funcs:
+        if not any(symbolic(arg) for arg in args):
+            return handle(*args)
+        elif handle in vector_funcs:
             return FuncExp(handle, *args)
         else:
-            return self._broadcast_args(
+            value = self._broadcast_args(
                 lambda *args: FuncExp(handle, *args), args)
+            return value
 
     def visit_Attribute(self, expr):
         handle = self._get_handle(expr)
@@ -741,9 +766,12 @@ def strip_leading_whitespace(source):
         return source
 
 class OCL_Function(object):
-    def __init__(self, fn, in_dim=None, out_dim=None):
+    def __init__(self, fn, in_dims=None, out_dim=None):
+        if in_dims is not None and not iterable(in_dims):
+            in_dims = [in_dims]
+
         self.fn = fn
-        self.in_dim = in_dim
+        self.in_dims = in_dims
         self.out_dim = out_dim
         self._translator = None
 
@@ -753,12 +781,14 @@ class OCL_Function(object):
 
     def _get_ocl_translator(self):
         if self.fn in direct_funcs or self.fn in indirect_funcs:
-            assert self.in_dim is not None, (
+            assert self.in_dims is not None, (
                 "Must supply input dimensionality for raw function")
+            assert len(self.in_dims) == 1, (
+                "Raw functions can only have one input")
             function = self.fn
-            def dummy(x):
+            def wrapper(x): # need a wrapper to copy variables
                 return function(x)
-            fn = dummy
+            fn = wrapper
         else:
             fn = self.fn
 
@@ -772,7 +802,7 @@ class OCL_Function(object):
             if fn.func_closure is not None else {})
 
         return OCL_Translator(source, globals_dict, closure_dict,
-                              in_dim=self.in_dim, out_dim=self.out_dim)
+                              in_dims=self.in_dims, out_dim=self.out_dim)
 
     @property
     def translator(self):
@@ -800,54 +830,85 @@ class OCL_Function(object):
 
 if __name__ == '__main__':
 
+    print '*' * 5 + 'Raw' + '*' * 50
+    ocl_fn = OCL_Function(np.sin, in_dims=(1,))
+    print ocl_fn.init
+    print ocl_fn.code
+
+    print
     print '*' * 5 + 'Multi sine' + '*' * 50
-    ocl_fn = OCL_Function(np.sin, in_dim=3)
+    ocl_fn = OCL_Function(np.sin, in_dims=(3,))
     print ocl_fn.init
     print ocl_fn.code
 
-    multiplier = 3842.012
-    def square(x):
-        print "wow: %f, %d, %s" % (0.3, 9, "hello")
-        # if x < 0.5 - 0.1:
-        if 1 + (2 == 2):
-            y = 2. * x
-            z -= 4 + (3 if x > 99 else 2)
-        elif x == 2:
-            y *= 9.12 if 3 > 4 else 0
-            z = 4*(x - 2)
-        else:
-            y = 9*x
-            z += x**(-1.1)
-
-        return np.sin(multiplier * (y * z) + np.square(y))
-
-    square = OCL_Function(square, in_dim=1)
-
-    # print square(4)
-    print square.init
-    print square.code
-
-    print '*' * 5 + 'Vector lambda' + '*' * 50
-    insert = -0.5
-    func = lambda x: x + 3 if all(x > 2) else x - 1
-    ocl_fn = OCL_Function(func, in_dim=3)
+    print
+    print '*' * 5 + 'List-return' + '*' * 50
+    def func(t):
+        # return list(range(1, 10))
+        return [1,2,3]
+    ocl_fn = OCL_Function(func, in_dims=(1,))
     print ocl_fn.init
     print ocl_fn.code
 
-    print '*' * 5 + 'Large input' + '*' * 50
-    insert = -0.5
-    func = lambda x: [x[1] * x[1051], x[3] * x[62]];
-    ocl_fn = OCL_Function(func, in_dim=1100)
+    print
+    print '*' * 5 + 'Multi-arg' + '*' * 50
+    def func(t, x):
+        return t + x[:2] + x[2]
+    ocl_fn = OCL_Function(func, in_dims=(1, 3))
     print ocl_fn.init
     print ocl_fn.code
 
-    print '*' * 5 + 'List comprehension' + '*' * 50
-    insert = -0.5
-    func = lambda x: [np.maximum(0.1, np.sin(2)) * x[4 - i] for i in xrange(5)]
-    ocl_fn = OCL_Function(func, in_dim=5)
+    print
+    print '*' * 5 + 'Simplify' + '*' * 50
+    def func(y):
+        return y + np.sin([1,2,3])
+
+    ocl_fn = OCL_Function(func, in_dims=(1,))
     print ocl_fn.init
     print ocl_fn.code
 
+    # multiplier = 3842.012
+    # def square(x):
+    #     print "wow: %f, %d, %s" % (0.3, 9, "hello")
+    #     # if x < 0.5 - 0.1:
+    #     if 1 + (2 == 2):
+    #         y = 2. * x
+    #         z -= 4 + (3 if x > 99 else 2)
+    #     elif x == 2:
+    #         y *= 9.12 if 3 > 4 else 0
+    #         z = 4*(x - 2)
+    #     else:
+    #         y = 9*x
+    #         z += x**(-1.1)
+
+    #     return np.sin(multiplier * (y * z) + np.square(y))
+
+    # square = OCL_Function(square, in_dim=1)
+
+    # # print square(4)
+    # print square.init
+    # print square.code
+
+    # print '*' * 5 + 'Vector lambda' + '*' * 50
+    # insert = -0.5
+    # func = lambda x: x + 3 if all(x > 2) else x - 1
+    # ocl_fn = OCL_Function(func, in_dim=3)
+    # print ocl_fn.init
+    # print ocl_fn.code
+
+    # print '*' * 5 + 'Large input' + '*' * 50
+    # insert = -0.5
+    # func = lambda x: [x[1] * x[1051], x[3] * x[62]];
+    # ocl_fn = OCL_Function(func, in_dim=1100)
+    # print ocl_fn.init
+    # print ocl_fn.code
+
+    # print '*' * 5 + 'List comprehension' + '*' * 50
+    # insert = -0.5
+    # func = lambda x: [np.maximum(0.1, np.sin(2)) * x[4 - i] for i in xrange(5)]
+    # ocl_fn = OCL_Function(func, in_dim=5)
+    # print ocl_fn.init
+    # print ocl_fn.code
 
     # print '*' * 5 + 'Unary minus' + '*' * 50
     # insert = -0.5

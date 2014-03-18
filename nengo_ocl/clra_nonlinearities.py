@@ -116,26 +116,36 @@ def plan_probes(queue, periods, X, Y, tag=None):
     rval.Y = Y
     return rval
 
-def plan_direct(queue, code, init, Xname, X, Y, tag=None):
+def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
     from . import ast_conversion
 
-    assert len(X) == len(Y)
-    N = len(X)
+    assert len(input_names) == len(inputs)
+    for x in inputs:
+        assert len(x) == len(output)
+    N = len(inputs[0])
+    input_types = [x.cl_buf.ocldtype for x in inputs]
+    output_type = output.cl_buf.ocldtype
 
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void fn(
-            __global const int *${IN}starts,
-            __global const ${INtype} *${IN}data,
-            __global const int *${OUT}starts,
-            __global ${OUTtype} *${OUT}data
+% for iname, itype in zip(input_names, input_types):
+            __global const int *${iname}_starts__,
+            __global const ${itype} *${iname}_data__,
+% endfor
+            __global const int *${oname}_starts__,
+            __global ${otype} *${oname}_data__
         )
         {
             const int n = get_global_id(0);
             if (n >= ${N}) return;
 
-            __global const ${INtype} *${arg} = ${IN}data + ${IN}starts[n];
-            __global ${OUTtype} *${OUT} = ${OUT}data + ${OUT}starts[n];
+% for iname, itype in zip(input_names, input_types):
+            __global const ${itype} *${iname} =
+                ${iname}_data__ + ${iname}_starts__[n];
+% endfor
+            __global ${otype} *${oname} =
+                ${oname}_data__ + ${oname}_starts__[n];
 
             /////vvvvv USER DECLARATIONS BELOW vvvvv
 ${init}
@@ -147,13 +157,17 @@ ${code}
         """
 
     textconf = dict(init=_indent(init, 12),
-                    code=_indent(code, 12), N=N, arg=Xname,
-                    IN=ast_conversion.INPUT_NAME, INtype=X.cl_buf.ocldtype,
-                    OUT=ast_conversion.OUTPUT_NAME, OUTtype=Y.cl_buf.ocldtype,
+                    code=_indent(code, 12),
+                    N=N, input_names=input_names, input_types=input_types,
+                    oname=ast_conversion.OUTPUT_NAME, otype=output_type,
                     )
     text = Template(text, output_encoding='ascii').render(**textconf)
 
-    full_args = (X.cl_starts, X.cl_buf, Y.cl_starts, Y.cl_buf)
+    full_args = []
+    for x in inputs:
+        full_args.extend([x.cl_starts, x.cl_buf])
+    full_args.extend([output.cl_starts, output.cl_buf])
+    # full_args = (X.cl_starts, X.cl_buf, Y.cl_starts, Y.cl_buf)
     _fn = cl.Program(queue.context, text).build().fn
     _fn.set_args(*[arr.data for arr in full_args])
 
