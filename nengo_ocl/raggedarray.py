@@ -25,7 +25,8 @@ def allclose(a, b, atol=1e-3, rtol=1e-3):
     if not np.allclose(a.starts, b.starts): return False
     if not np.allclose(a.shape0s, b.shape0s): return False
     if not np.allclose(a.shape1s, b.shape1s): return False
-    if not np.allclose(a.stride0s, b.stride1s): return False
+    if not np.allclose(a.stride0s, b.stride0s): return False
+    if not np.allclose(a.stride1s, b.stride1s): return False
     if not np.allclose(a.buf, b.buf, atol=atol, rtol=rtol): return False
     return True
 
@@ -33,7 +34,7 @@ def allclose(a, b, atol=1e-3, rtol=1e-3):
 class RaggedArray(object):
     # a linear buffer that is partitioned into
     # sections of various lengths.
-    # 
+    #
     @property
     def dtype(self):
         return self.buf.dtype
