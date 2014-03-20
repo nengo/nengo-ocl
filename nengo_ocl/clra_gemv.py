@@ -160,6 +160,8 @@ class gemv_prog(object):
                 A_js_i = self.A_js[bb]
                 assert len(x_js_i) == len(A_js_i)
                 for jj, (xj, aj) in enumerate(zip(x_js_i, A_js_i)):
+                    assert xj.size == 1 and aj.size == 1
+                    xj, aj = xj[0], aj[0]  # to ignore numpy DeprecationWarning
                     dbb['dots'].append({
                         'j': jj,
                         'x_j': xj,
@@ -192,6 +194,8 @@ class gemv_prog(object):
             A_js_i = p.A_js[bb]
             assert len(x_js_i) == len(A_js_i)
             for ii, (xi, ai) in enumerate(zip(x_js_i, A_js_i)):
+                assert xi.size == 1 and ai.size == 1
+                xi, ai = xi[0], ai[0]  # to ignore numpy DeprecationWarning
                 gstructure[bbi, 0 * max_n_dots + ii] = X_starts[xi]
                 gstructure[bbi, 1 * max_n_dots + ii] = A_starts[ai]
                 gstructure[bbi, 2 * max_n_dots + ii] = A_stride0s[ai]

@@ -88,16 +88,16 @@ class Simulator(sim_npy.Simulator):
         ### group nonlinearities
         unique_ops = collections.OrderedDict()
         for op in ops:
-            assert op.n_args in (1, 2), op.n_args
-            op_key = (op.fn, op.n_args)
+            # assert op.n_args in (1, 2), op.n_args
+            op_key = (op.fn, op.t_in, op.x is not None)
             if op_key not in unique_ops:
                 unique_ops[op_key] = {'in': [], 'out': []}
-            unique_ops[op_key]['in'].append(op.J if op.n_args == 2 else None)
+            unique_ops[op_key]['in'].append(op.x)
             unique_ops[op_key]['out'].append(op.output)
 
         ### make plans
         plans = []
-        for (fn, n_args), signals in unique_ops.items():
+        for (fn, t_in, x_in), signals in unique_ops.items():
             fn_name = fn.__name__
             if fn_name == "<lambda>":
                 fn_name += "%d" % len(plans)
@@ -107,7 +107,7 @@ class Simulator(sim_npy.Simulator):
             vector_dims = lambda shape, dim: len(shape) == 1 and shape[0] == dim
             unit_stride = lambda es: len(es) == 1 and es[0] == 1
 
-            if n_args == 2:
+            if x_in:
                 in_dim = signals['in'][0].size
                 for sig_in in signals['in']:
                     assert sig_in.size == in_dim
@@ -123,61 +123,64 @@ class Simulator(sim_npy.Simulator):
                 assert unit_stride(sig_out.elemstrides)
 
             ### try to get OCL code
+            code = None
             try:
-                in_dims = (1, in_dim) if n_args == 2 else (1, )
+                # in_dims = (1, in_dim) if n_args == 2 else (1, )
+                in_dims = [1] if t_in else []
+                in_dims += [in_dim] if x_in else []
                 ocl_fn = OCL_Function(fn, in_dims=in_dims, out_dim=out_dim)
                 input_names = ocl_fn.translator.arg_names
                 inputs = []
-                inputs.append(self.all_data[  # append time
-                        [self.sidx[self._time] for i in signals['out']]])
-                if n_args == 2:
-                    inputs.append(self.all_data[  # append x
+                if t_in:  # append time
+                    inputs.append(self.all_data[
+                            [self.sidx[self._time] for i in signals['out']]])
+                if x_in:  # append x
+                    inputs.append(self.all_data[
                             [self.sidx[i] for i in signals['in']]])
                 output = self.all_data[[self.sidx[i] for i in signals['out']]]
                 plan = plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
                                    input_names, inputs, output, tag=fn_name)
                 plans.append(plan)
             except Exception as e:
-
-                if isinstance(e, RuntimeError):
-                    raise e
+                logger.warning(
+                    "Function '%s' could not be converted to OCL due to %s%s"
+                    % (fn_name, e.__class__.__name__, e.args))
 
                 if self.ocl_only:
-                    raise e
+                    raise
 
-                logger.warning(
-                    "Function '%s' could not be converted to OCL (%s: %s)"
-                               % (fn_name, e.__class__.__name__, e.message))
-
-                ### Need make_wrapper function so that variables get copied
+                # not successfully translated to OCL, so do it in Python
                 dt = self.model.dt
-                def make_wrapper():
+
+                # Need make_step function so that variables get copied
+                def make_step(t_in=t_in, x_in=x_in):
                     f = fn
-                    signals_in = signals['in'][:]
-                    signals_out = signals['out'][:]
+                    t_idx = self.sidx[self._time]
+                    out_idx = [self.sidx[s] for s in signals['out']]
 
-                    if n_args == 1:
-                        def fn_wrapper():
-                            t = self.all_data[self.sidx[self._time]][0, 0]
-                            for sout in signals_out:
-                                y = np.asarray(f(t - dt))
+                    if not x_in:
+                        def step():
+                            t = self.all_data[t_idx][0, 0] - dt
+                            for sout in out_idx:
+                                y = np.asarray(f(t) if t_in else f())
                                 if y.ndim == 1:
                                     y = y[:, None]
-                                self.all_data[self.sidx[sout]] = y
-                        return fn_wrapper
+                                self.all_data[sout] = y
                     else:
-                        def fn_wrapper():
-                            t = self.all_data[self.sidx[self._time]][0, 0]
-                            for sin, sout in zip(signals_in, signals_out):
-                                x = self.all_data[self.sidx[sin]]
-                                y = np.asarray(f(t - dt, x))
+                        in_idx = [self.sidx[s] for s in signals['in']]
+
+                        def step():
+                            t = self.all_data[t_idx][0, 0] - dt
+                            for sin, sout in zip(in_idx, out_idx):
+                                x = self.all_data[sin]
+                                y = np.asarray(f(t, x) if t_in else f(x))
                                 if y.ndim == 1:
                                     y = y[:, None]
-                                self.all_data[self.sidx[sout]] = y
+                                self.all_data[sout] = y
 
-                    return fn_wrapper
+                    return step
 
-                plans.append(PythonPlan(make_wrapper(), name=fn_name, tag=fn_name))
+                plans.append(PythonPlan(make_step(), name=fn_name, tag=fn_name))
 
         return plans
 

@@ -547,7 +547,7 @@ class Simulator(object):
 
         # -- possibly make a copy of the model
         self.model = builder(model, dt)
-        
+
         # -- add some time-keeping to the copied model
         #    this will be used by e.g. plan_SimPyFunc
         self.model.operators.append(
@@ -765,12 +765,9 @@ class Simulator(object):
                 # -- YEP, subtracting off DT is crazy
                 #    but it makes nengo's tests pass.
                 #    See nengo ticket #234 for potential resolution.
-                if op.n_args == 2:
-                    J = self.all_data[sidx[op.J]]
-                    out = op.fn(t[0, 0] - dt, J)
-                else:
-                    out = op.fn(t[0, 0] - dt)
-                out = np.asarray(out)
+                args = [t[0, 0] - dt] if op.t_in else []
+                args += [self.all_data[sidx[op.x]]] if op.x is not None else []
+                out = np.asarray(op.fn(*args))
                 if out.ndim == 1:
                     output[...] = out[:, None]
                 else:
@@ -788,7 +785,7 @@ class Simulator(object):
                 voltage = self.all_data[sidx[op.voltage]]
                 reftime = self.all_data[sidx[op.refractory_time]]
                 output = self.all_data[sidx[op.output]]
-                op.nl.step_math0(dt, J, voltage, reftime, output,)
+                op.nl.step_math(dt, J, voltage, reftime, output)
         return [lif]
 
     def plan_SimLIFRate(self, ops):
@@ -797,7 +794,7 @@ class Simulator(object):
             for op in ops:
                 J = self.all_data[self.sidx[op.J]]
                 output = self.all_data[self.sidx[op.output]]
-                output[:] = op.nl.math(dt, J)
+                op.nl.step_math(dt, J, output)
         return [lif_rate]
 
     def RaggedArray(self, *args, **kwargs):

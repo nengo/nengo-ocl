@@ -117,6 +117,36 @@ def test_lambda_double(Simulator):
         _test_fn(Simulator, d, size_in=1)
 
 
+def test_connection(Simulator):
+    """Test a direct-mode connection"""
+
+    N = 80
+
+    model = nengo.Model('test_connection', seed=124)
+    # sin = nengo.Node(output=np.sin)
+    # cons = nengo.Node(output=-.5)
+    # factors = nengo.Ensemble(nl(2 * N), dimensions=2, radius=1.5)
+    # if nl != nengo.Direct:
+    #     factors.encoders = np.tile(
+    #         [[1, 1], [-1, 1], [1, -1], [-1, -1]],
+    #         (factors.n_neurons // 4, 1))
+    # product = nengo.Ensemble(nl(N), dimensions=1)
+    # nengo.Connection(sin, factors[0])
+    # nengo.Connection(cons, factors[1])
+
+    # u = nengo.Node(output=np.sin)
+    a = nengo.Ensemble(nengo.Direct(0), dimensions=1)
+    b = nengo.Ensemble(nengo.Direct(0), dimensions=1)
+    # nengo.Connection(u, a)
+    nengo.Connection(a, b, function=lambda x: x**2)
+
+    # ap = nengo.Probe(a)
+    # bp = nengo.Probe(b)
+
+    sim = Simulator(model)
+
+
+
 # def test_functions(self):
 #     """Test the function maps in ast_converter.py"""
 

@@ -474,7 +474,7 @@ class OCL_Translator(ast.NodeVisitor):
             r.col_offset = 4
             self.body = self.visit_block([r])
         else:
-            raise RuntimeError(
+            raise ValueError(
                 "Expected function definition or lambda function assignment, "
                 "got " + str(type(function_def)))
 

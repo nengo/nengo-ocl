@@ -130,6 +130,9 @@ class RaggedArray(object):
             rval.names = [self.names[i] for i in item]
             return rval
         else:
+            if isinstance(item, np.ndarray):
+                item.shape = ()  # avoid numpy DeprecationWarning
+
             itemsize = self.dtype.itemsize
             byteoffset = itemsize * self.starts[item]
             bytestrides = (

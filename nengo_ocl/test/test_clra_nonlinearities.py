@@ -54,11 +54,11 @@ def test_lif_step(upsample, n_elements):
            for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
         if upsample <= 1:
-            nl.step_math0(dt, J[i], V[i], W[i], OS[i])
+            nl.step_math(dt, J[i], V[i], W[i], OS[i])
         else:
             s = np.zeros_like(OS[i])
             for j in xrange(upsample):
-                nl.step_math0(dt/upsample, J[i], V[i], W[i], s)
+                nl.step_math(dt/upsample, J[i], V[i], W[i], s)
                 OS[i] = (OS[i] > 0.5) | (s > 0.5)
 
     ### simulate device
