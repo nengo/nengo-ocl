@@ -3,15 +3,16 @@ import collections
 import numpy as np
 import pyopencl as cl
 
-from . import sim_npy
-from .raggedarray import RaggedArray
-from .clraggedarray import CLRaggedArray
-from .clra_gemv import plan_ragged_gather_gemv
-from .clra_nonlinearities import \
+import nengo_ocl
+from nengo_ocl import sim_npy
+from nengo_ocl.raggedarray import RaggedArray
+from nengo_ocl.clraggedarray import CLRaggedArray
+from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
+from nengo_ocl.clra_nonlinearities import \
     plan_lif, plan_lif_rate, plan_direct, plan_probes
-from .plan import BasePlan, PythonPlan, DAG, Marker
-from .ast_conversion import OCL_Function
-from .tricky_imports import OrderedDict
+from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
+from nengo_ocl.ast_conversion import OCL_Function
+from nengo_ocl.tricky_imports import OrderedDict
 
 import logging
 logger = logging.getLogger(__name__)
