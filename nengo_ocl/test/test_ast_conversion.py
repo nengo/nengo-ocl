@@ -5,7 +5,9 @@ import pyopencl as cl
 import pytest
 
 import nengo
+from nengo.utils.distributions import Uniform
 import nengo_ocl
+import nengo_ocl.ast_conversion as ast_conversion
 
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ def pytest_funcarg__Simulator(request):
     return OclSimulator
 
 
-def _test_fn(Simulator, fn, size_in=0):
+def _test_node(Simulator, fn, size_in=0):
     seed = sum(map(ord, fn.__name__)) % 2**30
     rng = np.random.RandomState(seed + 1)
 
@@ -53,16 +55,16 @@ def _test_fn(Simulator, fn, size_in=0):
 
 
 def test_t(Simulator):
-    _test_fn(Simulator, lambda t: t)
+    _test_node(Simulator, lambda t: t)
 
 
 @pytest.mark.parametrize("size_in", [1, 3, 5])
 def test_identity(Simulator, size_in):
-    _test_fn(Simulator, lambda t, x: x, size_in=1)
+    _test_node(Simulator, lambda t, x: x, size_in=1)
 
 
 def test_raw(Simulator):
-    _test_fn(Simulator, np.sin)
+    _test_node(Simulator, np.sin)
 
 
 @pytest.mark.parametrize("size_in", [1, 3])
@@ -74,19 +76,19 @@ def test_closures(Simulator, size_in):
     def closures(t, x):
         return mult * x**power
 
-    _test_fn(Simulator, closures, size_in=size_in)
+    _test_node(Simulator, closures, size_in=size_in)
 
 
 def test_product(Simulator):
     def product(t, x):
         return x[0] * x[1]
 
-    _test_fn(Simulator, product, size_in=2)
+    _test_node(Simulator, product, size_in=2)
 
 
 def test_lambda_simple(Simulator):
     fn = lambda t, x: x[0]**2
-    _test_fn(Simulator, fn, size_in=1)
+    _test_node(Simulator, fn, size_in=1)
 
 
 def test_lambda_class(Simulator):
@@ -96,7 +98,7 @@ def test_lambda_class(Simulator):
 
     F = Foo(my_fn=lambda t, x: x[0]**2)
     b = F.fn
-    _test_fn(Simulator, b, size_in=1)
+    _test_node(Simulator, b, size_in=1)
 
 
 def test_lambda_wrapper(Simulator):
@@ -104,7 +106,7 @@ def test_lambda_wrapper(Simulator):
         return fn
 
     c = bar(lambda t, x: x[0]**2)
-    _test_fn(Simulator, c, size_in=1)
+    _test_node(Simulator, c, size_in=1)
 
 
 def test_lambda_double(Simulator):
@@ -114,134 +116,168 @@ def test_lambda_double(Simulator):
     # this shouldn't convert to OCL b/c it has two lambdas on one line
     d = egg(lambda t, x: x[0]**2, lambda t, y: y[0]**3)
     with pytest.raises(NotImplementedError):
-        _test_fn(Simulator, d, size_in=1)
+        _test_node(Simulator, d, size_in=1)
 
 
-def test_connection(Simulator):
+def test_direct_connection(Simulator):
     """Test a direct-mode connection"""
 
-    N = 80
-
     model = nengo.Model('test_connection', seed=124)
-    # sin = nengo.Node(output=np.sin)
-    # cons = nengo.Node(output=-.5)
-    # factors = nengo.Ensemble(nl(2 * N), dimensions=2, radius=1.5)
-    # if nl != nengo.Direct:
-    #     factors.encoders = np.tile(
-    #         [[1, 1], [-1, 1], [1, -1], [-1, -1]],
-    #         (factors.n_neurons // 4, 1))
-    # product = nengo.Ensemble(nl(N), dimensions=1)
-    # nengo.Connection(sin, factors[0])
-    # nengo.Connection(cons, factors[1])
-
-    # u = nengo.Node(output=np.sin)
     a = nengo.Ensemble(nengo.Direct(0), dimensions=1)
     b = nengo.Ensemble(nengo.Direct(0), dimensions=1)
-    # nengo.Connection(u, a)
     nengo.Connection(a, b, function=lambda x: x**2)
-
-    # ap = nengo.Probe(a)
-    # bp = nengo.Probe(b)
 
     sim = Simulator(model)
 
 
+def _test_conn(Simulator, fn, size_in, dist_in=None, n=1):
+    seed = sum(map(ord, fn.__name__)) % 2**30
+    rng = np.random.RandomState(seed + 1)
 
-# def test_functions(self):
-#     """Test the function maps in ast_converter.py"""
+    # make input
+    if dist_in is None:
+        dist_in = [Uniform(-10, 10) for i in xrange(size_in)]
+    elif not isinstance(dist_in, (list, tuple)):
+        dist_in = [dist_in]
+    assert len(dist_in) == size_in
 
-#     AG = _ArgGen
-#     A = AG()
-#     Aint = AG(integer=True)
-#     arggens = {
-#         math.acos: AG(-1, 1),
-#         math.acosh: AG(1, 10),
-#         math.atanh: AG(-1, 1),
-#         math.asin: AG(-1, 1),
-#         # math.fmod: AG(0), # this one really just doesn't like 0
-#         math.gamma: AG(0),
-#         math.lgamma: AG(0),
-#         math.log: AG(0),
-#         math.log10: AG(0),
-#         math.log1p: AG(-1),
-#         math.pow: [A, Aint],
-#         math.sqrt: AG(0),
-#         np.arccos: AG(-1, 1),
-#         np.arcsin: AG(-1, 1),
-#         np.arccosh: AG(1, 10),
-#         np.arctanh: AG(-1, 1),
-#         np.log: AG(0),
-#         np.log10: AG(0),
-#         np.log1p: AG(-1, 10),
-#         np.log2: AG(0),
-#         np.sqrt: AG(0),
-#         ### two-argument functions
-#         math.ldexp: [A, Aint],
-#         np.ldexp: [A, Aint],
-#         np.power: [AG(0), A],
-#     }
+    x = zip(*[d.sample(n, rng=rng) for d in dist_in])  # preserve types
+    # x = zip(*[arggen.gen(n, rng=rng) for arggen in arggens])
+    y = [fn(xx) for xx in x]
 
-#     dfuncs = ast_conversion.direct_funcs
-#     ifuncs = ast_conversion.indirect_funcs
-#     functions = (dfuncs.keys() + ifuncs.keys())
-#     all_passed = True
-#     for fn in functions:
-#         try:
-#             if fn in ast_conversion.direct_funcs:
-#                 def wrapper(x):
-#                     return fn(x[0])
-#                 self._test_fn(wrapper, 1, arggens.get(fn, None))
-#             else:
-#                 ### get lambda function
-#                 lambda_fn = ifuncs[fn]
-#                 while lambda_fn.__name__ != '<lambda>':
-#                     lambda_fn = ifuncs[lambda_fn]
-#                 dims = lambda_fn.func_code.co_argcount
+    y = np.array([fn(xx) for xx in x])
+    if y.ndim < 2:
+        y.shape = (n, 1)
+    size_out = y.shape[1]
 
-#                 if dims == 1:
-#                     def wrapper(x):
-#                         return fn(x[0])
-#                 elif dims == 2:
-#                     def wrapper(x):
-#                         return fn(x[0], x[1])
-#                 else:
-#                     raise ValueError(
-#                         "Cannot test functions with more than 2 arguments")
-#                 self._test_fn(wrapper, dims, arggens.get(fn, None))
-#             logger.info("Function `%s` passed" % fn.__name__)
-#         except Exception as e:
-#             all_passed = False
-#             logger.warning("Function `%s` failed with:\n    %s: %s"
-#                            % (fn.__name__, e.__class__.__name__, e.message))
+    # make model
+    model = nengo.Model("test_%s" % fn.__name__, seed=seed)
+    with model:
+        probes = []
+        for i in xrange(n):
+            u = nengo.Node(output=x[i])
+            v = nengo.Ensemble(nengo.Direct(0), dimensions=size_in)
+            w = nengo.Ensemble(nengo.Direct(0), dimensions=size_out)
+            nengo.Connection(u, v, filter=0)
+            nengo.Connection(v, w, filter=0, function=fn, eval_points=x)
+            probes.append(nengo.Probe(w))
 
-#     self.assertTrue(all_passed, "Some functions failed, "
-#                     "see logger warnings for details")
+    # run model
+    sim = Simulator(model)
+    sim.step()
+    sim.step()
+    # sim.step()
+
+    # compare output
+    t = sim.trange()
+    z = np.array([sim.data(p)[-1] for p in probes])
+    assert np.allclose(z, y)
 
 
-# def test_vector_functions(self):
-#     d = 5
-#     boolean = [any, all, np.any, np.all]
-#     funcs = ast_conversion.vector_funcs.keys()
-#     all_passed = True
-#     for fn in funcs:
-#         try:
-#             if fn in boolean:
-#                 def wrapper(x):
-#                     return fn(np.asarray(x) > 0)
-#             else:
-#                 def wrapper(x):
-#                     return fn(x)
+def test_sin_conn(Simulator):
+    _test_conn(Simulator, np.sin, 1, n=10)
 
-#             self._test_fn(wrapper, d)
 
-#             logger.info("Function `%s` passed" % fn.__name__)
-#         except Exception as e:
-#             all_passed = False
-#             logger.warning("Function `%s` failed with:\n    %s: %s"
-#                            % (fn.__name__, e.__class__.__name__, e.message))
+def test_functions(Simulator, n_points=10):
+    """Test the function maps in ast_converter.py"""
+    # TODO: split this into one test per function using py.test utilities
 
-#     self.assertTrue(all_passed, "Some functions failed, "
-#                     "see logger warnings for details")
+    U = Uniform
+    ignore = [math.ldexp, math.pow, np.ldexp]
+    arggens = {
+        math.acos: U(-1, 1),
+        math.acosh: U(1, 10),
+        math.atanh: U(-1, 1),
+        math.asin: U(-1, 1),
+        # math.fmod: U(0), # this one really just doesn't like 0
+        math.gamma: U(0, 10),
+        math.lgamma: U(0, 10),
+        math.log: U(0, 10),
+        math.log10: U(0, 10),
+        math.log1p: U(-1, 10),
+        math.sqrt: U(0, 10),
+        np.arccos: U(-1, 1),
+        np.arcsin: U(-1, 1),
+        np.arccosh: U(1, 10),
+        np.arctanh: U(-1, 1),
+        np.log: U(0, 10),
+        np.log10: U(0, 10),
+        np.log1p: U(-1, 10),
+        np.log2: U(0, 10),
+        np.sqrt: U(0, 10),
+        ### two-argument functions
+        # math.ldexp: [U(-10, 10), U(-10, 10, integer=True)],
+        # math.pow: [U(-10, 10), U(-10, 10, integer=True)],
+        # np.ldexp: [U(-10, 10), U(-10, 10, integer=True)],
+        np.power: [U(0, 10), U(-10, 10)],
+    }
+
+    dfuncs = ast_conversion.direct_funcs
+    ifuncs = ast_conversion.indirect_funcs
+    functions = dfuncs.keys() + ifuncs.keys()
+    functions = [f for f in functions if f not in ignore]
+    all_passed = True
+    for fn in functions:
+        try:
+            if fn in ast_conversion.direct_funcs:
+                def wrapper(x):
+                    return fn(x[0])
+                wrapper.__name__ = fn.__name__ + "_" + wrapper.__name__
+                _test_conn(Simulator, wrapper, 1,
+                           dist_in=arggens.get(fn, None), n=n_points)
+            else:
+                ### get lambda function
+                lambda_fn = ifuncs[fn]
+                while lambda_fn.__name__ != '<lambda>':
+                    lambda_fn = ifuncs[lambda_fn]
+                dims = lambda_fn.func_code.co_argcount
+
+                if dims == 1:
+                    def wrapper(x):
+                        return fn(x[0])
+                elif dims == 2:
+                    def wrapper(x):
+                        return fn(x[0], x[1])
+                else:
+                    raise ValueError(
+                        "Cannot test functions with more than 2 arguments")
+                _test_conn(Simulator, wrapper, dims,
+                           dist_in=arggens.get(fn, None), n=n_points)
+            logger.info("Function `%s` passed" % fn.__name__)
+        except Exception as e:
+            raise
+            all_passed = False
+            logger.warning("Function `%s` failed with:\n    %s%s"
+                           % (fn.__name__, e.__class__.__name__, e.args))
+
+    assert(all_passed, "Some functions failed, "
+                    "see logger warnings for details")
+
+
+def test_vector_functions(Simulator):
+    d = 5
+    boolean = [any, all, np.any, np.all]
+    funcs = ast_conversion.vector_funcs.keys()
+    all_passed = True
+    for fn in funcs:
+        try:
+            if fn in boolean:
+                def wrapper(x):
+                    return fn(np.asarray(x) > 0)
+            else:
+                def wrapper(x):
+                    return fn(x)
+
+            _test_conn(Simulator, wrapper, d, n=10)
+
+            logger.info("Function `%s` passed" % fn.__name__)
+        except Exception as e:
+            all_passed = False
+            logger.warning("Function `%s` failed with:\n    %s: %s"
+                           % (fn.__name__, e.__class__.__name__, e.message))
+
+    assert(all_passed, "Some functions failed, "
+           "see logger warnings for details")
 
 
 if __name__ == '__main__':
