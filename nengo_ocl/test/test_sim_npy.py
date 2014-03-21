@@ -14,7 +14,7 @@ import os
 import pytest
 
 import nengo
-from nengo.utils.testing import find_testmodules, load_testmodules
+from nengo.utils.testing import find_modules, load_functions
 
 from nengo_ocl import sim_npy
 
@@ -30,8 +30,8 @@ def pytest_funcarg__RefSimulator(request):
 
 
 nengo_dir = os.path.dirname(nengo.__file__)
-modules = find_testmodules(nengo_dir, prefix='nengo')
-tests = load_testmodules(modules)
+modules = find_modules(nengo_dir, prefix='nengo')
+tests = load_functions(modules, arg_pattern='^(Ref)?Simulator$')
 locals().update(tests)
 
 
