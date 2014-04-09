@@ -3,15 +3,16 @@ import collections
 import numpy as np
 import pyopencl as cl
 
-from . import sim_npy
-from .raggedarray import RaggedArray
-from .clraggedarray import CLRaggedArray
-from .clra_gemv import plan_ragged_gather_gemv
-from .clra_nonlinearities import \
+import nengo_ocl
+from nengo_ocl import sim_npy
+from nengo_ocl.raggedarray import RaggedArray
+from nengo_ocl.clraggedarray import CLRaggedArray
+from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
+from nengo_ocl.clra_nonlinearities import \
     plan_lif, plan_lif_rate, plan_direct, plan_probes
-from .plan import BasePlan, PythonPlan, DAG, Marker
-from .ast_conversion import OCL_Function
-from .tricky_imports import OrderedDict
+from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
+from nengo_ocl.ast_conversion import OCL_Function
+from nengo_ocl.tricky_imports import OrderedDict
 
 import logging
 logger = logging.getLogger(__name__)
@@ -82,20 +83,22 @@ class Simulator(sim_npy.Simulator):
     def plan_ragged_gather_gemv(self, *args, **kwargs):
         return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
 
-    def plan_SimDirect(self, ops):
+    def plan_SimPyFunc(self, ops):
         ### TODO: test with a hybrid program (Python and OCL)
 
         ### group nonlinearities
         unique_ops = collections.OrderedDict()
         for op in ops:
-            if op.fn not in unique_ops:
-                unique_ops[op.fn] = {'in': [], 'out': []}
-            unique_ops[op.fn]['in'].append(op.J)
-            unique_ops[op.fn]['out'].append(op.output)
+            # assert op.n_args in (1, 2), op.n_args
+            op_key = (op.fn, op.t_in, op.x is not None)
+            if op_key not in unique_ops:
+                unique_ops[op_key] = {'in': [], 'out': []}
+            unique_ops[op_key]['in'].append(op.x)
+            unique_ops[op_key]['out'].append(op.output)
 
         ### make plans
         plans = []
-        for fn, signals in unique_ops.items():
+        for (fn, t_in, x_in), signals in unique_ops.items():
             fn_name = fn.__name__
             if fn_name == "<lambda>":
                 fn_name += "%d" % len(plans)
@@ -104,107 +107,83 @@ class Simulator(sim_npy.Simulator):
             # for indexing errors)
             vector_dims = lambda shape, dim: len(shape) == 1 and shape[0] == dim
             unit_stride = lambda es: len(es) == 1 and es[0] == 1
-            in_dim = signals['in'][0].size
+
+            if x_in:
+                in_dim = signals['in'][0].size
+                for sig_in in signals['in']:
+                    assert sig_in.size == in_dim
+                    assert vector_dims(sig_in.shape, in_dim)
+                    assert unit_stride(sig_in.elemstrides)
+            else:
+                in_dim = None
+
             out_dim = signals['out'][0].size
-            for sig_in, sig_out in zip(signals['in'], signals['out']):
-                assert sig_in.size == in_dim and sig_out.size == out_dim
-                assert vector_dims(sig_in.shape, in_dim)
+            for sig_out in signals['out']:
+                assert sig_out.size == out_dim
                 assert vector_dims(sig_out.shape, out_dim)
-                assert unit_stride(sig_in.elemstrides)
                 assert unit_stride(sig_out.elemstrides)
 
             ### try to get OCL code
+            code = None
             try:
-                ocl_fn = OCL_Function(fn, in_dim=in_dim, out_dim=out_dim)
-                Xname = ocl_fn.translator.arg_names[0]
-                X = self.all_data[[self.sidx[i] for i in signals['in']]]
-                Y = self.all_data[[self.sidx[i] for i in signals['out']]]
+                # in_dims = (1, in_dim) if n_args == 2 else (1, )
+                in_dims = [1] if t_in else []
+                in_dims += [in_dim] if x_in else []
+                ocl_fn = OCL_Function(fn, in_dims=in_dims, out_dim=out_dim)
+                input_names = ocl_fn.translator.arg_names
+                inputs = []
+                if t_in:  # append time
+                    inputs.append(self.all_data[
+                            [self.sidx[self._time] for i in signals['out']]])
+                if x_in:  # append x
+                    inputs.append(self.all_data[
+                            [self.sidx[i] for i in signals['in']]])
+                output = self.all_data[[self.sidx[i] for i in signals['out']]]
                 plan = plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
-                                   Xname, X, Y, tag=fn_name)
+                                   input_names, inputs, output, tag=fn_name)
                 plans.append(plan)
             except Exception as e:
-                if self.ocl_only:
-                    raise e
-
                 logger.warning(
-                    "Function '%s' could not be converted to OCL (%s: %s)"
-                               % (fn_name, e.__class__.__name__, e.message))
+                    "Function '%s' could not be converted to OCL due to %s%s"
+                    % (fn_name, e.__class__.__name__, e.args))
 
-                ### Need wrapper function so that variables get copied
-                def make_temp():
+                if self.ocl_only:
+                    raise
+
+                # not successfully translated to OCL, so do it in Python
+                dt = self.model.dt
+
+                # Need make_step function so that variables get copied
+                def make_step(t_in=t_in, x_in=x_in):
                     f = fn
-                    signals_in = signals['in'][:]
-                    signals_out = signals['out'][:]
-                    def temp_fn():
-                        for sin, sout in zip(signals_in, signals_out):
-                            x = self.all_data[self.sidx[sin]]
-                            y = np.asarray(f(x)).reshape((out_dim, 1))
-                            self.all_data[self.sidx[sout]] = y
-                    return temp_fn
+                    t_idx = self.sidx[self._time]
+                    out_idx = [self.sidx[s] for s in signals['out']]
 
-                plans.append(PythonPlan(make_temp(), name=fn_name, tag=fn_name))
+                    if not x_in:
+                        def step():
+                            t = self.all_data[t_idx][0, 0] - dt
+                            for sout in out_idx:
+                                y = np.asarray(f(t) if t_in else f())
+                                if y.ndim == 1:
+                                    y = y[:, None]
+                                self.all_data[sout] = y
+                    else:
+                        in_idx = [self.sidx[s] for s in signals['in']]
+
+                        def step():
+                            t = self.all_data[t_idx][0, 0] - dt
+                            for sin, sout in zip(in_idx, out_idx):
+                                x = self.all_data[sin]
+                                y = np.asarray(f(t, x) if t_in else f(x))
+                                if y.ndim == 1:
+                                    y = y[:, None]
+                                self.all_data[sout] = y
+
+                    return step
+
+                plans.append(PythonPlan(make_step(), name=fn_name, tag=fn_name))
 
         return plans
-
-    def plan_SimPyFunc(self, ops):
-        ### TODO: test with a hybrid program (Python and OCL)
-        ### TODO: consolidate this logic with plan_Direct above
-
-        ### group nonlinearities
-        unique_ops = collections.OrderedDict()
-        for op in ops:
-            op_key = (op.fn, op.n_args)
-            if op_key not in unique_ops:
-                unique_ops[op_key] = {'in': [], 'out': []}
-            assert op.n_args in (1, 2), op.n_args
-            if op.n_args == 2:
-                unique_ops[op_key]['in'].append(op.J)
-            unique_ops[op_key]['out'].append(op.output)
-
-        ### make plans
-        plans = []
-        for (fn, n_args), signals in unique_ops.items():
-            fn_name = fn.__name__
-            if fn_name == "<lambda>":
-                fn_name += "%d" % len(plans)
-
-            logger.warning(
-                "Node '%s' could not be converted to OCL"
-                           % (fn_name, ))
-
-            ### Need wrapper function so that variables get copied
-            dt = self.model.dt
-            if n_args == 1:
-                def make_temp():
-                    f = fn
-                    signals_out = signals['out'][:]
-                    def temp_fn():
-                        t = self.all_data[self.sidx[self._time]][0, 0]
-                        for sout in signals_out:
-                            y = np.asarray(f(t - dt))
-                            if y.ndim == 1:
-                                y = y[:, None]
-                            self.all_data[self.sidx[sout]] = y
-                    return temp_fn
-            else:
-                def make_temp():
-                    f = fn
-                    signals_in = signals['in'][:]
-                    signals_out = signals['out'][:]
-                    def temp_fn():
-                        t = self.all_data[self.sidx[self._time]][0, 0]
-                        for sin, sout in zip(signals_in, signals_out):
-                            x = self.all_data[self.sidx[sin]]
-                            y = np.asarray(f(t - dt, x))
-                            if y.ndim == 1:
-                                y = y[:, None]
-                            self.all_data[self.sidx[sout]] = y
-                    return temp_fn
-
-            plans.append(PythonPlan(make_temp(), name=fn_name, tag=fn_name))
-
-        return plans
-
 
     def plan_SimLIF(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
@@ -238,13 +217,13 @@ class Simulator(sim_npy.Simulator):
             #print [p.dt for p in probes]
             #print 'periods', periods
             for p in probes:
-                if p.sig.size != p.sig.shape[0]:
+                if p.sig.ndim > 1 and p.sig.size != p.sig.shape[0]:
                     raise NotImplementedError('probing non-vector', p)
 
 
             X = self.all_data[[self.sidx[p.sig] for p in probes]]
             Y = self.RaggedArray(
-                [np.zeros((n_prealloc, p.sig.shape[0])) for p in probes])
+                [np.zeros((n_prealloc, p.sig.size)) for p in probes])
 
             cl_plan = plan_probes(self.queue, periods, X, Y, tag="probes")
             self._max_steps_between_probes = n_prealloc * min(periods)
