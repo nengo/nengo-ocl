@@ -29,7 +29,7 @@ class Simulator(sim_npy.Simulator):
         else:
             return CLRaggedArray(self.queue, val)
 
-    def __init__(self, model, dt=0.001, seed=None, builder=None, context=None,
+    def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
                  n_prealloc_probes=1000, profiling=None, ocl_only=False):
         if context is None:
             print 'No context argument was provided to sim_ocl.Simulator'
@@ -50,7 +50,7 @@ class Simulator(sim_npy.Simulator):
 
         # -- allocate data
         sim_npy.Simulator.__init__(
-            self, model=model, dt=dt, seed=seed, builder=builder)
+            self, network=network, dt=dt, seed=seed, model=model)
 
         # -- set up the DAG for executing OCL kernels
         self._plandict = OrderedDict()
@@ -187,11 +187,11 @@ class Simulator(sim_npy.Simulator):
 
     def plan_SimLIF(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
-        V = self.all_data[[self.sidx[op.voltage] for op in ops]]
-        W = self.all_data[[self.sidx[op.refractory_time] for op in ops]]
+        V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
+        W = self.all_data[[self.sidx[op.states[1]] for op in ops]]
         S = self.all_data[[self.sidx[op.output] for op in ops]]
-        ref = self.RaggedArray([op.nl.tau_ref for op in ops])
-        tau = self.RaggedArray([op.nl.tau_rc for op in ops])
+        ref = self.RaggedArray([op.neurons.tau_ref for op in ops])
+        tau = self.RaggedArray([op.neurons.tau_rc for op in ops])
         dt = self.model.dt
         return [plan_lif(self.queue, J, V, W, V, W, S, ref, tau, dt,
                         tag="lif", upsample=1)]
@@ -199,8 +199,8 @@ class Simulator(sim_npy.Simulator):
     def plan_SimLIFRate(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
         R = self.all_data[[self.sidx[op.output] for op in ops]]
-        ref = self.RaggedArray([op.nl.tau_ref for op in ops])
-        tau = self.RaggedArray([op.nl.tau_rc for op in ops])
+        ref = self.RaggedArray([op.neurons.tau_ref for op in ops])
+        tau = self.RaggedArray([op.neurons.tau_rc for op in ops])
         dt = self.model.dt
         return [plan_lif_rate(self.queue, J, R, ref, tau, dt,
                               tag="lif_rate", n_elements=10)]
@@ -208,26 +208,26 @@ class Simulator(sim_npy.Simulator):
     def plan_probes(self):
         if len(self.model.probes) > 0:
             n_prealloc = self.n_prealloc_probes
-            #print 'n_prealloc', n_prealloc
 
             probes = self.model.probes
-            periods = [int(np.round(float(p.dt) / self.model.dt))
+            periods = [1 if p.sample_every is None else
+                       int(np.round(float(p.sample_every) / self.model.dt))
                        for p in probes]
-            #print 'model dt', self.model.dt
-            #print [p.dt for p in probes]
-            #print 'periods', periods
+
             for p in probes:
-                if p.sig.ndim > 1 and p.sig.size != p.sig.shape[0]:
+                sig = self.model.sig_in[p]
+                if sig.ndim > 1 and sig.size != sig.shape[0]:
                     raise NotImplementedError('probing non-vector', p)
 
-
-            X = self.all_data[[self.sidx[p.sig] for p in probes]]
+            X = self.all_data[
+                [self.sidx[self.model.sig_in[p]] for p in probes]]
             Y = self.RaggedArray(
-                [np.zeros((n_prealloc, p.sig.size)) for p in probes])
+                [np.zeros((n_prealloc, self.model.sig_in[p].size))
+                 for p in probes])
 
             cl_plan = plan_probes(self.queue, periods, X, Y, tag="probes")
             self._max_steps_between_probes = n_prealloc * min(periods)
-            #print 'max inter steps', self._max_steps_between_probes
+
             cl_plan.Y = Y
             self._cl_probe_plan = cl_plan
             return [cl_plan]
@@ -244,7 +244,7 @@ class Simulator(sim_npy.Simulator):
                 # XXX: this syntax retrieves *ALL* of Y from the device
                 #      because the :n_buffered only works on the ndarray
                 #      *after* it has been transferred.
-                self.probe_outputs[probe].extend(plan.Y[i][:n_buffered])
+                self._probe_outputs[probe].extend(plan.Y[i][:n_buffered])
         plan.cl_bufpositions.fill(0)
         self.queue.finish()
 
@@ -322,7 +322,3 @@ class Simulator(sim_npy.Simulator):
             self.n_steps += B
         if self.profiling > 1:
             self.print_profiling()
-
-
-    def probe_data(self, probe):
-        return np.vstack(self.probe_outputs[probe])
