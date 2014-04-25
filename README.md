@@ -54,6 +54,12 @@ Python packages:
 ( set -e ; for PCK in networkx numpy mako pyopencl ; do pip install $PCK ; done )
 ```
 
+Until Nengo has an official release, please use the Nengo compatibility branch
+
+```bash
+git clone https://github.com/ctn-waterloo/nengo -b nengoocl-compat
+```
+
 
 Install Intel OCL on Debian/Ubuntu Linux
 ----------------------------------------
@@ -132,8 +138,8 @@ sudo apt-get install nvidia-opencl-common nvidia-libopencl1
 ```
 
 Ensure that the nvidia driver version matches the opencl library version.
-You can check the nvidia driver version by running `nvidia-smi` in the 
-command line. You can find the opencl library version by looking at the 
+You can check the nvidia driver version by running `nvidia-smi` in the
+command line. You can find the opencl library version by looking at the
 libnvidia-opencl.so.XXX.XX file in the `/usr/lib/x86_64-linux-gnu/` folder.
 
 N.B. that at the time of writing (Sept 2013) these drivers provide only
