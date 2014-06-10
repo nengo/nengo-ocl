@@ -9,7 +9,7 @@ from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import \
-    plan_lif, plan_lif_rate, plan_direct, plan_probes
+    plan_lif, plan_lif_rate, plan_direct, plan_probes, plan_filter_synapse
 from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
 from nengo_ocl.ast_conversion import OCL_Function
 from nengo_ocl.tricky_imports import OrderedDict
@@ -24,10 +24,7 @@ class Simulator(sim_npy.Simulator):
 
     def RaggedArray(self, *args, **kwargs):
         val = RaggedArray(*args, **kwargs)
-        if len(val.buf) == 0:
-            return None
-        else:
-            return CLRaggedArray(self.queue, val)
+        return CLRaggedArray(self.queue, val)
 
     def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
                  n_prealloc_probes=1000, profiling=None, ocl_only=False):
@@ -205,6 +202,13 @@ class Simulator(sim_npy.Simulator):
         return [plan_lif_rate(self.queue, J, R, ref, tau, dt,
                               tag="lif_rate", n_elements=10)]
 
+    def plan_SimFilterSynapse(self, ops):
+        X = self.all_data[[self.sidx[op.input] for op in ops]]
+        Y = self.all_data[[self.sidx[op.output] for op in ops]]
+        A = self.RaggedArray([op.den for op in ops])
+        B = self.RaggedArray([op.num for op in ops])
+        return [plan_filter_synapse(self.queue, X, Y, A, B)]
+
     def plan_probes(self):
         if len(self.model.probes) > 0:
             n_prealloc = self.n_prealloc_probes
@@ -215,14 +219,14 @@ class Simulator(sim_npy.Simulator):
                        for p in probes]
 
             for p in probes:
-                sig = self.model.sig_in[p]
+                sig = self.model.sig[p]['in']
                 if sig.ndim > 1 and sig.size != sig.shape[0]:
                     raise NotImplementedError('probing non-vector', p)
 
             X = self.all_data[
-                [self.sidx[self.model.sig_in[p]] for p in probes]]
+                [self.sidx[self.model.sig[p]['in']] for p in probes]]
             Y = self.RaggedArray(
-                [np.zeros((n_prealloc, self.model.sig_in[p].size))
+                [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
                  for p in probes])
 
             cl_plan = plan_probes(self.queue, periods, X, Y, tag="probes")

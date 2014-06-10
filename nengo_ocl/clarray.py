@@ -166,15 +166,16 @@ def ocldtype(obj):
 # consider array.to_device
 def to_device(queue, arr, flags=cl.mem_flags.READ_WRITE):
     arr = np.asarray(arr)
-    buf = cl.Buffer(queue.context, flags, size=len(arr.data))
-    cl.enqueue_copy(queue, buf, arr.data).wait()
+    if len(arr.data) > 0:
+        buf = cl.Buffer(queue.context, flags, size=len(arr.data))
+        cl.enqueue_copy(queue, buf, arr.data).wait()
+    else:
+        buf = None
     rval = Array(queue,
                  data=buf,
                  dtype=arr.dtype,
                  shape=arr.shape,
                  strides=arr.strides)
-    debugval = rval.get(queue)
-    assert np.all(arr == debugval)
     return rval
 
 
@@ -183,7 +184,7 @@ def empty(queue, shape, dtype, flags=cl.mem_flags.READ_WRITE,
         strides=None, order='C'):
 
     dtype = np.dtype(dtype)
-    
+
     if strides is None:
         strides = [int(dtype.itemsize)]
         if order.upper() == 'C':
@@ -208,4 +209,3 @@ def zeros(queue, *args, **kwargs):
     rval.fill(0, queue)
     queue.flush()
     return rval
-

@@ -1,4 +1,3 @@
-
 import numpy as np
 import pyopencl as cl
 from plan import Plan
@@ -6,11 +5,104 @@ from mako.template import Template
 from clarray import to_device
 from .clraggedarray import CLRaggedArray
 
+
 def all_equal(a, b):
     return (np.asarray(a) == np.asarray(b)).all()
 
+
 def _indent(s, i):
     return '\n'.join([(' ' * i) + line for line in s.split('\n')])
+
+
+def plan_filter_synapse(queue, X, Y, A, B, tag=None):
+    """
+    Implements a filter of the form
+
+        y[n+1] + a[0] y[n] + ... + a[i] y[n-i] = b[0] x[n] + ... + b[j] x[n-j]
+    """
+    N = len(X)
+    assert len(Y) == N and len(A) == N and len(B) == N
+
+    for i in range(N):
+        assert X.shape0s[i] == Y.shape0s[i]
+        assert X.shape1s[i] == 1
+        assert Y.shape1s[i] == 1
+        assert X.stride1s[i] == 1
+        assert Y.stride1s[i] == 1
+        assert A.shape1s[i] == 1
+        assert B.shape1s[i] == 1
+
+        # This currently assumes that each filter has one numerator coefficient
+        # and one denominator coefficient. Generalized filters are on the TODO list.
+        # Generalized filters will require buffering the data.
+        assert A.shape0s[i] <= 1
+        assert B.shape0s[i] == 1
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void fn(
+            __global const int *shape0s,
+            __global const int *Xstarts,
+            __global const ${Xtype} *Xdata,
+            __global const int *Ystarts,
+            __global ${Ytype} *Ydata,
+            __global const int *Astarts,
+            __global const int *Ashape0s,
+            __global const ${Atype} *Adata,
+            __global const int *Bstarts,
+            __global const int *Bshape0s,
+            __global const ${Btype} *Bdata
+        )
+        {
+            const int n = get_global_id(1);
+            __global const ${Xtype} *x = Xdata + Xstarts[n];
+            __global ${Ytype} *y = Ydata + Ystarts[n];
+            __global const ${Atype} *a = Adata + Astarts[n];
+            __global const ${Btype} *b = Bdata + Bstarts[n];
+
+            const int na = Ashape0s[n];
+            for (int i = get_global_id(0); i < shape0s[n]; i += get_global_size(0))
+            {
+                if (na == 0) {
+                    y[i] = b[0] * x[i];
+                } else {
+                    // Filtering code assuming one A coeff and one B coeff
+                    y[i] *= -a[0];
+                    y[i] += b[0] * x[i];
+                }
+            }
+        }
+        """
+
+    textconf = dict(
+        Xtype=X.cl_buf.ocldtype, Ytype=Y.cl_buf.ocldtype,
+        Atype=A.cl_buf.ocldtype, Btype=B.cl_buf.ocldtype
+    )
+    text = Template(text, output_encoding='ascii').render(**textconf)
+
+    full_args = (
+        X.cl_shape0s,
+        X.cl_starts,
+        X.cl_buf,
+        Y.cl_starts,
+        Y.cl_buf,
+        A.cl_starts,
+        A.cl_shape0s,
+        A.cl_buf,
+        B.cl_starts,
+        B.cl_shape0s,
+        B.cl_buf,
+    )
+    _fn = cl.Program(queue.context, text).build().fn
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    max_len = min(queue.device.max_work_group_size, max(X.shape0s))
+    gsize = (max_len, N)
+    lsize = (max_len, 1)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
+
 
 def plan_probes(queue, periods, X, Y, tag=None):
     """
@@ -116,6 +208,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
     rval.Y = Y
     return rval
 
+
 def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
     from . import ast_conversion
 
@@ -176,6 +269,7 @@ ${code}
     rval.full_args = full_args     # prevent garbage-collection
     return rval
 
+
 def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt,
              tag=None, n_elements=0, upsample=1):
     inputs = dict(j=J, v=V, w=W)
@@ -223,6 +317,7 @@ def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt,
         tag=tag, n_elements=n_elements,
         inputs=inputs, outputs=outputs, parameters=parameters)
 
+
 def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
     inputs = dict(j=J)
     outputs = dict(r=R)
@@ -235,6 +330,7 @@ def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
     return _plan_template(
         queue, "cl_lif_rate", text, tag=tag, n_elements=n_elements,
         inputs=inputs, outputs=outputs, parameters=parameters)
+
 
 def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                    inputs={}, outputs={}, parameters={}):
@@ -488,4 +584,3 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     rval = Plan(queue, _fn, gsize, lsize=None, name=name, tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
-

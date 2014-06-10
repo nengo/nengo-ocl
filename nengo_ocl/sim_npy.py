@@ -504,8 +504,7 @@ class Simulator(object):
         if model is None:
             self.model = nb.Model(
                 dt=self.dt,
-                label="%s, dt=%f" % (network.label, dt),
-                seed=network.seed)
+                label="%s, dt=%f" % (network.label, dt))
         else:
             self.model = model
 
@@ -772,6 +771,16 @@ class Simulator(object):
                 op.neurons.step_math(dt, J, output)
         return [lif_rate]
 
+    def plan_SimFilterSynapse(self, ops):
+        assert all(len(op.num) == 1 and len(op.den) == 1 for op in ops)
+        def synapse(profiling=False):
+            for op in ops:
+                x = self.all_data[self.sidx[op.input]]
+                y = self.all_data[self.sidx[op.output]]
+                y *= -op.den[0]
+                y += op.num[0] * x
+        return [synapse]
+
     def RaggedArray(self, *args, **kwargs):
         return _RaggedArray(*args, **kwargs)
 
@@ -975,7 +984,7 @@ class Simulator(object):
                               else int(probe.sample_every / self.dt))
                     if self.n_steps % period == 0:
                         self._probe_outputs[probe].append(
-                            self.signals[self.model.sig_in[probe]].copy())
+                            self.signals[self.model.sig[probe]['in']].copy())
                 t1 = time.time()
                 probe_fn.cumtime += t1 - t0
             probe_fn.cumtime = 0.0
