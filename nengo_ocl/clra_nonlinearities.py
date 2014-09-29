@@ -191,9 +191,10 @@ def plan_probes(queue, periods, X, Y, tag=None):
     assert len(X) == len(periods)
     N = len(X)
 
-    cl_countdowns = to_device(queue, np.zeros(N, dtype='int32'))
+    periods = np.asarray(periods, dtype='int32')
+    cl_periods = to_device(queue, periods)
+    cl_countdowns = to_device(queue, periods - 1)
     cl_bufpositions = to_device(queue, np.zeros(N, dtype='int32'))
-    cl_periods = to_device(queue, np.asarray(periods, dtype='int32'))
 
     assert X.cl_buf.ocldtype == Y.cl_buf.ocldtype
 
