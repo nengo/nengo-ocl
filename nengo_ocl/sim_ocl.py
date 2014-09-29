@@ -3,6 +3,10 @@ import collections
 import numpy as np
 import pyopencl as cl
 
+from nengo.neurons import LIF, LIFRate, Direct
+from nengo.utils.compat import OrderedDict
+from nengo.utils.stdlib import groupby
+
 import nengo_ocl
 from nengo_ocl import sim_npy
 from nengo_ocl.raggedarray import RaggedArray
@@ -13,7 +17,6 @@ from nengo_ocl.clra_nonlinearities import (
     plan_filter_synapse, plan_elementwise_inc)
 from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
 from nengo_ocl.ast_conversion import OCL_Function
-from nengo_ocl.tricky_imports import OrderedDict
 
 import logging
 logger = logging.getLogger(__name__)
@@ -190,14 +193,12 @@ class Simulator(sim_npy.Simulator):
         return plans
 
     def plan_SimNeurons(self, all_ops):
-        import nengo
-        from nengo.utils.stdlib import groupby
         groups = groupby(all_ops, lambda op: op.neurons.__class__)
         plans = []
         for neuron_class, ops in groups:
-            if neuron_class is nengo.LIF:
+            if neuron_class is LIF:
                 plans.extend(self.plan_SimLIF(ops))
-            elif neuron_class is nengo.LIFRate:
+            elif neuron_class is LIFRate:
                 plans.extend(self.plan_SimLIFRate(ops))
 
         return plans
@@ -211,7 +212,7 @@ class Simulator(sim_npy.Simulator):
         tau = self.RaggedArray([op.neurons.tau_rc for op in ops])
         dt = self.model.dt
         return [plan_lif(self.queue, J, V, W, V, W, S, ref, tau, dt,
-                        tag="lif", upsample=1)]
+                         tag="lif", n_elements=10)]
 
     def plan_SimLIFRate(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
