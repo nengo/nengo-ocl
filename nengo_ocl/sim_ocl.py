@@ -8,8 +8,9 @@ from nengo_ocl import sim_npy
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
-from nengo_ocl.clra_nonlinearities import \
-    plan_lif, plan_lif_rate, plan_direct, plan_probes, plan_filter_synapse
+from nengo_ocl.clra_nonlinearities import (
+    plan_lif, plan_lif_rate, plan_direct, plan_probes,
+    plan_filter_synapse, plan_elementwise_inc)
 from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
 from nengo_ocl.ast_conversion import OCL_Function
 from nengo_ocl.tricky_imports import OrderedDict
@@ -79,6 +80,12 @@ class Simulator(sim_npy.Simulator):
 
     def plan_ragged_gather_gemv(self, *args, **kwargs):
         return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
+
+    def plan_ElementwiseInc(self, ops):
+        A = self.all_data[[self.sidx[op.A] for op in ops]]
+        X = self.all_data[[self.sidx[op.X] for op in ops]]
+        Y = self.all_data[[self.sidx[op.Y] for op in ops]]
+        return [plan_elementwise_inc(self.queue, A, X, Y)]
 
     def plan_SimPyFunc(self, ops):
         ### TODO: test with a hybrid program (Python and OCL)
@@ -179,6 +186,19 @@ class Simulator(sim_npy.Simulator):
                     return step
 
                 plans.append(PythonPlan(make_step(), name=fn_name, tag=fn_name))
+
+        return plans
+
+    def plan_SimNeurons(self, all_ops):
+        import nengo
+        from nengo.utils.stdlib import groupby
+        groups = groupby(all_ops, lambda op: op.neurons.__class__)
+        plans = []
+        for neuron_class, ops in groups:
+            if neuron_class is nengo.LIF:
+                plans.extend(self.plan_SimLIF(ops))
+            elif neuron_class is nengo.LIFRate:
+                plans.extend(self.plan_SimLIFRate(ops))
 
         return plans
 

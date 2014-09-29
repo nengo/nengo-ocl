@@ -208,4 +208,3 @@ class RaggedArray(object):
         except TypeError:
             raise NotImplementedError()
         self[item][...] = val
-

@@ -14,6 +14,81 @@ def _indent(s, i):
     return '\n'.join([(' ' * i) + line for line in s.split('\n')])
 
 
+def plan_elementwise_inc(queue, A, X, Y, tag=None):
+    """Implements an element-wise increment Y += A * X"""
+    N = len(X)
+    assert len(Y) == N and len(A) == N
+
+    for i in range(N):
+        assert X.shape0s[i] == Y.shape0s[i]
+        assert X.shape1s[i] == Y.shape1s[i]
+        assert A.shape0s[i] in [1, X.shape0s[i]]
+        assert A.shape1s[i] in [1, X.shape1s[i]]
+        assert X.stride1s[i] == 1
+        assert Y.stride1s[i] == 1
+        assert A.stride1s[i] == 1
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void fn(
+            __global const int *shape0s,
+            __global const int *shape1s,
+            __global const int *Xstarts,
+            __global const ${Xtype} *Xdata,
+            __global const int *Ystarts,
+            __global ${Ytype} *Ydata,
+            __global const int *Ashape0s,
+            __global const int *Ashape1s,
+            __global const int *Astarts,
+            __global const ${Atype} *Adata
+        )
+        {
+            const int n = get_global_id(1);
+            __global const ${Atype} *a = Adata + Astarts[n];
+            __global const ${Xtype} *x = Xdata + Xstarts[n];
+            __global ${Ytype} *y = Ydata + Ystarts[n];
+
+            const int size = shape0s[n] * shape1s[n];
+            const int Asize = Ashape0s[n] * Ashape1s[n];
+            for (int i = get_global_id(0); i < size; i += get_global_size(0))
+            {
+                if (Asize > 1)
+                    y[i] += a[i] * x[i];
+                else
+                    y[i] += a[0] * x[i];
+            }
+        }
+        """
+
+    textconf = dict(
+        Xtype=X.cl_buf.ocldtype, Ytype=Y.cl_buf.ocldtype,
+        Atype=A.cl_buf.ocldtype,
+    )
+    text = Template(text, output_encoding='ascii').render(**textconf)
+
+    full_args = (
+        X.cl_shape0s,
+        X.cl_shape1s,
+        X.cl_starts,
+        X.cl_buf,
+        Y.cl_starts,
+        Y.cl_buf,
+        A.cl_shape0s,
+        A.cl_shape1s,
+        A.cl_starts,
+        A.cl_buf,
+    )
+    _fn = cl.Program(queue.context, text).build().fn
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    max_len = min(queue.device.max_work_group_size, max(X.shape0s) * max(X.shape1s))
+    gsize = (max_len, N)
+    lsize = (max_len, 1)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
+
+
 def plan_filter_synapse(queue, X, Y, A, B, tag=None):
     """
     Implements a filter of the form
@@ -270,10 +345,10 @@ ${code}
     return rval
 
 
-def plan_lif(queue, J, V, W, OV, OW, OS, ref, tau, dt,
+def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
              tag=None, n_elements=0, upsample=1):
     inputs = dict(j=J, v=V, w=W)
-    outputs = dict(ov=OV, ow=OW, os=OS)
+    outputs = dict(ov=outV, ow=outW, os=outS)
     parameters = dict(tau=tau, ref=ref)
 
     dt = float(dt)

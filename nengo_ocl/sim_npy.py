@@ -503,8 +503,7 @@ class Simulator(object):
         self.dt = dt
         if model is None:
             self.model = nb.Model(
-                dt=self.dt,
-                label="%s, dt=%f" % (network.label, dt))
+                dt=dt, label="%s, dt=%f" % (network, dt))
         else:
             self.model = model
 
@@ -716,6 +715,16 @@ class Simulator(object):
             )
         return constant_b_gemvs + vector_b_gemvs
 
+    def plan_ElementwiseInc(self, ops):
+        sidx = self.sidx
+        def elementwise_inc(profiling=False):
+            for op in ops:
+                A = self.all_data[sidx[op.A]]
+                X = self.all_data[sidx[op.X]]
+                Y = self.all_data[sidx[op.Y]]
+                Y[...] += A * X
+        return [elementwise_inc]
+
     def plan_SimDirect(self, ops):
         sidx = self.sidx
         def direct(profiling=False):
@@ -739,7 +748,7 @@ class Simulator(object):
                 # -- YEP, subtracting off DT is crazy
                 #    but it makes nengo's tests pass.
                 #    See nengo ticket #234 for potential resolution.
-                args = [t[0, 0] - dt] if op.t_in else []
+                args = [t[0, 0]] if op.t_in else []
                 args += [self.all_data[sidx[op.x]]] if op.x is not None else []
                 out = np.asarray(op.fn(*args))
                 if out.ndim == 1:
@@ -750,26 +759,16 @@ class Simulator(object):
                     output[...] = out
         return [pyfunc]
 
-    def plan_SimLIF(self, ops):
+    def plan_SimNeurons(self, ops):
         dt = self.model.dt
         sidx = self.sidx
-        def lif(profiling=False):
+        def neurons(profiling=False):
             for op in ops:
                 J = self.all_data[sidx[op.J]]
-                voltage = self.all_data[sidx[op.states[0]]]
-                reftime = self.all_data[sidx[op.states[1]]]
                 output = self.all_data[sidx[op.output]]
-                op.neurons.step_math(dt, J, output, voltage, reftime)
-        return [lif]
-
-    def plan_SimLIFRate(self, ops):
-        dt = self.model.dt
-        def lif_rate(profiling=False):
-            for op in ops:
-                J = self.all_data[self.sidx[op.J]]
-                output = self.all_data[self.sidx[op.output]]
-                op.neurons.step_math(dt, J, output)
-        return [lif_rate]
+                states = [self.all_data[sidx[s]] for s in op.states]
+                op.neurons.step_math(dt, J, output, *states)
+        return [neurons]
 
     def plan_SimFilterSynapse(self, ops):
         assert all(len(op.num) == 1 and len(op.den) == 1 for op in ops)
