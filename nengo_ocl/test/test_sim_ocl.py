@@ -10,6 +10,7 @@ $ py.test test/test_sim_ocl.py -k test_ensemble.test_scalar
 See http://pytest.org/latest/usage.html for more invocations.
 
 """
+import sys
 import os
 import pyopencl as cl
 import pytest
@@ -43,4 +44,7 @@ locals().update(tests)
 
 
 if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+    # To profile, run `python -m cProfile -o test_sim_ocl.log test_sim_ocl.py`.
+    # Appending the argument `-k <filter>` allows you to control which tests
+    # are run (e.g. `-k "test_ensemble."` runs all tests in test_ensemble.py).
+    pytest.main(sys.argv)

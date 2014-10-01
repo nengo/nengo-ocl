@@ -205,6 +205,8 @@ def plan_probes(queue, periods, X, Y, tag=None):
         assert X.shape0s[i] == Y.shape1s[i]
         assert X.shape1s[i] == 1
         assert X.stride0s[i] == 1
+        assert X.stride1s[i] == 1
+        assert Y.stride0s[i] == Y.shape1s[i]
         assert Y.stride1s[i] == 1
 
     text = """

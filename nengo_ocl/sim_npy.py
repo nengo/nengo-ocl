@@ -29,6 +29,26 @@ from .raggedarray import RaggedArray as _RaggedArray
 from .plan import PythonPlan
 
 
+class StepUpdate(nb.Operator):
+    """Does Y += 1 as an update"""
+    def __init__(self, Y, one):
+        self.Y = Y
+        self.one = one
+        self.reads = [self.one]
+        self.updates = [self.Y]
+        self.incs = []
+        self.sets = []
+
+    def __str__(self):
+        return 'StepUpdate(%s)' % (self.Y)
+
+    def make_step(self, signals, dt):
+        Y = signals[self.Y]
+        def step():
+            Y += 1
+        return step
+
+
 class MultiProdUpdate(nb.Operator):
     """
     y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)
@@ -71,21 +91,26 @@ class MultiProdUpdate(nb.Operator):
             assert set(rval.updates) == set(op.updates), (rval.updates, op.updates)
         if isinstance(op, nb.Reset):
             rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value, as_update=False,
-                    tag=getattr(op, 'tag', ''))
+                       tag=getattr(op, 'tag', ''))
             assert_ok()
         elif isinstance(op, nb.Copy):
             rval = cls(op.dst, op.src, beta=1, gamma=0,
-                    as_update=len(op.updates) == 1, tag=op.tag)
+                       as_update=len(op.updates) == 1, tag=op.tag)
             assert_ok()
         elif isinstance(op, nb.DotInc):
             rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=False,
-                    tag=op.tag)
+                       tag=op.tag)
             rval.add_AX(op.A, op.X)
             assert_ok()
-        elif isinstance(op, nb.ProdUpdate):
-            rval = cls(op.Y, op.Y, beta=op.B, gamma=0, as_update=True,
-                    tag=op.tag)
-            rval.add_AX(op.A, op.X)
+        elif isinstance(op, nb.PreserveValue):
+            rval = cls(op.dst, op.dst, beta=1, gamma=0, as_update=False,
+                       tag=getattr(op, 'tag', ''))
+            rval._incs_Y = False
+            assert_ok()
+        elif isinstance(op, StepUpdate):
+            # TODO: get rid of `op.one` and `add_AX` here; use `gamma`
+            rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=True, tag="")
+            rval.add_AX(op.one, op.one)
             assert_ok()
         else:
             return op
@@ -154,8 +179,8 @@ class MultiProdUpdate(nb.Operator):
 
     @classmethod
     def compress(cls, operators):
-        sets = defaultdict(list)
-        incs = defaultdict(list)
+        sets = OrderedDict()
+        incs = OrderedDict()
         rval = []
         for op in operators:
             if isinstance(op, cls):
@@ -164,16 +189,16 @@ class MultiProdUpdate(nb.Operator):
                 else:
                     assert op.sets or op.incs
                     if op.sets:
-                        sets[op.sets[0]].append(op)
+                        sets.setdefault(op.sets[0], []).append(op)
                     if op.incs:
-                        incs[op.incs[0]].append(op)
+                        incs.setdefault(op.incs[0], []).append(op)
             else:
                 rval.append(op)
         done = set()
         for view, set_ops in sets.items():
             set_op, = set_ops
             done.add(set_op)
-            for inc_op in incs[view]:
+            for inc_op in incs.get(view, []):
                 set_op.As.extend(inc_op.As)
                 set_op.Xs.extend(inc_op.Xs)
                 done.add(inc_op)
@@ -187,30 +212,6 @@ class MultiProdUpdate(nb.Operator):
 
 def is_op(op):
     return isinstance(op, nb.Operator)
-
-
-_TimerCumulative = defaultdict(float)
-_TimerCalls = defaultdict(int)
-class Timer(object):
-    enabled = False
-    def __init__(self, msg, print_freq=0, enabled=enabled):
-        self.msg = msg
-        self.print_freq = print_freq
-        self.enabled = enabled
-    def __enter__(self):
-        self.t0 = time.time()
-    def __exit__(self, *args):
-        if self.enabled:
-            self.t1 = time.time()
-            _TimerCumulative[self.msg] += self.t1 - self.t0
-            _TimerCalls[self.msg] += 1
-            if (self.print_freq == 0
-                    or _TimerCalls[self.msg] % self.print_freq == 0):
-                print 'Timer: "%s" took %f (cumulative: %f, calls: %i)' % (
-                        self.msg,
-                        self.t1 - self.t0,
-                        _TimerCumulative[self.msg],
-                        _TimerCalls[self.msg])
 
 
 def exact_dependency_graph(operators, share_memory):
@@ -309,8 +310,6 @@ def greedy_planner(operators, share_memory, cliques):
     calls, and  that function would need to be pretty fast.
     """
     dg = exact_dependency_graph(operators, share_memory)
-    #depth = {}
-    #ops_by_depth = defaultdict(list)
 
     # -- TODO: linear time algo
     ancestors_of = {}
@@ -319,18 +318,17 @@ def greedy_planner(operators, share_memory, cliques):
 
     scheduled = set()
     rval = []
-    #for k in cliques:
-        #print k, cliques[k]
     while len(scheduled) < len(operators):
         candidates = [op
             for op, pre_ops in ancestors_of.items()
             if not pre_ops and op not in scheduled]
+        if len(candidates) == 0:
+            raise ValueError("Cycles in the op graph")
 
         type_counts = defaultdict(int)
         for op in candidates:
             type_counts[type(op)] += 1
         chosen_type = sorted(type_counts.items(), key=lambda x: x[1])[-1][0]
-        #print chosen_type
         candidates = [op for op in candidates if isinstance(op, chosen_type)]
 
         cliques_by_base = defaultdict(dict)
@@ -343,7 +341,6 @@ def greedy_planner(operators, share_memory, cliques):
                         cliques_by_base[sig.base][id(cliq)].append(op)
                 by_base[sig.base].append(op)
 
-        #print by_base.keys()
         chosen = []
         for base, ops_writing_to_base in by_base.items():
             if base in cliques_by_base:
@@ -352,21 +349,19 @@ def greedy_planner(operators, share_memory, cliques):
                 chosen.extend(most_ops[-1][1])
             else:
                 chosen.append(ops_writing_to_base[0])
+
         # -- ops that produced multiple outputs show up multiple times
         chosen = stable_unique(chosen)
-
         assert chosen
 
-        #print clique_counts.keys()
-        #print by_base
         assert not any(cc in scheduled for cc in chosen)
         scheduled.update(chosen)
         rval.append((chosen_type, chosen))
+
         # -- prepare for next iteration
         for op in ancestors_of:
             ancestors_of[op].difference_update(chosen)
 
-    #print sum(len(p[1]) for p in rval)
     assert len(operators) == sum(len(p[1]) for p in rval)
     #print 'greedy_planner: Program len:', len(rval)
     return rval
@@ -492,7 +487,7 @@ def signals_from_operators(operators):
     return stable_unique(all_with_dups())
 
 
-class Simulator(object):
+class Simulator(nengo.Simulator):
 
     profiling = False
 
@@ -500,7 +495,6 @@ class Simulator(object):
                  planner=greedy_planner):
         assert seed is None, "Seed not used"
 
-        self.dt = dt
         if model is None:
             self.model = nb.Model(
                 dt=dt, label="%s, dt=%f" % (network, dt))
@@ -519,27 +513,21 @@ class Simulator(object):
         self._zero = nb.Signal(np.asarray(0.0, dtype=np.float64), name='ZERO')
         self._dt = nb.Signal(np.asarray(dt, dtype=np.float64), name='DT')
 
+        operators = list(self.model.operators)
+
         # -- add some time-keeping to the copied model
         #    this will be used by e.g. plan_SimPyFunc
-        self.model.operators.append(
-            nb.ProdUpdate(self._one, self._one, self._one, self._step))
-        self.model.operators.append(
-            nb.Reset(self._time))
-        self.model.operators.append(
-            nb.DotInc(self._dt, self._step, self._time))
-        self.model.operators.append(
-            nb.DotInc(self._dt, self._one, self._time))
+        operators.append(StepUpdate(self._step, self._one))
+        operators.append(nb.Reset(self._time))
+        operators.append(nb.DotInc(self._dt, self._step, self._time))
+        operators.append(nb.DotInc(self._dt, self._one, self._time))
 
         # -- convert DotInc, Reset, Copy, and ProdUpdate to MultiProdUpdate
-        operators = map(MultiProdUpdate.convert_to, self.model.operators)
+        operators = map(MultiProdUpdate.convert_to, operators)
         operators = MultiProdUpdate.compress(operators)
         self.operators = operators
         all_signals = signals_from_operators(operators)
         all_bases = stable_unique([sig.base for sig in all_signals])
-        # -- print ORIGINAL operators
-        #print '=' * 80
-        #for op in self.model.operators:
-            #print op
 
         _shares_memory_with = getattr(self.model, '_shares_memory_with', {})
         indep_cliques = getattr(self.model, '_independent_view_cliques', {})
@@ -658,8 +646,7 @@ class Simulator(object):
                 if A_view.shape == (1, 1):
                     # -- scalar AX_views can be done as reverse multiplication
                     A_view, X_view = X_view, A_view
-
-                if not (X_view.shape[0] == A_view.shape[1] and
+                elif not (X_view.shape[0] == A_view.shape[1] and
                         X_view.shape[1] == Y_view.shape[1] and
                         A_view.shape[0] == Y_view.shape[0]):
                     raise ValueError('shape mismach (A: %s, X: %s, Y: %s)' %
@@ -728,14 +715,10 @@ class Simulator(object):
     def plan_SimDirect(self, ops):
         sidx = self.sidx
         def direct(profiling=False):
-            with Timer('simdirect', 1000):
-                for op in ops:
-                    J = self.all_data[sidx[op.J]]
-                    output = op.fn(J)
-                    self.all_data[sidx[op.output]] = output
-                    #print 'direct',
-                    #print op.J, self.all_data[sidx[op.J]],
-                    #print op.output, self.all_data[sidx[op.output]]
+            for op in ops:
+                J = self.all_data[sidx[op.J]]
+                output = op.fn(J)
+                self.all_data[sidx[op.output]] = output
         return [direct]
 
     def plan_SimPyFunc(self, ops):
@@ -943,36 +926,6 @@ class Simulator(object):
 
         return Accessor()
 
-    def get(self, obj):
-        """Get the simulator's copy of a model object.
-
-        Parameters
-        ----------
-        obj : Nengo object
-            A model from the original model
-
-        Returns
-        -------
-        sim_obj : Nengo object
-            The simulator's copy of `obj`.
-
-        Examples
-        --------
-        Get the simulator's version of an ensemble
-        in order to plot tuning curves
-
-        >>> model = nengo.Model()
-        >>> model.make_ensemble("A", nengo.LIF(4), 1)
-        >>> sim = model.simulator()
-        >>> A = sim.get("A")
-        >>> from nengo.helpers import tuning_curves
-        >>> print tuning_curves(A)
-        """
-        toret = self.model.get(obj, "NotFound")
-        if toret == "NotFound":
-            toret = self.model.memo[id(obj)]
-        return toret
-
     def plan_probes(self):
         if self.model.probes:
             def probe_fn(profiling=False):
@@ -1007,22 +960,3 @@ class Simulator(object):
     def run_steps(self, N, verbose=False):
         for i in xrange(N):
             self.step()
-
-    # XXX there is both .signals and .signal and they are pretty different
-    def signal(self, sig):
-        probes = [sp for sp in self.model.probes if sp.sig == sig]
-        if len(probes) == 0:
-            raise KeyError()
-        elif len(probes) > 1:
-            raise KeyError()
-        else:
-            return self.signal_probe_output(probes[0])
-
-    def trange(self, dt=None):
-        last_t = (self.n_steps - 1) * self.model.dt
-        dt = self.model.dt if dt is None else dt
-        n_steps = self.n_steps if dt is None else int(
-            self.n_steps / (dt / self.model.dt))
-        return np.linspace(0, last_t, n_steps)
-
-# -- for flake-8

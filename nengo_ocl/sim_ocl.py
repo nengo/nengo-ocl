@@ -178,9 +178,11 @@ class Simulator(sim_npy.Simulator):
                         in_idx = [self.sidx[s] for s in signals['in']]
 
                         def step():
-                            t = self.all_data[t_idx][0, 0] - dt
+                            t = self.all_data[t_idx][0, 0]
                             for sin, sout in zip(in_idx, out_idx):
                                 x = self.all_data[sin]
+                                if x.ndim == 2 and x.shape[1] == 1:
+                                    x = x[:, 0]
                                 y = np.asarray(f(t, x) if t_in else f(x))
                                 if y.ndim == 1:
                                     y = y[:, None]
@@ -200,6 +202,9 @@ class Simulator(sim_npy.Simulator):
                 plans.extend(self.plan_SimLIF(ops))
             elif neuron_class is LIFRate:
                 plans.extend(self.plan_SimLIFRate(ops))
+            else:
+                raise ValueError("Unsupported neuron type '%s'"
+                                 % neuron_class.__name__)
 
         return plans
 
@@ -273,6 +278,28 @@ class Simulator(sim_npy.Simulator):
         plan.cl_bufpositions.fill(0)
         self.queue.finish()
 
+    def step(self):
+        return self.run_steps(1)
+
+    def run_steps(self, N, verbose=False):
+        has_probes = hasattr(self, '_cl_probe_plan')
+
+        if has_probes:
+            # -- precondition: the probe buffers have been drained
+            bufpositions = self._cl_probe_plan.cl_bufpositions.get()
+            assert np.all(bufpositions == 0)
+        # -- we will go through N steps of the simulator
+        #    in groups of up to B at a time, draining
+        #    the probe buffers after each group of B
+        while N:
+            B = min(N, self._max_steps_between_probes) if has_probes else N
+            self._dag.call_n_times(B)
+            if has_probes:
+                self.drain_probe_buffers()
+            N -= B
+            self.n_steps += B
+        if self.profiling > 1:
+            self.print_profiling()
 
     def print_profiling(self, sort=None):
         """
@@ -324,26 +351,3 @@ class Simulator(sim_npy.Simulator):
             print
             for r in unknowns:
                 print "%s %s" % r
-
-    def step(self):
-        return self.run_steps(1)
-
-    def run_steps(self, N, verbose=False):
-        has_probes = hasattr(self, '_cl_probe_plan')
-
-        if has_probes:
-            # -- precondition: the probe buffers have been drained
-            bufpositions = self._cl_probe_plan.cl_bufpositions.get()
-            assert np.all(bufpositions == 0)
-        # -- we will go through N steps of the simulator
-        #    in groups of up to B at a time, draining
-        #    the probe buffers after each group of B
-        while N:
-            B = min(N, self._max_steps_between_probes) if has_probes else N
-            self._dag.call_n_times(B)
-            if has_probes:
-                self.drain_probe_buffers()
-            N -= B
-            self.n_steps += B
-        if self.profiling > 1:
-            self.print_profiling()
