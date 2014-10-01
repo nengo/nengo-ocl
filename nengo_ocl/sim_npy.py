@@ -474,6 +474,8 @@ class Simulator(nengo.Simulator):
         self._AX_views = {}
         for op_type, op_list in op_groups:
             self.setup_views(builder, op_type, op_list)
+        for probe in self.model.probes:
+            builder.append_view(self.model.sig[probe]['in'])
         builder.add_views_to(self.all_data)
         self.sidx = builder.sidx
 
