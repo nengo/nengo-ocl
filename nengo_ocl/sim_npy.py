@@ -214,108 +214,33 @@ def is_op(op):
     return isinstance(op, nb.Operator)
 
 
-def exact_dependency_graph(operators, share_memory):
+def exact_dependency_graph(operators):
+    from nengo.utils.simulator import operator_depencency_graph
+
+    edges = operator_depencency_graph(operators)
     dg = nx.DiGraph()
 
-    for op in operators:
-        dg.add_edges_from(itertools.product(op.reads + op.updates, [op]))
-        dg.add_edges_from(itertools.product([op], op.sets + op.incs))
-
-    #print ' .. adding edges for %i nodes' % len(dg.nodes())
-
-    # -- all views of a base object in a particular dictionary
-    by_base_writes = defaultdict(list)
-    by_base_reads = defaultdict(list)
-    reads = defaultdict(list)
-    sets = defaultdict(list)
-    incs = defaultdict(list)
-    ups = defaultdict(list)
-
-    for op in operators:
-        for node in op.sets + op.incs:
-            by_base_writes[node.base].append(node)
-
-        for node in op.reads:
-            by_base_reads[node.base].append(node)
-
-        for node in op.reads:
-            reads[node].append(op)
-
-        for node in op.sets:
-            sets[node].append(op)
-
-        for node in op.incs:
-            incs[node].append(op)
-
-        for node in op.updates:
-            ups[node].append(op)
-
-    # -- assert that only one op sets any particular view
-    for node in sets:
-        assert len(sets[node]) == 1, (node, sets[node])
-
-    # -- assert that no two views are both set and aliased
-    if len(sets) >= 2:
-        for node, other in itertools.combinations(sets, 2):
-            assert not share_memory(node, other)
-
-    # -- incs depend on sets
-    #    Create an edge between any two ops (a, b)
-    #    if `a` sets a signal `u` that is [aliased to]
-    #    a signal `v` incremented by `b`
-    for inc_view, inc_ops in incs.items():
-        for set_view, set_ops in sets.items():
-            if share_memory(inc_view, set_view):
-                dg.add_edges_from(itertools.product(set_ops, inc_ops))
-
-
-    # -- reads depend on writes (sets and incs)
-    for node, post_ops in reads.items():
-        pre_ops = []
-        for other in by_base_writes[node.base]:
-            if share_memory(node, other):
-                pre_ops += sets[other] + incs[other]
-        dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
-
-    # -- assert that only one op updates any particular view
-    for node in ups:
-        assert len(ups[node]) == 1, (node, ups[node])
-
-    # -- assert that no two views are both updated and aliased
-    if len(ups) >= 2:
-        for node, other in itertools.combinations(ups, 2):
-            assert not share_memory(node, other), (
-                    node, other)
-
-    # -- updates depend on reads, sets, and incs.
-    for node, post_ops in ups.items():
-        pre_ops = []
-        others = by_base_writes[node.base] + by_base_reads[node.base]
-        for other in others:
-            if share_memory(node, other):
-                pre_ops += sets[other] + incs[other] + reads[other]
-        dg.add_edges_from(itertools.product(set(pre_ops), post_ops))
-
-    for op in operators:
-        assert op in dg
+    for source, dests in edges.items():
+        dg.add_edges_from((source, dest) for dest in dests)
 
     return dg
 
 
-def greedy_planner(operators, share_memory, cliques):
+def greedy_planner(operators):
     """
     I feel like there might e a dynamic programming solution here, but I can't
     work it out, and I'm not sure. Even if a DP solution existed, we would
     need a function to estimate the goodness (e.g. neg wall time) of kernel
     calls, and  that function would need to be pretty fast.
     """
-    dg = exact_dependency_graph(operators, share_memory)
+    dg = exact_dependency_graph(operators)
 
     # -- TODO: linear time algo
     ancestors_of = {}
     for op in operators:
         ancestors_of[op] = set(filter(is_op, nx.ancestors(dg, op)))
 
+    cliques = {}
     scheduled = set()
     rval = []
     while len(scheduled) < len(operators):
@@ -367,13 +292,7 @@ def greedy_planner(operators, share_memory, cliques):
     return rval
 
 
-def sequential_planner(operators, share_memory):
-    """
-    I feel like there might e a dynamic programming solution here, but I can't
-    work it out, and I'm not sure. Even if a DP solution existed, we would
-    need a function to estimate the goodness (e.g. neg wall time) of kernel
-    calls, and  that function would need to be pretty fast.
-    """
+def sequential_planner(operators):
     dg = exact_dependency_graph(operators, share_memory)
 
     # list of pairs: (type, [ops_of_type], set_of_ancestors, set_of_descendants)
@@ -529,34 +448,7 @@ class Simulator(nengo.Simulator):
         all_signals = signals_from_operators(operators)
         all_bases = stable_unique([sig.base for sig in all_signals])
 
-        _shares_memory_with = getattr(self.model, '_shares_memory_with', {})
-        indep_cliques = getattr(self.model, '_independent_view_cliques', {})
-        def share_memory(a, b):
-            if a.base is not b.base:
-                return False
-            base = a.base
-            astruct = a.structure
-            bstruct = b.structure
-            key0 = (base, astruct, bstruct)
-            key1 = (base, bstruct, astruct)
-            try:
-                return _shares_memory_with[key0]
-            except KeyError:
-                pass
-            try:
-                return _shares_memory_with[key1]
-            except KeyError:
-                pass
-            if any(astruct in cc and bstruct in cc
-                    for cc in indep_cliques.get(base, [])):
-                rval = True
-            else:
-                rval = a.shares_memory_with(b)
-            _shares_memory_with[key0] = rval
-            _shares_memory_with[key1] = rval
-            return rval
-
-        op_groups = planner(operators, share_memory, indep_cliques)
+        op_groups = planner(operators)
         self.op_groups = op_groups # debug
         #print '-' * 80
         #self.print_op_groups()
