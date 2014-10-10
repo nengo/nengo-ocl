@@ -171,22 +171,16 @@ def test_lif_rate(n_elements):
 def test_elementwise_inc():
 
     rng = np.random.RandomState(8)
-    Xsizes = [(7, 7), (32, 64), (457, 342)]
-    Asizes = [None, (1, 1), None]
-    Asizes = [xsize if asize is None else asize
-              for asize, xsize in zip(Asizes, Xsizes)]
+    Xsizes = [(3, 3), (32, 64), (457, 342), (1, 100)]
+    Asizes = [(3, 3), (1, 1),   (457, 342), (100, 1)]
     A = RA([rng.normal(size=size) for size in Asizes])
     X = RA([rng.normal(size=size) for size in Xsizes])
-    Y = RA([np.zeros_like(x) for x in X])
+    Y = RA([a * x for a, x in zip(A, X)])
 
     queue = cl.CommandQueue(ctx)
     clA = CLRA(queue, A)
     clX = CLRA(queue, X)
-    clY = CLRA(queue, Y)
-
-    # compute on host
-    for a, x, y in zip(A, X, Y):
-        y += a * x
+    clY = CLRA(queue, RA([np.zeros_like(y) for y in Y]))
 
     # compute on device
     plan = plan_elementwise_inc(queue, clA, clX, clY)

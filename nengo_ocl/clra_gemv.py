@@ -872,4 +872,3 @@ class plan_ragged_gather_gemv(gemv_prog):
             plans.append(remaining_plan)
 
         return plans
-
