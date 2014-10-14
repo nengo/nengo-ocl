@@ -19,8 +19,9 @@ critical = logger.critical
 import numpy as np
 
 import nengo
-from nengo import builder as nb
-from nengo.nonlinearities import LIF, LIFRate, Direct
+import nengo.builder as nb
+import nengo.simulator as ns
+from nengo.neurons import LIF, LIFRate, Direct
 
 from .ra_gemv import ragged_gather_gemv
 from .raggedarray import RaggedArray as _RaggedArray
@@ -388,41 +389,6 @@ def sequential_planner(operators, share_memory):
     return [(type(op), [op]) for op in topo_order]
 
 
-class SignalDict(dict):
-    """
-    Map from Signal -> ndarray
-
-    SignalDict overrides __getitem__ for two reasons:
-    1. so that scalars are returned as 0-d ndarrays
-    2. so that a SignalView lookup returns a views of its base
-
-    """
-    def __getitem__(self, obj):
-        if obj in self:
-            return dict.__getitem__(self, obj)
-        elif obj.base in self:
-            # look up views as a fallback
-            # --work around numpy's special case behaviour for scalars
-            base_array = self[obj.base]
-            try:
-                # for some installations, this works
-                itemsize = int(obj.dtype.itemsize)
-            except TypeError:
-                # other installations, this...
-                itemsize = int(obj.dtype().itemsize)
-            byteoffset = itemsize * obj.offset
-            bytestrides = [itemsize * s for s in obj.elemstrides]
-            view = np.ndarray(shape=obj.shape,
-                              dtype=obj.dtype,
-                              buffer=base_array.data,
-                              offset=byteoffset,
-                              strides=bytestrides,
-                             )
-            return view
-        else:
-            raise KeyError(obj)
-
-
 def isview(obj):
     return obj.base is not None and obj.base is not obj
 
@@ -530,23 +496,30 @@ class Simulator(object):
 
     profiling = False
 
-    def __init__(self, model, dt=0.001, seed=None, builder=None,
-            planner=greedy_planner,
-            ):
+    def __init__(self, network, dt=0.001, seed=None, model=None,
+                 planner=greedy_planner):
+        assert seed is None, "Seed not used"
 
-        if builder is None:
-            builder = nb.Builder(copy=True)
+        self.dt = dt
+        if model is None:
+            self.model = nb.Model(
+                dt=self.dt,
+                label="%s, dt=%f" % (network.label, dt),
+                seed=network.seed)
+        else:
+            self.model = model
+
+        if network is not None:
+            # Build the network into the model
+            nb.Builder.build(network, model=self.model)
 
         # -- map from Signal.base -> ndarray
-        sigdict = SignalDict()
+        sigdict = ns.SignalDict()
         self._step = nb.Signal(np.asarray(0.0, dtype=np.float64), name='step')
         self._time = nb.Signal(np.asarray(0.0, dtype=np.float64), name='time')
         self._one = nb.Signal(np.asarray(1.0, dtype=np.float64), name='ONE')
         self._zero = nb.Signal(np.asarray(0.0, dtype=np.float64), name='ZERO')
         self._dt = nb.Signal(np.asarray(dt, dtype=np.float64), name='DT')
-
-        # -- possibly make a copy of the model
-        self.model = builder(model, dt)
 
         # -- add some time-keeping to the copied model
         #    this will be used by e.g. plan_SimPyFunc
@@ -603,18 +576,20 @@ class Simulator(object):
         #self.print_op_groups()
 
         for op in operators:
-            op.init_sigdict(sigdict, self.model.dt)
-
+            op.init_signals(sigdict, self.dt)
 
         self.n_steps = 0
-        self.probe_outputs = dict((probe, []) for probe in self.model.probes)
+
+        # Add built states to the probe dictionary
+        self._probe_outputs = self.model.params
+
+        # Provide a nicer interface to probe outputs
+        self.data = ns.ProbeDict(self._probe_outputs)
 
         self.all_data = _RaggedArray(
                 [sigdict[sb] for sb in all_bases],
                 [getattr(sb, 'name', '') for ss in all_bases]
                 )
-        #for k in all_bases:
-            #print k, k.shape#, sigdict[k]
 
         builder = ViewBuilder(all_bases, self.all_data)
         #self._DotInc_views = {}
@@ -782,10 +757,10 @@ class Simulator(object):
         def lif(profiling=False):
             for op in ops:
                 J = self.all_data[sidx[op.J]]
-                voltage = self.all_data[sidx[op.voltage]]
-                reftime = self.all_data[sidx[op.refractory_time]]
+                voltage = self.all_data[sidx[op.states[0]]]
+                reftime = self.all_data[sidx[op.states[1]]]
                 output = self.all_data[sidx[op.output]]
-                op.nl.step_math(dt, J, voltage, reftime, output)
+                op.neurons.step_math(dt, J, output, voltage, reftime)
         return [lif]
 
     def plan_SimLIFRate(self, ops):
@@ -794,7 +769,7 @@ class Simulator(object):
             for op in ops:
                 J = self.all_data[self.sidx[op.J]]
                 output = self.all_data[self.sidx[op.output]]
-                op.nl.step_math(dt, J, output)
+                op.neurons.step_math(dt, J, output)
         return [lif_rate]
 
     def RaggedArray(self, *args, **kwargs):
@@ -996,10 +971,11 @@ class Simulator(object):
                 t0 = time.time()
                 probes = self.model.probes
                 for probe in probes:
-                    period = int(probe.dt // self.model.dt)
+                    period = (1 if probe.sample_every is None
+                              else int(probe.sample_every / self.dt))
                     if self.n_steps % period == 0:
-                        self.probe_outputs[probe].append(
-                            self.signals[probe.sig].copy())
+                        self._probe_outputs[probe].append(
+                            self.signals[self.model.sig_in[probe]].copy())
                 t1 = time.time()
                 probe_fn.cumtime += t1 - t0
             probe_fn.cumtime = 0.0
@@ -1033,25 +1009,6 @@ class Simulator(object):
             raise KeyError()
         else:
             return self.signal_probe_output(probes[0])
-
-    def probe_data(self, probe):
-        return np.asarray(self.probe_outputs[probe])
-
-    def data(self, probe):
-        """Get data from signals that have been probed.
-
-        Parameters
-        ----------
-        probe : Probe
-            TODO
-
-        Returns
-        -------
-        data : ndarray
-            TODO: what are the dimensions?
-        """
-        probe_cpy = self.model.memo[id(probe)]
-        return self.probe_data(probe_cpy.probe)
 
     def trange(self, dt=None):
         last_t = (self.n_steps - 1) * self.model.dt
