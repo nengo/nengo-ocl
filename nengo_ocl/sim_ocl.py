@@ -1,5 +1,7 @@
-import os
 import collections
+import logging
+import os
+
 import numpy as np
 import pyopencl as cl
 
@@ -7,7 +9,6 @@ from nengo.neurons import LIF, LIFRate, Direct
 from nengo.utils.compat import OrderedDict
 from nengo.utils.stdlib import groupby
 
-import nengo_ocl
 from nengo_ocl import sim_npy
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray
@@ -18,9 +19,7 @@ from nengo_ocl.clra_nonlinearities import (
 from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
 from nengo_ocl.ast_conversion import OCL_Function
 
-import logging
 logger = logging.getLogger(__name__)
-
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 

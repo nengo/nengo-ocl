@@ -2,31 +2,25 @@
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
 
-import time
-from collections import defaultdict
 import itertools
 import logging
+import time
+from collections import defaultdict
+
 import networkx as nx
-
-from tricky_imports import OrderedDict
-
-logger = logging.getLogger(__name__)
-info = logger.info
-warn = logger.warn
-error = logger.error
-critical = logger.critical
-
 import numpy as np
 
 import nengo
 import nengo.builder as nb
 import nengo.simulator as ns
 from nengo.neurons import LIF, LIFRate, Direct
+from nengo.utils.compat import OrderedDict
 
-from .ra_gemv import ragged_gather_gemv
-from .raggedarray import RaggedArray as _RaggedArray
+from nengo_ocl.plan import PythonPlan
+from nengo_ocl.ra_gemv import ragged_gather_gemv
+from nengo_ocl.raggedarray import RaggedArray as _RaggedArray
 
-from .plan import PythonPlan
+logger = logging.getLogger(__name__)
 
 
 class StepUpdate(nb.Operator):
@@ -95,11 +89,11 @@ class MultiProdUpdate(nb.Operator):
             assert_ok()
         elif isinstance(op, nb.Copy):
             rval = cls(op.dst, op.src, beta=1, gamma=0,
-                       as_update=len(op.updates) == 1, tag=op.tag)
+                       as_update=op.as_update, tag=op.tag)
             assert_ok()
         elif isinstance(op, nb.DotInc):
-            rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=False,
-                       tag=op.tag)
+            rval = cls(op.Y, op.Y, beta=1, gamma=0,
+                       as_update=op.as_update, tag=op.tag)
             rval.add_AX(op.A, op.X)
             assert_ok()
         elif isinstance(op, nb.PreserveValue):
