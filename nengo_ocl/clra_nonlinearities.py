@@ -387,7 +387,10 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
     parameters = dict(tau=tau, ref=ref)
 
     dt = float(dt)
-    textconf = dict(upsample=upsample, dt=dt/upsample, dt_inv=upsample/dt,
+    textconf = dict(upsample=upsample,
+                    dtu=dt/upsample,
+                    dtu_inv=upsample/dt,
+                    dt_inv=1/dt,
                     V_threshold=1.)
 
     declares = """
@@ -399,26 +402,26 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
             spiked = 0;
 
 % for ii in range(upsample):
-            dV = (${dt} / tau) * (j - v);
+            dV = (${dtu} / tau) * (j - v);
             v += dV;
 
-            if (v < 0 || w > 2*${dt})
+            if (v < 0 || w > 2*${dtu})
                 v = 0;
-            else if (w > ${dt})
-                v *= 1.0 - (w - ${dt}) * ${dt_inv};
+            else if (w > ${dtu})
+                v *= 1.0 - (w - ${dtu}) * ${dtu_inv};
 
             if (v > ${V_threshold}) {
-                overshoot = ${dt} * (v - ${V_threshold}) / dV;
-                w = ref - overshoot + ${dt};
+                overshoot = ${dtu} * (v - ${V_threshold}) / dV;
+                w = ref - overshoot + ${dtu};
                 v = 0.0;
                 spiked = 1;
             } else {
-                w -= ${dt};
+                w -= ${dtu};
             }
 % endfor
             ov = v;
             ow = w;
-            os = (spiked) ? 1.0f : 0.0f;
+            os = (spiked) ? ${dt_inv} : 0.0f;
             """
     text = Template(text, output_encoding='ascii').render(**textconf)
 
@@ -434,8 +437,8 @@ def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
     parameters = dict(tau=tau, ref=ref)
     text = """
             j = max(j - 1, 0.0f);
-            r = %(dt)e / (ref + tau * log1p(1.0/j));
-            """ % dict(dt=dt)
+            r = 1.0 / (ref + tau * log1p(1.0/j));
+            """
 
     return _plan_template(
         queue, "cl_lif_rate", text, tag=tag, n_elements=n_elements,

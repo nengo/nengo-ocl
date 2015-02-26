@@ -6,7 +6,9 @@ import numpy as np
 import pyopencl as cl
 
 from nengo.neurons import LIF, LIFRate, Direct
+from nengo.synapses import LinearFilter, Alpha, Lowpass
 from nengo.utils.compat import OrderedDict
+from nengo.utils.filter_design import cont2discrete
 from nengo.utils.stdlib import groupby
 
 from nengo_ocl import sim_npy
@@ -227,11 +229,26 @@ class Simulator(sim_npy.Simulator):
         return [plan_lif_rate(self.queue, J, R, ref, tau, dt,
                               tag="lif_rate", n_elements=10)]
 
-    def plan_SimFilterSynapse(self, ops):
+    def plan_SimSynapse(self, ops):
+        for op in ops:
+            assert isinstance(op.synapse, LinearFilter)
         X = self.all_data[[self.sidx[op.input] for op in ops]]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        A = self.RaggedArray([op.den for op in ops])
-        B = self.RaggedArray([op.num for op in ops])
+
+        dt = self.model.dt
+        nums = []
+        dens = []
+        for s in (op.synapse for op in ops):
+            if isinstance(s, (Alpha, Lowpass)) and s.tau <= 0.03 * dt:
+                num, den = [1], [1, 0]  # simply copies the first value
+            else:
+                num, den, _ = cont2discrete((s.num, s.den), dt, method='zoh')
+                num = num.flatten()
+            nums.append(num[1:] if num[0] == 0 else num)
+            dens.append(den[1:])  # drop first element (equal to 1)
+
+        A = self.RaggedArray(dens)
+        B = self.RaggedArray(nums)
         return [plan_filter_synapse(self.queue, X, Y, A, B)]
 
     def plan_probes(self):

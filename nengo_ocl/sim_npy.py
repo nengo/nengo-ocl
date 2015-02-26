@@ -10,10 +10,12 @@ from collections import defaultdict
 import networkx as nx
 import numpy as np
 
-import nengo
-import nengo.builder as nb
-import nengo.simulator as ns
+from nengo.cache import get_default_decoder_cache
 from nengo.neurons import LIF, LIFRate, Direct
+from nengo.simulator import ProbeDict, Simulator
+from nengo.builder.builder import Model
+from nengo.builder.operator import Operator, Copy, DotInc, PreserveValue, Reset
+from nengo.builder.signal import Signal, SignalView, SignalDict
 from nengo.utils.compat import OrderedDict
 
 from nengo_ocl.plan import PythonPlan
@@ -23,7 +25,7 @@ from nengo_ocl.raggedarray import RaggedArray as _RaggedArray
 logger = logging.getLogger(__name__)
 
 
-class StepUpdate(nb.Operator):
+class StepUpdate(Operator):
     """Does Y += 1 as an update"""
     def __init__(self, Y, one):
         self.Y = Y
@@ -43,7 +45,7 @@ class StepUpdate(nb.Operator):
         return step
 
 
-class MultiProdUpdate(nb.Operator):
+class MultiProdUpdate(Operator):
     """
     y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)
     """
@@ -59,7 +61,7 @@ class MultiProdUpdate(nb.Operator):
                 self._float_beta = float(beta)
             self._signal_beta = None
         except:
-            assert isinstance(beta, nb.SignalView)
+            assert isinstance(beta, SignalView)
             self._float_beta = None
             self._signal_beta = beta
             if beta.shape != Y.shape:
@@ -83,20 +85,20 @@ class MultiProdUpdate(nb.Operator):
             assert rval.sets == op.sets
             assert all(s.size for s in rval.all_signals), op
             assert set(rval.updates) == set(op.updates), (rval.updates, op.updates)
-        if isinstance(op, nb.Reset):
+        if isinstance(op, Reset):
             rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value, as_update=False,
                        tag=getattr(op, 'tag', ''))
             assert_ok()
-        elif isinstance(op, nb.Copy):
+        elif isinstance(op, Copy):
             rval = cls(op.dst, op.src, beta=1, gamma=0,
                        as_update=op.as_update, tag=op.tag)
             assert_ok()
-        elif isinstance(op, nb.DotInc):
+        elif isinstance(op, DotInc):
             rval = cls(op.Y, op.Y, beta=1, gamma=0,
                        as_update=op.as_update, tag=op.tag)
             rval.add_AX(op.A, op.X)
             assert_ok()
-        elif isinstance(op, nb.PreserveValue):
+        elif isinstance(op, PreserveValue):
             rval = cls(op.dst, op.dst, beta=1, gamma=0, as_update=False,
                        tag=getattr(op, 'tag', ''))
             rval._incs_Y = False
@@ -205,7 +207,7 @@ class MultiProdUpdate(nb.Operator):
 
 
 def is_op(op):
-    return isinstance(op, nb.Operator)
+    return isinstance(op, Operator)
 
 
 def exact_dependency_graph(operators):
@@ -391,7 +393,6 @@ class ViewBuilder(object):
             names=self.names)
 
 
-
 def signals_from_operators(operators):
     def all_with_dups():
         for op in operators:
@@ -400,40 +401,42 @@ def signals_from_operators(operators):
     return stable_unique(all_with_dups())
 
 
-class Simulator(nengo.Simulator):
+class Simulator(Simulator):
 
     profiling = False
 
     def __init__(self, network, dt=0.001, seed=None, model=None,
                  planner=greedy_planner):
         assert seed is None, "Seed not used"
+        dt = float(dt)
 
         if model is None:
-            self.model = nb.Model(
-                dt=dt, label="%s, dt=%f" % (network, dt))
+            self.model = Model(dt=dt,
+                               label="%s, dt=%f" % (network, dt),
+                               decoder_cache=get_default_decoder_cache())
         else:
             self.model = model
 
         if network is not None:
             # Build the network into the model
-            nb.Builder.build(network, model=self.model)
+            self.model.build(network)
 
         # -- map from Signal.base -> ndarray
-        sigdict = ns.SignalDict()
-        self._step = nb.Signal(np.asarray(0.0, dtype=np.float64), name='step')
-        self._time = nb.Signal(np.asarray(0.0, dtype=np.float64), name='time')
-        self._one = nb.Signal(np.asarray(1.0, dtype=np.float64), name='ONE')
-        self._zero = nb.Signal(np.asarray(0.0, dtype=np.float64), name='ZERO')
-        self._dt = nb.Signal(np.asarray(dt, dtype=np.float64), name='DT')
+        sigdict = SignalDict()
+        self._step = Signal(np.array(0.0, dtype=np.float64), name='step')
+        self._time = Signal(np.array(0.0, dtype=np.float64), name='time')
+        self._one = Signal(np.array(1.0, dtype=np.float64), name='ONE')
+        self._zero = Signal(np.array(0.0, dtype=np.float64), name='ZERO')
+        self._dt = Signal(np.array(dt, dtype=np.float64), name='DT')
 
         operators = list(self.model.operators)
 
         # -- add some time-keeping to the copied model
         #    this will be used by e.g. plan_SimPyFunc
         operators.append(StepUpdate(self._step, self._one))
-        operators.append(nb.Reset(self._time))
-        operators.append(nb.DotInc(self._dt, self._step, self._time))
-        operators.append(nb.DotInc(self._dt, self._one, self._time))
+        operators.append(Reset(self._time))
+        operators.append(DotInc(self._dt, self._step, self._time))
+        operators.append(DotInc(self._dt, self._one, self._time))
 
         # -- convert DotInc, Reset, Copy, and ProdUpdate to MultiProdUpdate
         operators = map(MultiProdUpdate.convert_to, operators)
@@ -448,7 +451,7 @@ class Simulator(nengo.Simulator):
         #self.print_op_groups()
 
         for op in operators:
-            op.init_signals(sigdict, self.dt)
+            op.init_signals(sigdict)
 
         self.n_steps = 0
 
@@ -456,7 +459,7 @@ class Simulator(nengo.Simulator):
         self._probe_outputs = self.model.params
 
         # Provide a nicer interface to probe outputs
-        self.data = ns.ProbeDict(self._probe_outputs)
+        self.data = ProbeDict(self._probe_outputs)
 
         self.all_data = _RaggedArray(
                 [sigdict[sb] for sb in all_bases],

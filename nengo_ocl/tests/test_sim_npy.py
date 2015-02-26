@@ -14,7 +14,8 @@ import os
 import pytest
 
 import nengo
-from nengo.utils.testing import find_modules, load_functions
+from nengo.utils.testing import find_modules
+from nengo_ocl.tests.utils import load_functions
 
 from nengo_ocl import sim_npy
 
