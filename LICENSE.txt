@@ -1,9 +1,0 @@
-NengoOCL: an OpenCL-backed simulator for the Nengo neural simulator.
-
-Copyright (C) 2013 -- 2014-10-14 James Bergstra.
-Copyright (C) 2014 Applied Brain Research.
-
-If you are interested in licensing versions of Nengo OCL
-prior to 2014-10-14, contact James Bergstra (james.bergstra@gmail.com).
-If you are interested in licensing more recent versions of Nengo OCL,
-contact Applied Brain Research (info@appliedbrainresearch.com).
