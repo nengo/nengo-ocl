@@ -851,3 +851,6 @@ class Simulator(Simulator):
     def run_steps(self, N, verbose=False):
         for i in xrange(N):
             self.step()
+
+    def reset(self):
+        raise NotImplementedError("Resetting not implemented")

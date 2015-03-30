@@ -5,7 +5,9 @@ import os
 import numpy as np
 import pyopencl as cl
 
+from nengo.dists import Uniform, Gaussian
 from nengo.neurons import LIF, LIFRate, Direct
+from nengo.processes import StochasticProcess
 from nengo.synapses import LinearFilter, Alpha, Lowpass
 from nengo.utils.compat import OrderedDict
 from nengo.utils.filter_design import cont2discrete
@@ -251,46 +253,70 @@ class Simulator(sim_npy.Simulator):
         B = self.RaggedArray(nums)
         return [plan_filter_synapse(self.queue, X, Y, A, B)]
 
+    def plan_SimNoise(self, ops):
+        def split(iterable, condition):
+            a = []
+            b = []
+            for i in iterable:
+                if condition(i):
+                    a.append(i)
+                else:
+                    b.append(i)
+            return a, b
+
+        ops, badops = split(ops, lambda x: x.__class__ is StochasticProcess)
+        if len(badops) > 0:
+            raise NotImplementedError("Can only simulate StochasticProcess base class")
+
+        ops, badops = split(ops, lambda x: x.synapse is None)
+        if len(badops) > 0:
+            raise NotImplementedError("Can only simulate noise with no synapse")
+
+        uniform, ops = split(ops, lambda x: isinstance(x.dist, Uniform))
+        gaussian, ops = split(ops, lambda x: isinstance(x.dist, Gaussian))
+        if len(ops) > 0:
+            raise NotImplementedError("Can only simulate Uniform or Gaussian noise")
+
+        raise NotImplementedError("TODO")
+
     def plan_probes(self):
-        if len(self.model.probes) > 0:
-            n_prealloc = self.n_prealloc_probes
-
-            probes = self.model.probes
-            periods = [1 if p.sample_every is None else
-                       int(np.round(float(p.sample_every) / self.model.dt))
-                       for p in probes]
-
-            for p in probes:
-                sig = self.model.sig[p]['in']
-                if sig.ndim > 1 and sig.size != sig.shape[0]:
-                    raise NotImplementedError('probing non-vector', p)
-
-            X = self.all_data[
-                [self.sidx[self.model.sig[p]['in']] for p in probes]]
-            Y = self.RaggedArray(
-                [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
-                 for p in probes])
-
-            cl_plan = plan_probes(self.queue, periods, X, Y, tag="probes")
-            self._max_steps_between_probes = n_prealloc * min(periods)
-
-            cl_plan.Y = Y
-            self._cl_probe_plan = cl_plan
-            return [cl_plan]
-        else:
+        if len(self.model.probes) == 0:
             return []
+
+        n_prealloc = self.n_prealloc_probes
+
+        probes = self.model.probes
+        periods = [1 if p.sample_every is None else
+                   int(np.round(float(p.sample_every) / self.model.dt))
+                   for p in probes]
+
+        X = self.all_data[
+            [self.sidx[self.model.sig[p]['in']] for p in probes]]
+        Y = self.RaggedArray(
+            [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
+             for p in probes])
+
+        cl_plan = plan_probes(self.queue, periods, X, Y, tag="probes")
+        self._max_steps_between_probes = n_prealloc * min(periods)
+
+        cl_plan.Y = Y
+        self._cl_probe_plan = cl_plan
+        return [cl_plan]
 
     def drain_probe_buffers(self):
         self.queue.finish()
         plan = self._cl_probe_plan
         bufpositions = plan.cl_bufpositions.get()
         for i, probe in enumerate(self.model.probes):
+            shape = self.model.sig[probe]['in'].shape
             n_buffered = bufpositions[i]
             if n_buffered:
                 # XXX: this syntax retrieves *ALL* of Y from the device
                 #      because the :n_buffered only works on the ndarray
                 #      *after* it has been transferred.
-                self._probe_outputs[probe].extend(plan.Y[i][:n_buffered])
+                raw = plan.Y[i][:n_buffered]
+                shaped = raw.reshape((n_buffered,) + shape)
+                self._probe_outputs[probe].extend(shaped)
         plan.cl_bufpositions.fill(0)
         self.queue.finish()
 

@@ -230,13 +230,12 @@ def plan_probes(queue, periods, X, Y, tag=None):
 
     assert X.cl_buf.ocldtype == Y.cl_buf.ocldtype
 
-    ### N.B.  X[i].shape = (ndims[i], )
-    ###       Y[i].shape = (buf_ndims[i], buf_len)
+    ### N.B.  X[i].shape = (M, N)
+    ###       Y[i].shape = (buf_len, M * N)
 
     for i in xrange(N):
-        assert X.shape0s[i] == Y.shape1s[i]
-        assert X.shape1s[i] == 1
-        assert X.stride0s[i] == 1
+        assert X.shape0s[i] * X.shape1s[i] == Y.shape1s[i]
+        assert X.stride0s[i] == X.shape1s[i]
         assert X.stride1s[i] == 1
         assert Y.stride0s[i] == Y.shape1s[i]
         assert Y.stride1s[i] == 1
@@ -249,6 +248,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
             __global const int *periods,
             __global const int *Xstarts,
             __global const int *Xshape0s,
+            __global const int *Xshape1s,
             __global const ${Xtype} *Xdata,
             __global const int *Ystarts,
             __global ${Ytype} *Ydata
@@ -258,7 +258,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
             const int countdown = countdowns[n];
 
             if (countdown == 0) {
-                const int n_dims = Xshape0s[n];
+                const int n_dims = Xshape0s[n] * Xshape1s[n];
                 __global const ${Xtype} *x = Xdata + Xstarts[n];
                 const int bufpos = bufpositions[n];
 
@@ -302,6 +302,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
         cl_periods,
         X.cl_starts,
         X.cl_shape0s,
+        X.cl_shape1s,
         X.cl_buf,
         Y.cl_starts,
         Y.cl_buf,
