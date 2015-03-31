@@ -404,25 +404,25 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
             %(Vtype)s dV, overshoot;
             """ % ({'Vtype': V.cl_buf.ocldtype})
 
+    # TODO: could precompute -expm1(-dtu / tau)
     text = """
             spiked = 0;
 
 % for ii in range(upsample):
-            dV = (${dtu} / tau) * (j - v);
+            dV = -expm1(-${dtu} / tau) * (j - v);
             v += dV;
+            w -= ${dtu};
 
-            if (v < 0 || w > 2*${dtu})
+            if (v < 0 || w > ${dtu})
                 v = 0;
-            else if (w > ${dtu})
-                v *= 1.0 - (w - ${dtu}) * ${dtu_inv};
+            else if (w >= 0)
+                v *= 1.0 - w * ${dtu_inv};
 
             if (v > ${V_threshold}) {
                 overshoot = ${dtu} * (v - ${V_threshold}) / dV;
                 w = ref - overshoot + ${dtu};
                 v = 0.0;
                 spiked = 1;
-            } else {
-                w -= ${dtu};
             }
 % endfor
             ov = v;

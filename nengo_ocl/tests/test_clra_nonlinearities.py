@@ -54,7 +54,7 @@ def test_lif_step(upsample, n_elements):
             s = np.zeros_like(OS[i])
             for j in xrange(upsample):
                 nl.step_math(dt / upsample, J[i], s, V[i], W[i])
-                OS[i] = (OS[i] > 0.5) | (s > 0.5)
+                OS[i] = (1./dt) * ((OS[i] > 0) | (s > 0))
 
     # simulate device
     plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, clTau, dt,
