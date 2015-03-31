@@ -5,7 +5,8 @@ import pyopencl as cl
 import pytest
 
 import nengo
-from nengo.utils.distributions import Uniform
+from nengo.dists import Uniform
+
 import nengo_ocl
 import nengo_ocl.ast_conversion as ast_conversion
 
@@ -31,14 +32,14 @@ def _test_node(Simulator, fn, size_in=0):
     x = rng.uniform(size=size_in)
 
     # make model
-    model = nengo.Model("test_%s" % fn.__name__, seed=seed)
+    model = nengo.Network("test_%s" % fn.__name__, seed=seed)
     with model:
         v = nengo.Node(output=fn, size_in=size_in)
         vp = nengo.Probe(v)
 
         if size_in > 0:
             u = nengo.Node(output=x)
-            nengo.Connection(u, v, filter=0)
+            nengo.Connection(u, v, synapse=0)
 
     # run model
     sim = Simulator(model)
@@ -47,7 +48,7 @@ def _test_node(Simulator, fn, size_in=0):
     # compare output
     t = sim.trange()
     y = np.array([fn(tt, x) if size_in > 0 else fn(tt) for tt in t])
-    z = sim.data(vp)
+    z = sim.data[vp]
 
     y.shape = z.shape
     assert np.allclose(z[1:], y[1:])
@@ -124,10 +125,11 @@ def test_lambda_double(Simulator):
 def test_direct_connection(Simulator):
     """Test a direct-mode connection"""
 
-    model = nengo.Model('test_connection', seed=124)
-    a = nengo.Ensemble(nengo.Direct(0), dimensions=1)
-    b = nengo.Ensemble(nengo.Direct(0), dimensions=1)
-    nengo.Connection(a, b, function=lambda x: x**2)
+    model = nengo.Network('test_connection', seed=124)
+    with model:
+        a = nengo.Ensemble(1, dimensions=1, neuron_type=nengo.Direct())
+        b = nengo.Ensemble(1, dimensions=1, neuron_type=nengo.Direct())
+        nengo.Connection(a, b, function=lambda x: x**2)
 
     Simulator(model)
 
@@ -153,15 +155,15 @@ def _test_conn(Simulator, fn, size_in, dist_in=None, n=1):
     size_out = y.shape[1]
 
     # make model
-    model = nengo.Model("test_%s" % fn.__name__, seed=seed)
+    model = nengo.Network("test_%s" % fn.__name__, seed=seed)
     with model:
         probes = []
         for i in xrange(n):
             u = nengo.Node(output=x[i])
-            v = nengo.Ensemble(nengo.Direct(0), dimensions=size_in)
-            w = nengo.Ensemble(nengo.Direct(0), dimensions=size_out)
-            nengo.Connection(u, v, filter=0)
-            nengo.Connection(v, w, filter=0, function=fn, eval_points=x)
+            v = nengo.Ensemble(1, dimensions=size_in, neuron_type=nengo.Direct())
+            w = nengo.Ensemble(1, dimensions=size_out, neuron_type=nengo.Direct())
+            nengo.Connection(u, v, synapse=0)
+            nengo.Connection(v, w, synapse=0, function=fn, eval_points=x)
             probes.append(nengo.Probe(w))
 
     # run model
@@ -171,7 +173,7 @@ def _test_conn(Simulator, fn, size_in, dist_in=None, n=1):
     # sim.step()
 
     # compare output
-    z = np.array([sim.data(p)[-1] for p in probes])
+    z = np.array([sim.data[p][-1] for p in probes])
     assert np.allclose(z, y)
 
 

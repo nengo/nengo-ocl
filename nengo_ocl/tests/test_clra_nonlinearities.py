@@ -15,7 +15,6 @@ from nengo_ocl.clra_nonlinearities import (
 
 ctx = cl.create_some_context()
 logger = logging.getLogger(__name__)
-# nengo.log(True)
 
 
 def not_close(a, b, rtol=1e-3, atol=1e-3):
