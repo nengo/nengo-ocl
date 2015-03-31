@@ -98,10 +98,6 @@ skip('test.nengo.tests.test_learning_rules.test_reset',
 skip('test.nengo.tests.test_neurons.test_reset',
      "Resetting not implemented")
 
-# other
-skip('test.nengo.tests.test_probe.test_dts',
-     "Probe times not guaranteed to match")
-
 
 locals().update(tests)
 

@@ -223,7 +223,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
     assert len(X) == len(periods)
     N = len(X)
 
-    periods = np.asarray(periods, dtype='int32')
+    periods = np.asarray(periods, dtype='float32')
     cl_periods = to_device(queue, periods)
     cl_countdowns = to_device(queue, periods - 1)
     cl_bufpositions = to_device(queue, np.zeros(N, dtype='int32'))
@@ -243,9 +243,9 @@ def plan_probes(queue, periods, X, Y, tag=None):
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void fn(
-            __global int *countdowns,
+            __global float *countdowns,
             __global int *bufpositions,
-            __global const int *periods,
+            __global const float *periods,
             __global const int *Xstarts,
             __global const int *Xshape0s,
             __global const int *Xshape1s,
@@ -255,9 +255,9 @@ def plan_probes(queue, periods, X, Y, tag=None):
         )
         {
             const int n = get_global_id(1);
-            const int countdown = countdowns[n];
+            const float countdown = countdowns[n];
 
-            if (countdown == 0) {
+            if (countdown <= 0) {
                 const int n_dims = Xshape0s[n] * Xshape1s[n];
                 __global const ${Xtype} *x = Xdata + Xstarts[n];
                 const int bufpos = bufpositions[n];
@@ -276,7 +276,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
                 barrier(CLK_LOCAL_MEM_FENCE);
                 if (get_global_id(0) == 0)
                 {
-                    countdowns[n] = periods[n] - 1;
+                    countdowns[n] = countdown + periods[n] - 1;
                     bufpositions[n] = bufpos + 1;
                 }
             }

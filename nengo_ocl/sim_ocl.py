@@ -287,7 +287,7 @@ class Simulator(sim_npy.Simulator):
 
         probes = self.model.probes
         periods = [1 if p.sample_every is None else
-                   int(np.round(float(p.sample_every) / self.model.dt))
+                   p.sample_every / self.dt
                    for p in probes]
 
         X = self.all_data[
