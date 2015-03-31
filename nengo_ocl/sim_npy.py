@@ -1,8 +1,6 @@
 """
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
-
-import itertools
 import logging
 import time
 from collections import defaultdict
@@ -11,7 +9,6 @@ import networkx as nx
 import numpy as np
 
 from nengo.cache import get_default_decoder_cache
-from nengo.neurons import LIF, LIFRate, Direct
 from nengo.simulator import ProbeDict, Simulator
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, PreserveValue, Reset
@@ -26,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 class StepUpdate(Operator):
+
     """Does Y += 1 as an update"""
+
     def __init__(self, Y, one):
         self.Y = Y
         self.one = one
@@ -40,15 +39,18 @@ class StepUpdate(Operator):
 
     def make_step(self, signals, dt):
         Y = signals[self.Y]
+
         def step():
-            Y += 1
+            Y[...] += 1
         return step
 
 
 class MultiProdUpdate(Operator):
+
     """
     y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)
     """
+
     def __init__(self, Y, Y_in, beta, gamma, tag, as_update):
         self.Y = Y
         self.Y_in = Y_in
@@ -72,10 +74,10 @@ class MultiProdUpdate(Operator):
         self.As = []
         self.Xs = []
         self._incs_Y = (
-                self._signal_beta is None
-                and self._float_beta == 1
-                and self.Y_in is self.Y
-                and not as_update)
+            self._signal_beta is None
+            and self._float_beta == 1
+            and self.Y_in is self.Y
+            and not as_update)
 
     @classmethod
     def convert_to(cls, op):
@@ -84,10 +86,11 @@ class MultiProdUpdate(Operator):
             assert rval.incs == op.incs
             assert rval.sets == op.sets
             assert all(s.size for s in rval.all_signals), op
-            assert set(rval.updates) == set(op.updates), (rval.updates, op.updates)
+            assert set(rval.updates) == set(
+                op.updates), (rval.updates, op.updates)
         if isinstance(op, Reset):
-            rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value, as_update=False,
-                       tag=getattr(op, 'tag', ''))
+            rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value,
+                       as_update=False, tag=getattr(op, 'tag', ''))
             assert_ok()
         elif isinstance(op, Copy):
             rval = cls(op.dst, op.src, beta=1, gamma=0,
@@ -164,11 +167,11 @@ class MultiProdUpdate(Operator):
                 ' Y_in=%s, beta=%s,'
                 ' gamma=%s, dots=[%s]'
                 ') at 0x%x>' % (
-                self.tag, self.as_update, self.Y,
-                self.Y_in, beta,
-                self.gamma,
-                ', '.join(dots),
-                id(self)))
+                    self.tag, self.as_update, self.Y,
+                    self.Y_in, beta,
+                    self.gamma,
+                    ', '.join(dots),
+                    id(self)))
 
     def __repr__(self):
         return self.__str__()
@@ -241,8 +244,8 @@ def greedy_planner(operators):
     rval = []
     while len(scheduled) < len(operators):
         candidates = [op
-            for op, pre_ops in ancestors_of.items()
-            if not pre_ops and op not in scheduled]
+                      for op, pre_ops in ancestors_of.items()
+                      if not pre_ops and op not in scheduled]
         if len(candidates) == 0:
             raise ValueError("Cycles in the op graph")
 
@@ -265,7 +268,8 @@ def greedy_planner(operators):
         chosen = []
         for base, ops_writing_to_base in by_base.items():
             if base in cliques_by_base:
-                most_ops = sorted((len(base_ops), base_ops)
+                most_ops = sorted(
+                    (len(base_ops), base_ops)
                     for cliq_id, base_ops in cliques_by_base[base].items())
                 chosen.extend(most_ops[-1][1])
             else:
@@ -284,19 +288,20 @@ def greedy_planner(operators):
             ancestors_of[op].difference_update(chosen)
 
     assert len(operators) == sum(len(p[1]) for p in rval)
-    #print 'greedy_planner: Program len:', len(rval)
+    # print 'greedy_planner: Program len:', len(rval)
     return rval
 
 
-def sequential_planner(operators):
-    dg = exact_dependency_graph(operators, share_memory)
+# def sequential_planner(operators):
+#     dg = exact_dependency_graph(operators, share_memory)
 
-    # list of pairs: (type, [ops_of_type], set_of_ancestors, set_of_descendants)
-    topo_order = [op
-        for op in nx.topological_sort(dg)
-        if is_op(op)]
+#     # list of pairs: (type, [ops_of_type], set_of_ancestors,
+#     # set_of_descendants)
+#     topo_order = [op
+#                   for op in nx.topological_sort(dg)
+#                   if is_op(op)]
 
-    return [(type(op), [op]) for op in topo_order]
+#     return [(type(op), [op]) for op in topo_order]
 
 
 def isview(obj):
@@ -333,6 +338,7 @@ def stable_unique(seq):
 
 
 class ViewBuilder(object):
+
     def __init__(self, bases, rarray):
         self.bases = bases
         self.sidx = dict((bb, ii) for ii, bb in enumerate(bases))
@@ -345,8 +351,8 @@ class ViewBuilder(object):
         self.stride0s = []
         self.stride1s = []
         self.names = []
-        #self.orig_len = len(self.all_signals)
-        #self.base_starts = self.all_data_A.starts
+        # self.orig_len = len(self.all_signals)
+        # self.base_starts = self.all_data_A.starts
 
     def append_view(self, obj):
         assert obj.size
@@ -355,7 +361,7 @@ class ViewBuilder(object):
 
         if obj in self.sidx:
             return
-            #raise KeyError('sidx already contains object', obj)
+            # raise KeyError('sidx already contains object', obj)
 
         if obj in self.bases:
             # -- it is not a view, but OK
@@ -446,9 +452,9 @@ class Simulator(Simulator):
         all_bases = stable_unique([sig.base for sig in all_signals])
 
         op_groups = planner(operators)
-        self.op_groups = op_groups # debug
-        #print '-' * 80
-        #self.print_op_groups()
+        self.op_groups = op_groups  # debug
+        # print '-' * 80
+        # self.print_op_groups()
 
         for op in operators:
             op.init_signals(sigdict)
@@ -462,12 +468,12 @@ class Simulator(Simulator):
         self.data = ProbeDict(self._probe_outputs)
 
         self.all_data = _RaggedArray(
-                [sigdict[sb] for sb in all_bases],
-                [getattr(sb, 'name', '') for ss in all_bases]
-                )
+            [sigdict[sb] for sb in all_bases],
+            [getattr(sb, 'name', '') for ss in all_bases]
+        )
 
         builder = ViewBuilder(all_bases, self.all_data)
-        #self._DotInc_views = {}
+        # self._DotInc_views = {}
         self._AX_views = {}
         for op_type, op_list in op_groups:
             self.setup_views(builder, op_type, op_list)
@@ -530,7 +536,7 @@ class Simulator(Simulator):
             for A, X in zip(op.As, op.Xs):
                 X_view = as2d(X)
                 if A.ndim == 1 and X.ndim == 1:
-                    A_view = A.reshape((1, A.shape[0])) # vector dot
+                    A_view = A.reshape((1, A.shape[0]))  # vector dot
                 else:
                     A_view = as2d(A)
 
@@ -538,8 +544,8 @@ class Simulator(Simulator):
                     # -- scalar AX_views can be done as reverse multiplication
                     A_view, X_view = X_view, A_view
                 elif not (X_view.shape[0] == A_view.shape[1] and
-                        X_view.shape[1] == Y_view.shape[1] and
-                        A_view.shape[0] == Y_view.shape[0]):
+                          X_view.shape[1] == Y_view.shape[1] and
+                          A_view.shape[0] == Y_view.shape[0]):
                     raise ValueError('shape mismach (A: %s, X: %s, Y: %s)' %
                                      (A.shape, X.shape, op.Y.shape))
 
@@ -551,12 +557,11 @@ class Simulator(Simulator):
             self._YYB_views[op] = YYB_views
 
     def plan_MultiProdUpdate(self, ops):
-        constant_bs = [op
-            for op in ops
-            if op._float_beta is not None]
-
+        constant_bs = [op for op in ops
+                       if op._float_beta is not None]
         vector_bs = [op for op in ops
-            if op._signal_beta is not None and op._signal_beta.ndim == 1]
+                     if op._signal_beta is not None
+                     and op._signal_beta.ndim == 1]
 
         if len(constant_bs) + len(vector_bs) != len(ops):
             raise NotImplementedError()
@@ -577,7 +582,7 @@ class Simulator(Simulator):
             gamma=[op.gamma for op in constant_bs],
             verbose=0,
             tag=tag
-            )
+        )
 
         vector_b_gemvs = self.sig_gemv(
             vector_bs,
@@ -590,11 +595,12 @@ class Simulator(Simulator):
             gamma=[op.gamma for op in vector_bs],
             verbose=0,
             tag='ProdUpdate-vector-beta'
-            )
+        )
         return constant_b_gemvs + vector_b_gemvs
 
     def plan_ElementwiseInc(self, ops):
         sidx = self.sidx
+
         def elementwise_inc(profiling=False):
             for op in ops:
                 A = self.all_data[sidx[op.A]]
@@ -605,6 +611,7 @@ class Simulator(Simulator):
 
     def plan_SimDirect(self, ops):
         sidx = self.sidx
+
         def direct(profiling=False):
             for op in ops:
                 J = self.all_data[sidx[op.J]]
@@ -613,29 +620,25 @@ class Simulator(Simulator):
         return [direct]
 
     def plan_SimPyFunc(self, ops):
-        dt = self.model.dt
         sidx = self.sidx
         t = self.all_data[sidx[self._time]]
+
         def pyfunc(profiling=False):
             for op in ops:
                 output = self.all_data[sidx[op.output]]
-                # -- YEP, subtracting off DT is crazy
-                #    but it makes nengo's tests pass.
-                #    See nengo ticket #234 for potential resolution.
                 args = [t[0, 0]] if op.t_in else []
                 args += [self.all_data[sidx[op.x]]] if op.x is not None else []
                 out = np.asarray(op.fn(*args))
                 if out.ndim == 1:
                     output[...] = out[:, None]
                 else:
-                    #print output.shape, out.shape, op.fn, op
-                    #print self._time.shape, t.shape
                     output[...] = out
         return [pyfunc]
 
     def plan_SimNeurons(self, ops):
         dt = self.model.dt
         sidx = self.sidx
+
         def neurons(profiling=False):
             for op in ops:
                 J = self.all_data[sidx[op.J]]
@@ -646,6 +649,7 @@ class Simulator(Simulator):
 
     def plan_SimFilterSynapse(self, ops):
         assert all(len(op.num) == 1 and len(op.den) == 1 for op in ops)
+
         def synapse(profiling=False):
             for op in ops:
                 x = self.all_data[self.sidx[op.input]]
@@ -662,7 +666,7 @@ class Simulator(Simulator):
                  gamma=None,
                  verbose=0,
                  tag=None
-                ):
+                 ):
         if len(seq) == 0:
             return []
         sidx = self.sidx
@@ -701,10 +705,6 @@ class Simulator(Simulator):
             A_sigs_i = A_js_fn(item)
             X_sigs_i = X_js_fn(item)
             assert len(A_sigs_i) == len(X_sigs_i)
-            ysig = Y_sigs[ii]
-            yidx = Y_idxs[ii]
-            yM = self.all_data.shape0s[yidx]
-            yN = self.all_data.shape1s[yidx]
             for asig, xsig in zip(A_sigs_i, X_sigs_i):
                 A_js_i.append(sidx[asig])
                 X_js_i.append(sidx[xsig])
@@ -736,7 +736,7 @@ class Simulator(Simulator):
             tag=tag,
             seq=seq,
             gamma=gamma,
-            )
+        )
 
         try:
             return rval.plans
@@ -766,6 +766,7 @@ class Simulator(Simulator):
         """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)
         """
         class Accessor(object):
+
             def __iter__(_):
                 return iter(self.all_bases)
 

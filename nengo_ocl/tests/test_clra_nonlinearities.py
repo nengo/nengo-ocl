@@ -3,15 +3,14 @@ import numpy as np
 import pyopencl as cl
 import pytest
 
-import nengo
-from nengo.neurons import LIF, LIFRate, Direct
+from nengo.neurons import LIF, LIFRate
 
-from nengo_ocl.ra_gemv import ragged_gather_gemv
 from nengo_ocl import raggedarray as ra
 from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 
-from nengo_ocl.clra_nonlinearities import *
+from nengo_ocl.clra_nonlinearities import (
+    plan_lif, plan_lif_rate, plan_elementwise_inc)
 
 
 ctx = cl.create_some_context()
@@ -31,10 +30,9 @@ def test_lif_step(upsample, n_elements):
 
     dt = 1e-3
     n_neurons = [12345, 23456, 34567]
-    N = len(n_neurons)
     J = RA([rng.normal(scale=1.2, size=n) for n in n_neurons])
     V = RA([rng.uniform(low=0, high=1, size=n) for n in n_neurons])
-    W = RA([rng.uniform(low=-5*dt, high=5*dt, size=n) for n in n_neurons])
+    W = RA([rng.uniform(low=-5 * dt, high=5 * dt, size=n) for n in n_neurons])
     OS = RA([np.zeros(n) for n in n_neurons])
 
     ref = 2e-3
@@ -47,7 +45,7 @@ def test_lif_step(upsample, n_elements):
     clOS = CLRA(queue, OS)
     clTau = CLRA(queue, RA(taus))
 
-    ### simulate host
+    # simulate host
     nls = [LIF(tau_ref=ref, tau_rc=taus[i])
            for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
@@ -56,10 +54,10 @@ def test_lif_step(upsample, n_elements):
         else:
             s = np.zeros_like(OS[i])
             for j in xrange(upsample):
-                nl.step_math(dt/upsample, J[i], s, V[i], W[i])
+                nl.step_math(dt / upsample, J[i], s, V[i], W[i])
                 OS[i] = (OS[i] > 0.5) | (s > 0.5)
 
-    ### simulate device
+    # simulate device
     plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, clTau, dt,
                     n_elements=n_elements, upsample=upsample)
     plan()
@@ -97,14 +95,15 @@ def test_lif_speed(heterogeneous=True):
     tau = 20e-3
 
     if heterogeneous:
-        n_neurons = [1.0e5] * 5 + [1e3]*50
+        n_neurons = [1.0e5] * 5 + [1e3] * 50
     else:
         n_neurons = [1.1e5] * 5
     n_neurons = map(int, n_neurons)
 
     J = RA([rng.randn(n) for n in n_neurons])
     V = RA([rng.uniform(low=0, high=1, size=n) for n in n_neurons])
-    W = RA([rng.uniform(low=-10*dt, high=10*dt, size=n) for n in n_neurons])
+    W = RA([rng.uniform(low=-10 * dt, high=10 * dt, size=n)
+            for n in n_neurons])
     OS = RA([np.zeros(n) for n in n_neurons])
 
     queue = cl.CommandQueue(
@@ -128,7 +127,7 @@ def test_lif_speed(heterogeneous=True):
         print 'queued -> submit', plan.atimes
         print 'submit -> start ', plan.btimes
         print 'start -> end    ', plan.ctimes
-        ### TODO: this is broken; no times are shown
+        # TODO: this is broken; no times are shown
 
 
 @pytest.mark.parametrize("n_elements", [0, 1, 10])
@@ -138,7 +137,6 @@ def test_lif_rate(n_elements):
     dt = 1e-3
 
     n_neurons = [123459, 23456, 34567]
-    N = len(n_neurons)
     J = RA([rng.normal(loc=1, scale=10, size=n) for n in n_neurons])
     R = RA([np.zeros(n) for n in n_neurons])
 
@@ -150,13 +148,13 @@ def test_lif_rate(n_elements):
     clR = CLRA(queue, R)
     clTau = CLRA(queue, RA(taus))
 
-    ### simulate host
+    # simulate host
     nls = [LIFRate(tau_ref=ref, tau_rc=taus[i])
            for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
         nl.step_math(dt, J[i], R[i])
 
-    ### simulate device
+    # simulate device
     plan = plan_lif_rate(queue, clJ, clR, ref, clTau, dt=dt,
                          n_elements=n_elements)
     plan()

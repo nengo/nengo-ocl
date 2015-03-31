@@ -3,25 +3,25 @@ import numpy as np
 
 
 def raw_ragged_gather_gemv(
-    BB,
-    Ns,
-    alphas,
-    A_starts,
-    A_ldas,
-    A_data,
-    A_js_starts,
-    A_js_lens,
-    A_js_data,
-    X_starts,
-    X_data,
-    X_js_starts,
-    X_js_data,
-    betas,
-    Y_in_starts,
-    Y_in_data,
-    Y_starts,
-    Y_lens,
-    Y_data):
+        BB,
+        Ns,
+        alphas,
+        A_starts,
+        A_ldas,
+        A_data,
+        A_js_starts,
+        A_js_lens,
+        A_js_data,
+        X_starts,
+        X_data,
+        X_js_starts,
+        X_js_data,
+        betas,
+        Y_in_starts,
+        Y_in_data,
+        Y_starts,
+        Y_lens,
+        Y_data):
     for bb in xrange(BB):
         alpha = alphas[bb]
         beta = betas[bb]
@@ -52,7 +52,7 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
                        use_raw_fn=False,
                        tag=None, seq=None,
                        gamma=None
-                      ):
+                       ):
     """
     Y <- gamma + Y_in * beta + \sum_j dot(A[A_js[j]], X[X_js[j]])
     """
@@ -95,10 +95,10 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
             Y.buf)
     else:
         # -- less-close to the OpenCL impl
-        #print alpha
-        #print A.buf, 'A'
-        #print X.buf, 'X'
-        #print Y_in.buf, 'in'
+        # print alpha
+        # print A.buf, 'A'
+        # print X.buf, 'X'
+        # print Y_in.buf, 'in'
 
         for i in xrange(len(Y)):
             try:
@@ -107,16 +107,16 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
                 print i, gamma[i], beta[i], Y_in[i]
                 raise
             alpha_i = alpha[i]
-            #print 'Gemv:',
-            #print i, gamma[i], beta[i], Y_in[i].ravel(), alpha_i,
+            # print 'Gemv:',
+            # print i, gamma[i], beta[i], Y_in[i].ravel(), alpha_i,
 
-            x_js_i = X_js[i] # -- ragged getitem
-            A_js_i = A_js[i] # -- ragged getitem
+            x_js_i = X_js[i]  # -- ragged getitem
+            A_js_i = A_js[i]  # -- ragged getitem
             assert len(x_js_i) == len(A_js_i)
             for xi, ai in zip(x_js_i, A_js_i):
                 x_ij = X[xi]  # -- ragged getitem
                 A_ij = A[ai]  # -- ragged getitem
-                #print 'A =',A_ij.ravel(), 'X =', x_ij.ravel(),
+                # print 'A =',A_ij.ravel(), 'X =', x_ij.ravel(),
                 try:
                     y_i += alpha_i * np.dot(A_ij, x_ij)
                 except:
@@ -124,11 +124,10 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
                     print i, xi, ai, A_ij, x_ij
                     print y_i.shape, A_ij.shape, x_ij.shape
                     raise
-            #print '... Y <-', y_i.ravel()
+            # print '... Y <-', y_i.ravel()
             if 0:
                 if 'ai' in locals():
                     print 'Gemv writing', tag, A_ij, x_ij, y_i
                 else:
                     print 'Gemv writing', tag, y_i
             Y[i] = y_i
-

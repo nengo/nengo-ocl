@@ -73,6 +73,7 @@ def test_closures(Simulator, size_in):
 
     mult = 1.23
     power = 3.2
+
     def closures(t, x):
         return mult * x**power
 
@@ -93,6 +94,7 @@ def test_lambda_simple(Simulator):
 
 def test_lambda_class(Simulator):
     class Foo:
+
         def __init__(self, my_fn):
             self.fn = my_fn
 
@@ -127,7 +129,7 @@ def test_direct_connection(Simulator):
     b = nengo.Ensemble(nengo.Direct(0), dimensions=1)
     nengo.Connection(a, b, function=lambda x: x**2)
 
-    sim = Simulator(model)
+    Simulator(model)
 
 
 def _test_conn(Simulator, fn, size_in, dist_in=None, n=1):
@@ -169,7 +171,6 @@ def _test_conn(Simulator, fn, size_in, dist_in=None, n=1):
     # sim.step()
 
     # compare output
-    t = sim.trange()
     z = np.array([sim.data(p)[-1] for p in probes])
     assert np.allclose(z, y)
 
@@ -205,7 +206,7 @@ def test_functions(Simulator, n_points=10):
         np.log1p: U(-1, 10),
         np.log2: U(0, 10),
         np.sqrt: U(0, 10),
-        ### two-argument functions
+        # two-argument functions
         # math.ldexp: [U(-10, 10), U(-10, 10, integer=True)],
         # math.pow: [U(-10, 10), U(-10, 10, integer=True)],
         # np.ldexp: [U(-10, 10), U(-10, 10, integer=True)],
@@ -226,7 +227,7 @@ def test_functions(Simulator, n_points=10):
                 _test_conn(Simulator, wrapper, 1,
                            dist_in=arggens.get(fn, None), n=n_points)
             else:
-                ### get lambda function
+                # get lambda function
                 lambda_fn = ifuncs[fn]
                 while lambda_fn.__name__ != '<lambda>':
                     lambda_fn = ifuncs[lambda_fn]
@@ -251,7 +252,7 @@ def test_functions(Simulator, n_points=10):
                            % (fn.__name__, e.__class__.__name__, e.args))
 
     assert(all_passed, "Some functions failed, "
-                    "see logger warnings for details")
+           "see logger warnings for details")
 
 
 def test_vector_functions(Simulator):

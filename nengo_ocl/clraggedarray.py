@@ -9,6 +9,7 @@ import pyopencl as cl
 from .clarray import to_device
 from .raggedarray import RaggedArray
 
+
 def to_host(queue, data, dtype, start, shape, elemstrides):
     """Copy memory off the device, into a Numpy array"""
 
@@ -23,7 +24,7 @@ def to_host(queue, data, dtype, start, shape, elemstrides):
     itemsize = dtype.itemsize
     bytestart = itemsize * start
     # -- TODO: is there an extra element transferred here?
-    byteend = bytestart + itemsize * ((m-1) * Sm + (n-1) * Sn + 1)
+    byteend = bytestart + itemsize * ((m - 1) * Sm + (n - 1) * Sn + 1)
 
     temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
     cl.enqueue_copy(queue, temp_buf, data,
@@ -40,6 +41,7 @@ def to_host(queue, data, dtype, start, shape, elemstrides):
     except:
         raise
     return view
+
 
 class CLRaggedArray(object):
     # a linear buffer that is partitioned into
@@ -161,25 +163,22 @@ class CLRaggedArray(object):
         stride1s = self.stride1s
 
         if isinstance(item, (list, tuple)):
-            items = item
-            del item
-
             rval = self.__class__.__new__(self.__class__)
             rval.queue = self.queue
-            rval.starts = [starts[i] for i in items]
-            rval.shape0s = [shape0s[i] for i in items]
-            rval.shape1s = [shape1s[i] for i in items]
-            rval.stride0s = [stride0s[i] for i in items]
-            rval.stride1s = [stride1s[i] for i in items]
+            rval.starts = [starts[i] for i in item]
+            rval.shape0s = [shape0s[i] for i in item]
+            rval.shape1s = [shape1s[i] for i in item]
+            rval.stride0s = [stride0s[i] for i in item]
+            rval.stride1s = [stride1s[i] for i in item]
             rval.cl_buf = self.cl_buf
-            rval.names = [self.names[i] for i in items]
+            rval.names = [self.names[i] for i in item]
             return rval
         else:
             buf = to_host(
                 self.queue, self.cl_buf.data, self.dtype, self.starts[item],
                 (self.shape0s[item], self.shape1s[item]),
                 (self.stride0s[item], self.stride1s[item]),
-                )
+            )
             buf.setflags(write=False)
             return buf
 
@@ -203,7 +202,7 @@ class CLRaggedArray(object):
             itemsize = self.dtype.itemsize
             bytestart = itemsize * starts[item]
             # -- N.B. match to getitem
-            byteend = bytestart + itemsize * ((m-1) * sM + (n-1) * sN + 1)
+            byteend = bytestart + itemsize * ((m - 1) * sM + (n - 1) * sN + 1)
 
             temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
             # -- TODO: if copying into a contiguous region, this

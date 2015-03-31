@@ -3,8 +3,7 @@ import numpy as np
 import pyopencl as cl
 import pytest
 
-from  nengo_ocl import raggedarray as ra
-RA = ra.RaggedArray
+from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 
 from nengo_ocl.clra_gemv import (
@@ -24,16 +23,16 @@ def pytest_generate_tests(metafunc):
 def allclose(raA, raB):
     assert len(raA) == len(raB)
     for i in xrange(len(raA)):
-         if not np.allclose(raA[i], raB[i]):
-             return False
+        if not np.allclose(raA[i], raB[i]):
+            return False
     return True
 
 
 def test_basic():
     # -- prepare initial conditions on host
-    A = RA([ [[0.1, .2], [.3, .4]], [[.5, .6]]])
-    X = RA([ [3, 5] ])
-    Y = RA([[0.0], [2, 3],])
+    A = RA([[[0.1, .2], [.3, .4]], [[.5, .6]]])
+    X = RA([[3, 5]])
+    Y = RA([[0.0], [2, 3], ])
     A_js = RA([[1], [0]])
     X_js = RA([[0], [0]])
     alpha = 0.5
@@ -62,7 +61,7 @@ def test_basic():
     # -- ensure they match
     for i in xrange(len(A_js)):
         aj, xj = int(A_js[i]), int(X_js[i])
-        ref = alpha*np.dot(A[aj], X[xj]) + beta*Y[i]
+        ref = alpha * np.dot(A[aj], X[xj]) + beta * Y[i]
         sim = clY[i]
         assert np.allclose(ref, sim)
 
@@ -118,9 +117,9 @@ def _test_random(k=4, p=1, m=10, n=10):
 
     # -- ensure they match
     for i in xrange(k):
-        ref = beta*Y[i]
+        ref = beta * Y[i]
         for aj, xj in zip(A_js[i], X_js[i]):
-            ref += alpha*np.dot(A[aj], X[xj])
+            ref += alpha * np.dot(A[aj], X[xj])
         sim = clY[i]
         assert np.allclose(ref, sim, atol=1e-3, rtol=1e-3)
 
@@ -148,7 +147,7 @@ def check_from_shapes(
     A_shapes, X_shapes,
     A_js,
     X_js,
-    ):
+):
     rng = np.random.RandomState(1234)
     A = RA([0.1 + rng.rand(*shp) for shp in A_shapes])
     X = RA([0.1 + rng.rand(*shp) for shp in X_shapes])
@@ -180,13 +179,13 @@ def check_from_shapes(
 
     # -- ensure they match
     for i in xrange(len(A_js)):
-        #print 'gamma', gamma
-        #print 'Y[i] * beta + gamma', Y[i] * beta + gamma
-        #print A[0]
-        #print X[0]
-        #print 'AX', sum(
-            #[np.dot(A[aj], X[xj])
-             #for aj, xj in zip(A_js[i], X_js[i])])
+        # print 'gamma', gamma
+        # print 'Y[i] * beta + gamma', Y[i] * beta + gamma
+        # print A[0]
+        # print X[0]
+        # print 'AX', sum(
+        #     [np.dot(A[aj], X[xj])
+        #     for aj, xj in zip(A_js[i], X_js[i])])
         ref = gamma + beta * Y[i] + alpha * sum(
             [np.dot(A[aj], X[xj])
              for aj, xj in zip(A_js[i], X_js[i])])
@@ -207,30 +206,30 @@ def test_one_element(planner):
     check_from_shapes(
         planner,
         0.5, 0.6, 0.7,
-        A_shapes = [(1, 1)],
-        X_shapes = [(1, 1)],
-        A_js = [[0]],
-        X_js = [[0]])
+        A_shapes=[(1, 1)],
+        X_shapes=[(1, 1)],
+        A_js=[[0]],
+        X_js=[[0]])
 
 
 def test_one_short_segment(planner):
     check_from_shapes(
         planner,
         0.5, 0.6, 0.7,
-        A_shapes = [(10, 1)],
-        X_shapes = [(1, 1)],
-        A_js = [[0]],
-        X_js = [[0]])
+        A_shapes=[(10, 1)],
+        X_shapes=[(1, 1)],
+        A_js=[[0]],
+        X_js=[[0]])
 
 
 def test_one_long_segment(planner):
     check_from_shapes(
         planner,
         0.5, 0.6, 0.7,
-        A_shapes = [(2001, 1)],
-        X_shapes = [(1, 1)],
-        A_js = [[0]],
-        X_js = [[0]])
+        A_shapes=[(2001, 1)],
+        X_shapes=[(1, 1)],
+        A_js=[[0]],
+        X_js=[[0]])
 
 
 def test_one_short_segment_many_dots(planner):
@@ -238,10 +237,10 @@ def test_one_short_segment_many_dots(planner):
         check_from_shapes(
             planner,
             0.5, 0.6, 0.7,
-            A_shapes = [(10, 1 + ii % 2) for ii in range(ND)],
-            X_shapes = [(1 + ii % 2, 1) for ii in range(ND)],
-            A_js = [range(ND)],
-            X_js = [range(ND)])
+            A_shapes=[(10, 1 + ii % 2) for ii in range(ND)],
+            X_shapes=[(1 + ii % 2, 1) for ii in range(ND)],
+            A_js=[range(ND)],
+            X_js=[range(ND)])
 
 
 def test_one_short_segment_many_longer_dots(planner):
@@ -249,10 +248,10 @@ def test_one_short_segment_many_longer_dots(planner):
         check_from_shapes(
             planner,
             0.5, 0.6, 0.7,
-            A_shapes = [(2000, ii + 1) for ii in range(ND)],
-            X_shapes = [(ii + 1, 1) for ii in range(ND)],
-            A_js = [range(ND)],
-            X_js = [range(ND)])
+            A_shapes=[(2000, ii + 1) for ii in range(ND)],
+            X_shapes=[(ii + 1, 1) for ii in range(ND)],
+            A_js=[range(ND)],
+            X_js=[range(ND)])
 
 
 if __name__ == '__main__':

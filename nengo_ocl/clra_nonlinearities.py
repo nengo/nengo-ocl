@@ -73,7 +73,9 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             __global ${Ytype} *y = Ydata + Ystarts[n];
 
             const int Ysize = Yshape0s[n] * Yshape1s[n];
-            for (int ij = get_global_id(0); ij < Ysize; ij += get_global_size(0))
+            for (int ij = get_global_id(0);
+                 ij < Ysize;
+                 ij += get_global_size(0))
             {
                 int i = ij / Yshape1s[n];
                 int j = ij - i * Yshape1s[n];
@@ -116,7 +118,8 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     mn = min(max(max(Y.shape0s), max(Y.shape1s)), max_group)
     gsize = (mn, N)
     lsize = (mn, 1)
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
+    rval = Plan(
+        queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
 
@@ -140,8 +143,8 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
         assert B.shape1s[i] == 1
 
         # This currently assumes that each filter has one numerator coefficient
-        # and one denominator coefficient. Generalized filters are on the TODO list.
-        # Generalized filters will require buffering the data.
+        # and one denominator coefficient. Generalized filters are on the TODO
+        # list. Generalized filters will require buffering the data.
         assert A.shape0s[i] <= 1
         assert B.shape0s[i] == 1
 
@@ -168,7 +171,9 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
             __global const ${Btype} *b = Bdata + Bstarts[n];
 
             const int na = Ashape0s[n];
-            for (int i = get_global_id(0); i < shape0s[n]; i += get_global_size(0))
+            for (int i = get_global_id(0);
+                 i < shape0s[n];
+                 i += get_global_size(0))
             {
                 if (na == 0) {
                     y[i] = b[0] * x[i];
@@ -206,7 +211,8 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
     max_len = min(queue.device.max_work_group_size, max(X.shape0s))
     gsize = (max_len, N)
     lsize = (max_len, 1)
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
+    rval = Plan(
+        queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
 
@@ -230,9 +236,8 @@ def plan_probes(queue, periods, X, Y, tag=None):
 
     assert X.cl_buf.ocldtype == Y.cl_buf.ocldtype
 
-    ### N.B.  X[i].shape = (M, N)
-    ###       Y[i].shape = (buf_len, M * N)
-
+    # N.B.  X[i].shape = (M, N)
+    #       Y[i].shape = (buf_len, M * N)
     for i in xrange(N):
         assert X.shape0s[i] * X.shape1s[i] == Y.shape1s[i]
         assert X.stride0s[i] == X.shape1s[i]
@@ -292,8 +297,8 @@ def plan_probes(queue, periods, X, Y, tag=None):
         """
 
     textconf = dict(N=N,
-            Xtype=X.cl_buf.ocldtype,
-            Ytype=Y.cl_buf.ocldtype)
+                    Xtype=X.cl_buf.ocldtype,
+                    Ytype=Y.cl_buf.ocldtype)
     text = Template(text, output_encoding='ascii').render(**textconf)
 
     full_args = (
@@ -306,7 +311,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
         X.cl_buf,
         Y.cl_starts,
         Y.cl_buf,
-        )
+    )
     _fn = cl.Program(queue.context, text).build().fn
     _fn.set_args(*[arr.data for arr in full_args])
 
@@ -389,9 +394,9 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
 
     dt = float(dt)
     textconf = dict(upsample=upsample,
-                    dtu=dt/upsample,
-                    dtu_inv=upsample/dt,
-                    dt_inv=1/dt,
+                    dtu=dt / upsample,
+                    dtu_inv=upsample / dt,
+                    dt_inv=1 / dt,
                     V_threshold=1.)
 
     declares = """
@@ -479,7 +484,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     base = inputs.values()[0]   # input to use as reference (for lengths)
     N = len(base)
 
-    ### split parameters into static and updated params
+    # split parameters into static and updated params
     static_params = {}  # static params (hard-coded)
     params = {}  # variable params (updated)
     for k, v in parameters.items():
@@ -497,7 +502,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         assert len(v) == N
         assert all_equal(v.shape0s, base.shape0s)
 
-        ### N.B. - we should be able to ignore ldas as long as all vectors
+        # N.B. - we should be able to ignore ldas as long as all vectors
         assert all_equal(v.shape1s, 1)
 
         dtype = v.cl_buf.ocldtype
@@ -527,7 +532,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                     static_params=static_params)
 
     if n_elements > 0:
-        ### Allocate the exact number of required kernels in a vector
+        # Allocate the exact number of required kernels in a vector
         gsize = (int(np.ceil(np.sum(base.shape0s) / float(n_elements))),)
         text = """
         ////////// MAIN FUNCTION //////////
@@ -604,18 +609,18 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                 m = 0;
                 if (n >= ${N}) return;
 
-    % for name, [type, offset] in ivars.items() + ovars.items() + pvars.items():
+    % for name, [_, offset] in ivars.items() + ovars.items() + pvars.items():
                 cur_${name} = in_${name} + ${offset};
     % endfor
-    % for name, [type, offset] in pvars.items():
+    % for name, _ in pvars.items():
                 ${name}_isvector = ${name}_shape0s[n] > 1;
                 if (!${name}_isvector) ${name} = *cur_${name};
     % endfor
             } else {
-    % for name, [type, offset] in ivars.items() + ovars.items():
+    % for name, _ in ivars.items() + ovars.items():
                 cur_${name}++;
     % endfor
-    % for name, [type, offset] in pvars.items():
+    % for name, _ in pvars.items():
                 if (${name}_isvector) cur_${name}++;
     % endfor
             }
@@ -624,7 +629,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         }
         """
     else:
-        ### Allocate more than enough kernels in a matrix
+        # Allocate more than enough kernels in a matrix
         gsize = (int(np.max(base.shape0s)), int(N))
         text = """
         ////////// MAIN FUNCTION //////////

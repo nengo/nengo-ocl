@@ -5,6 +5,7 @@ Numpy implementation of RaggedArray data structure.
 import StringIO
 import numpy as np
 
+
 def shape0(obj):
     try:
         # assert obj.shape[0] -- empty lists are OK
@@ -15,19 +16,25 @@ def shape0(obj):
 
 def shape1(obj):
     try:
-        assert obj.shape[1]  #-- sanity check, should never be 0
+        assert obj.shape[1]  # -- sanity check, should never be 0
         return obj.shape[1]
     except IndexError:
         return 1
 
 
 def allclose(a, b, atol=1e-3, rtol=1e-3):
-    if not np.allclose(a.starts, b.starts): return False
-    if not np.allclose(a.shape0s, b.shape0s): return False
-    if not np.allclose(a.shape1s, b.shape1s): return False
-    if not np.allclose(a.stride0s, b.stride0s): return False
-    if not np.allclose(a.stride1s, b.stride1s): return False
-    if not np.allclose(a.buf, b.buf, atol=atol, rtol=rtol): return False
+    if not np.allclose(a.starts, b.starts):
+        return False
+    if not np.allclose(a.shape0s, b.shape0s):
+        return False
+    if not np.allclose(a.shape1s, b.shape1s):
+        return False
+    if not np.allclose(a.stride0s, b.stride0s):
+        return False
+    if not np.allclose(a.stride1s, b.stride1s):
+        return False
+    if not np.allclose(a.buf, b.buf, atol=atol, rtol=rtol):
+        return False
     return True
 
 
@@ -35,6 +42,7 @@ class RaggedArray(object):
     # a linear buffer that is partitioned into
     # sections of various lengths.
     #
+
     @property
     def dtype(self):
         return self.buf.dtype
@@ -98,9 +106,9 @@ class RaggedArray(object):
         return rval
 
     def add_views(self, starts, shape0s, shape1s, stride0s, stride1s,
-        names=None):
-        #assert start >= 0
-        #assert start + length <= len(self.buf)
+                  names=None):
+        # assert start >= 0
+        # assert start + length <= len(self.buf)
         # -- creates copies, same semantics
         #    as OCL version
         assert 0 not in shape0s
@@ -167,18 +175,17 @@ class RaggedArray(object):
         start = idxs[0]
         if idxs != range(start, start + len(idxs)):
             raise NotImplementedError('non-contiguous indexes')
-        total_len = 0
         start_offset = self.starts[start]
         stop_offset = (self.starts[idxs[-1]]
-            + self.shape0s[idxs[-1]] * self.shape1s[idxs[-1]])
+                       + self.shape0s[idxs[-1]] * self.shape1s[idxs[-1]])
         for ii in idxs:
             if self.ldas[ii] != self.shape0s[ii]:
                 raise NotImplementedError('non-contiguous element',
-                        (ii, self.ldas[ii], self.shape0s[ii],
-                            self.shape1s[ii]))
+                                          (ii, self.ldas[ii], self.shape0s[ii],
+                                           self.shape1s[ii]))
             if ii != idxs[-1]:
-                if self.starts[ii + 1] != (self.starts[ii] +
-                        self.shape0s[ii] * self.shape1s[ii]):
+                if self.starts[ii + 1] != (
+                        self.starts[ii] + self.shape0s[ii] * self.shape1s[ii]):
                     raise NotImplementedError('gap between elements', ii)
         itemsize = self.dtype.itemsize
         byteoffset = itemsize * start_offset
@@ -200,7 +207,6 @@ class RaggedArray(object):
 
             raise
         return view
-
 
     def __setitem__(self, item, val):
         try:

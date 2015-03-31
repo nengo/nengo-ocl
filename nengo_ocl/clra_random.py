@@ -38,26 +38,9 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
-
-import numpy as np
 import pyopencl as cl
 from plan import Plan
 from mako.template import Template
-# from clarray import to_device
-from .clraggedarray import CLRaggedArray
-from .clra_nonlinearities import _plan_template
-
-
-def get_norm(ocldtype):
-    if ocldtype == 'float':
-        # otype = 'float'
-        NORM = '4.6566126e-10f'  # numpy.float32(1.0/(2**31+65))
-        # this was determined by finding the biggest number such that
-        # numpy.float32(number * M1) < 1.0
-    else:
-        # otype = 'double'
-        NORM = '4.656612873077392578125e-10'
-    return NORM
 
 
 def get_sample_constants():
@@ -82,7 +65,7 @@ def get_sample_constants():
 def get_sample_code(ocldtype, oname='sample'):
     """Implements the MRG31k3p random number generator.
 
-    Adapted from Theano under their license (reprinted at the top of this file).
+    Adapted from Theano under their license (reprinted above).
     """
     if ocldtype == 'float':
         norm = '4.6566126e-10f'  # numpy.float32(1.0/(2**31+65))
@@ -92,7 +75,8 @@ def get_sample_code(ocldtype, oname='sample'):
         norm = '4.656612873077392578125e-10'
 
     return """
-    y1 = ((x12 & MASK12) << i22) + (x12 >> i9) + ((x13 & MASK13) << i7) + (x13 >> i24);
+    y1 = ((x12 & MASK12) << i22) + (x12 >> i9)
+       + ((x13 & MASK13) << i7) + (x13 >> i24);
     y1 -= (y1 < 0 || y1 >= M1) ? M1 : 0;
     y1 += x13;
     y1 -= (y1 < 0 || y1 >= M1) ? M1 : 0;
@@ -202,7 +186,8 @@ def plan_rand(queue, state, samples, tag=None):
     assert n_streams <= queue.device.max_work_group_size
     gsize = (n_streams, nY)
     lsize = (n_streams, 1)
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
+    rval = Plan(
+        queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
 
@@ -284,7 +269,9 @@ def plan_randn(queue, state, samples, tag=None):
 
     textconf = dict(
         Ytype=ocldtype, n_streams=n_streams, nY=nY,
-        sample_constants=sample_constants, sample_code0=sample_code0, sample_code1=sample_code1)
+        sample_constants=sample_constants,
+        sample_code0=sample_code0,
+        sample_code1=sample_code1)
     text = Template(text, output_encoding='ascii').render(**textconf)
 
     full_args = (
@@ -301,6 +288,7 @@ def plan_randn(queue, state, samples, tag=None):
     assert n_streams <= queue.device.max_work_group_size
     gsize = (n_streams, nY)
     lsize = (n_streams, 1)
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
+    rval = Plan(
+        queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval

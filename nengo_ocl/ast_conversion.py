@@ -15,15 +15,21 @@ TODO:
 """
 
 import __builtin__
-import inspect, ast, collections
-import numpy as np
+import ast
+import collections
+import inspect
 import math
+
+import numpy as np
+
 
 def number(x):
     return isinstance(x, (int, float))
 
+
 def iterable(x):
     return isinstance(x, collections.Iterable)
+
 
 def symbolic(x):
     return isinstance(x, Expression) or (
@@ -46,15 +52,15 @@ infix_binary_ops = {
     ast.NotEq: '!=',
     ast.Or: '||',
     ast.Sub: '-',
-    }
+}
 
 prefix_unary_ops = {
     ast.Not: '!',
     ast.UAdd: '',
     ast.USub: '-',
-    }
+}
 
-### list of functions that we can map directly onto OCL (all unary)
+# list of functions that we can map directly onto OCL (all unary)
 direct_funcs = {
     abs: 'fabs',
     math.acos: 'acos',
@@ -112,10 +118,10 @@ direct_funcs = {
     np.sqrt: 'sqrt',
     np.tan: 'tan',
     np.tanh: 'tanh',
-    }
+}
 
-### List of functions that are supported, but cannot be directly mapped onto
-### a unary OCL function
+# List of functions that are supported, but cannot be directly mapped onto
+# a unary OCL function
 indirect_funcs = {
     math.atan2: lambda x, y: FuncExp('atan2', x, y),
     # math.copysign: TODO,
@@ -154,9 +160,9 @@ indirect_funcs = {
     np.less: lambda x, y: BinExp(x, '<', y),
     np.less_equal: lambda x, y: BinExp(x, '<=', y),
     np.logaddexp: lambda x, y: FuncExp(
-            'log', BinExp(FuncExp('exp', x), '+', FuncExp('exp', y))),
+        'log', BinExp(FuncExp('exp', x), '+', FuncExp('exp', y))),
     np.logaddexp2: lambda x, y: FuncExp(
-            'log2', BinExp(FuncExp('exp2', x), '+', FuncExp('exp2', y))),
+        'log2', BinExp(FuncExp('exp2', x), '+', FuncExp('exp2', y))),
     # np.logical_and: lambda x, y: BinExp(x, '&&', y),
     # np.logical_not: lambda x: UnaryExp('!', x),
     # np.logical_or: lambda x, y: BinExp(x, '||', y),
@@ -182,25 +188,32 @@ indirect_funcs = {
     np.signbit: lambda x: BinExp(x, '<', NumExp(0)),
     np.square: lambda x: BinExp(x, '*', x),
     np.subtract: lambda x, y: BinExp(x, '-', y),
-    }
+}
+
 
 def _recurse_binexp(op, x):
     return BinExp(x[0], op, _recurse_binexp(op, x[1:])) if len(x) > 1 else x[0]
 
+
 def _all_func(x):
     return _recurse_binexp('&&', x)
+
 
 def _any_func(x):
     return _recurse_binexp('||', x)
 
+
 def _max_func(x):
     return FuncExp('max', x[0], _max_func(x[1:])) if len(x) > 1 else x[0]
+
 
 def _min_func(x):
     return FuncExp('min', x[0], _min_func(x[1:])) if len(x) > 1 else x[0]
 
+
 def _prod_func(x):
     return _recurse_binexp('*', x)
+
 
 def _sum_func(x):
     return _recurse_binexp('+', x)
@@ -217,12 +230,13 @@ vector_funcs = {
     np.min: _min_func,
     np.prod: _prod_func,
     np.sum: _sum_func,
-    }
+}
 
 OUTPUT_NAME = "OUTPUT__"
 
 
 class Expression(object):
+
     """Represents a numerical expression"""
 
     def _init_expr(self, expr):
@@ -242,6 +256,7 @@ class Expression(object):
 
 
 class VarExp(Expression):
+
     def __init__(self, name):
         self.name = name
 
@@ -250,13 +265,14 @@ class VarExp(Expression):
 
 
 class NumExp(Expression):
+
     def __init__(self, value):
         self.value = value
 
     def to_ocl(self, wrap=False):
         if isinstance(self.value, float):
-            ### Append an 'f' to floats, o.w. some calls (e.g. pow) ambiguous
-            ### TODO: can we get around putting the 'f' afterwards?
+            # Append an 'f' to floats, o.w. some calls (e.g. pow) ambiguous
+            # TODO: can we get around putting the 'f' afterwards?
             return "%sf" % self.value
         elif isinstance(self.value, bool):
             return "1" if self.value else "0"
@@ -265,6 +281,7 @@ class NumExp(Expression):
 
 
 class UnaryExp(Expression):
+
     def __init__(self, op, right):
         assert isinstance(right, Expression)
         self.op, self.right = op, right
@@ -296,6 +313,7 @@ class UnaryExp(Expression):
 
 
 class BinExp(Expression):
+
     def __init__(self, left, op, right):
         assert isinstance(right, Expression) and isinstance(left, Expression)
         self.left, self.op, self.right = left, op, right
@@ -303,7 +321,7 @@ class BinExp(Expression):
     def simplify(self):
         left, op, right = self.left, self.op, self.right
         if (isinstance(left, NumExp) and isinstance(right, NumExp)
-            and not isinstance(op, str)):
+                and not isinstance(op, str)):
             # simplify and return NumExp
             a = self._init_expr(ast.Num(left.value))
             b = self._init_expr(ast.Num(right.value))
@@ -343,6 +361,7 @@ class BinExp(Expression):
 
 
 class FuncExp(Expression):
+
     def __init__(self, fn, *args):
         self.fn = fn
         self.args = args
@@ -358,8 +377,8 @@ class FuncExp(Expression):
                  for a in self.args):
             # simplify vector function
             return NumExp(self.fn(
-                    [[aa.value for aa in a] if iterable(a) else a.value
-                     for a in self.args]))
+                [[aa.value for aa in a] if iterable(a) else a.value
+                 for a in self.args]))
         else:
             return self  # cannot simplify
 
@@ -379,18 +398,19 @@ class FuncExp(Expression):
                     converter = indirect_funcs[converter]
             else:
                 raise NotImplementedError(
-                "'%s' function is not supported" % (fn.__name__))
+                    "'%s' function is not supported" % (fn.__name__))
 
             if converter.func_code.co_argcount != len(args):
                 raise NotImplementedError(
                     "'%s' function is not supported for %d arguments"
-                    % (handle.__name__, len(args)))
+                    % (fn.__name__, len(args)))
 
             exp = converter(*args)
             return exp.to_ocl(wrap=wrap)
 
 
 class IfExp(Expression):
+
     def __init__(self, cond, true, false):
         self.cond, self.true, self.false = cond, true, false
 
@@ -443,12 +463,12 @@ class OCL_Translator(ast.NodeVisitor):
 
         # self.init: key=local variable name, value=initialization statement
         self.init = collections.OrderedDict()
-        self.temp_names = collections.OrderedDict() # for comprehensions
+        self.temp_names = collections.OrderedDict()  # for comprehensions
 
-        ### parse and make code
+        # parse and make code
         a = ast.parse(source)
         ff = Function_Finder()
-        ff.visit(a);
+        ff.visit(a)
         function_def = ff.fn_node
 
         self.arg_names = [arg.id for arg in function_def.args.args]
@@ -468,7 +488,8 @@ class OCL_Translator(ast.NodeVisitor):
                 self.function_name = "<lambda>"
 
             self.arg_names = [arg.id for arg in function_def.args.args]
-            r = ast.Return() #wrap lambda expression to look like a one-line function
+            # wrap lambda expression to look like a one-line function
+            r = ast.Return()
             r.value = function_def.body
             r.lineno = 1
             r.col_offset = 4
@@ -504,7 +525,7 @@ class OCL_Translator(ast.NodeVisitor):
         elif name in self.arg_names:
             dim = self.arg_dims[self.arg_names.index(name)]
             assert dim is not None, (
-                "Must provide input dimensionality to use vectorized arguments")
+                "Must provide input dimensionality for vectorized arguments")
             self._check_vector_length(dim)
             return [VarExp('%s[%d]' % (name, i)) for i in xrange(dim)]
         elif name in self.init:
@@ -667,13 +688,14 @@ class OCL_Translator(ast.NodeVisitor):
     def visit_Print(self, expr):
         assert expr.dest is None, "other dests not implemented"
         if (len(expr.values) == 1
-            and isinstance(expr.values[0], ast.BinOp)
-            and isinstance(expr.values[0].op, ast.Mod)
-            and isinstance(expr.values[0].left, ast.Str)):
+                and isinstance(expr.values[0], ast.BinOp)
+                and isinstance(expr.values[0].op, ast.Mod)
+                and isinstance(expr.values[0].left, ast.Str)):
             # we're using string formatting
             stmt = self.visit(expr.values[0].left)[:-1] + '\\n"'
             if isinstance(expr.values[0].right, ast.Tuple):
-                args = [str(self.visit(arg)) for arg in expr.values[0].right.elts]
+                args = [str(self.visit(arg))
+                        for arg in expr.values[0].right.elts]
             else:
                 args = [str(self.visit(expr.values[0].right))]
             return ["printf(%s);" % ', '.join([stmt] + args)]
@@ -755,6 +777,7 @@ class OCL_Translator(ast.NodeVisitor):
             block.extend(self.visit(expr))
         return block
 
+
 def strip_leading_whitespace(source):
     lines = source.splitlines()
     assert len(lines) > 0
@@ -765,7 +788,9 @@ def strip_leading_whitespace(source):
     else:
         return source
 
+
 class OCL_Function(object):
+
     def __init__(self, fn, in_dims=None, out_dim=None):
         if in_dims is not None and not iterable(in_dims):
             in_dims = [in_dims]
@@ -786,7 +811,8 @@ class OCL_Function(object):
             assert len(self.in_dims) == 1, (
                 "Raw functions can only have one input")
             function = self.fn
-            def wrapper(x): # need a wrapper to copy variables
+
+            def wrapper(x):  # need a wrapper to copy variables
                 return function(x)
             fn = wrapper
         else:
@@ -814,9 +840,9 @@ class OCL_Function(object):
         lines = []
         for b in blocks:
             if isinstance(b, list):
-                lines.extend(self._flatten(b, indent+4))
+                lines.extend(self._flatten(b, indent + 4))
             else:
-                lines.append("".join([" "]*indent) + b)
+                lines.append("".join([" "] * indent) + b)
         return lines
 
     @property
@@ -843,15 +869,17 @@ if __name__ == '__main__':
 
     print
     print '*' * 5 + 'List-return' + '*' * 50
+
     def func(t):
         # return list(range(1, 10))
-        return [1,2,3]
+        return [1, 2, 3]
     ocl_fn = OCL_Function(func, in_dims=(1,))
     print ocl_fn.init
     print ocl_fn.code
 
     print
     print '*' * 5 + 'Multi-arg' + '*' * 50
+
     def func(t, x):
         return t + x[:2] + x[2]
     ocl_fn = OCL_Function(func, in_dims=(1, 3))
@@ -860,8 +888,9 @@ if __name__ == '__main__':
 
     print
     print '*' * 5 + 'Simplify' + '*' * 50
+
     def func(y):
-        return y + np.sin([1,2,3])
+        return y + np.sin([1, 2, 3])
 
     ocl_fn = OCL_Function(func, in_dims=(1,))
     print ocl_fn.init
@@ -905,7 +934,8 @@ if __name__ == '__main__':
 
     # print '*' * 5 + 'List comprehension' + '*' * 50
     # insert = -0.5
-    # func = lambda x: [np.maximum(0.1, np.sin(2)) * x[4 - i] for i in xrange(5)]
+    # func = lambda x: [
+    #     np.maximum(0.1, np.sin(2)) * x[4 - i] for i in xrange(5)]
     # ocl_fn = OCL_Function(func, in_dim=5)
     # print ocl_fn.init
     # print ocl_fn.code

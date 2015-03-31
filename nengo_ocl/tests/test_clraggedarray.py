@@ -1,11 +1,9 @@
-import logging
 import numpy as np
 import pyopencl as cl
 import pytest
 
-from nengo_ocl.ra_gemv import ragged_gather_gemv
 from nengo_ocl import raggedarray as ra
-RA = ra.RaggedArray
+from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 
 
@@ -15,7 +13,7 @@ ctx = cl.create_some_context()
 def make_random_pair(n, d=1, low=20, high=40):
     """Helper to make a pair of RaggedArrays, one host and one device"""
     shapes = zip(*(np.random.randint(low=low, high=high, size=n).tolist()
-                 for dd in xrange(d)))
+                   for dd in xrange(d)))
     vals = [np.random.normal(size=shape) for shape in shapes]
     A = RA(vals)
 
@@ -34,7 +32,6 @@ def test_unit():
 
 
 def test_small():
-    n = 3
     sizes = [3] * 3
     vals = [np.random.normal(size=size) for size in sizes]
     A = RA(vals)
@@ -66,7 +63,7 @@ def test_getitem():
 def test_getitems():
     """Try getting multiple items using a list of indices"""
     A, clA = make_random_pair(10, 2)
-    s = [1,3,7,8]
+    s = [1, 3, 7, 8]
     assert ra.allclose(A[s], clA[s].to_host())
 
 

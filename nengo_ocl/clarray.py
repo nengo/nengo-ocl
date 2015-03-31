@@ -2,9 +2,10 @@ import numpy as np
 import pyopencl as cl
 import pyopencl.array as cl_array
 
-# XXX: use cl.array.Array, which has strides, flags
 
+# XXX: use cl.array.Array, which has strides, flags
 class Array(cl_array.Array):
+
     def __init__(self, queue, shape, dtype, order='C', allocator=None,
                  data=None, strides=None, offset=0):
         try:
@@ -44,10 +45,10 @@ class Array(cl_array.Array):
                 shape.pop(dim)
                 strides.pop(dim)
             return self.__class__(
-                    self.queue, shape, self.dtype,
-                    data=self.data,
-                    strides=strides,
-                    offset=offset)
+                self.queue, shape, self.dtype,
+                data=self.data,
+                strides=strides,
+                offset=offset)
         elif isinstance(item, slice):
             return self.__getitem__((item,))
         elif isinstance(item, (int, np.integer)):
@@ -59,10 +60,10 @@ class Array(cl_array.Array):
             strides = self.strides[1:]
             offset = self.offset + item * self.strides[0]
             return self.__class__(
-                    self.queue, shape, self.dtype,
-                    data=self.data,
-                    strides=strides,
-                    offset=offset)
+                self.queue, shape, self.dtype,
+                data=self.data,
+                strides=strides,
+                offset=offset)
         else:
             raise NotImplementedError(item)
 
@@ -79,7 +80,7 @@ class Array(cl_array.Array):
             raise TypeError()
 
     def same_view_as(self, other):
-        return ( self.data is other.offset
+        return (self.data is other.offset
                 and self.offset == other.offset
                 and self.strides == other.strides
                 and self.shape == other.shape
@@ -97,15 +98,15 @@ class Array(cl_array.Array):
         # XXX consider whether to allocate just enough for data
         # or keep using the full buffer.
         data = cl.Buffer(self.data.context,
-            flags=cl.mem_flags.READ_WRITE,
-            size=self.data.size)
+                         flags=cl.mem_flags.READ_WRITE,
+                         size=self.data.size)
         return Array(self.queue,
                      shape=self.shape,
                      dtype=self.dtype,
                      data=data,
                      strides=self.strides,
                      offset=self.offset,
-                    )
+                     )
 
     def transpose(self, *new_order):
         assert set(new_order) == set(range(self.ndim))
@@ -117,8 +118,7 @@ class Array(cl_array.Array):
                      data=self.data,
                      strides=new_strides,
                      offset=self.offset,
-                    )
-
+                     )
 
     # TODO: call this ctype, use cl.tools.dtype_to_ctype
     @property
@@ -137,17 +137,19 @@ class Array(cl_array.Array):
         if queue is None:
             queue = self.queue
         hostbuf = np.empty(shape=(self.data.size,), dtype='int8')
-        #print self.data.size
-        #print hostbuf.shape
+        # print self.data.size
+        # print hostbuf.shape
         assert self.data.size >= self.size * self.dtype.itemsize
-        #print self.structure, hostbuf.size
+        # print self.structure, hostbuf.size
         cl.enqueue_copy(queue, hostbuf, self.data)
         queue.flush()
         try:
             rval = np.ndarray(buffer=hostbuf, strides=self.strides,
-                          offset=self.offset, shape=self.shape, dtype=self.dtype)
+                              offset=self.offset, shape=self.shape,
+                              dtype=self.dtype)
         except:
-            import pdb; pdb.set_trace()
+            import pdb
+            pdb.set_trace()
         return rval
 
 
@@ -162,6 +164,7 @@ def ocldtype(obj):
         }[obj]
     else:
         raise NotImplementedError('ocldtype', obj)
+
 
 # consider array.to_device
 def to_device(queue, arr, flags=cl.mem_flags.READ_WRITE):
@@ -181,7 +184,7 @@ def to_device(queue, arr, flags=cl.mem_flags.READ_WRITE):
 
 # consider array.empty
 def empty(queue, shape, dtype, flags=cl.mem_flags.READ_WRITE,
-        strides=None, order='C'):
+          strides=None, order='C'):
 
     dtype = np.dtype(dtype)
 

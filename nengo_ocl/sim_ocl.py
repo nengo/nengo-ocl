@@ -6,7 +6,7 @@ import numpy as np
 import pyopencl as cl
 
 from nengo.dists import Uniform, Gaussian
-from nengo.neurons import LIF, LIFRate, Direct
+from nengo.neurons import LIF, LIFRate
 from nengo.processes import StochasticProcess
 from nengo.synapses import LinearFilter, Alpha, Lowpass
 from nengo.utils.compat import OrderedDict
@@ -67,8 +67,8 @@ class Simulator(sim_npy.Simulator):
         for p in probe_plans:
             self._plandict[p] = deps
         self._dag = DAG(context, self.step_marker,
-                           self._plandict,
-                           self.profiling)
+                        self._plandict,
+                        self.profiling)
 
     def plan_op_group(self, *args):
         # -- HACK: SLOWLY removing sim_npy from the project...
@@ -94,9 +94,9 @@ class Simulator(sim_npy.Simulator):
         return [plan_elementwise_inc(self.queue, A, X, Y)]
 
     def plan_SimPyFunc(self, ops):
-        ### TODO: test with a hybrid program (Python and OCL)
+        # TODO: test with a hybrid program (Python and OCL)
 
-        ### group nonlinearities
+        # group nonlinearities
         unique_ops = collections.OrderedDict()
         for op in ops:
             # assert op.n_args in (1, 2), op.n_args
@@ -106,7 +106,7 @@ class Simulator(sim_npy.Simulator):
             unique_ops[op_key]['in'].append(op.x)
             unique_ops[op_key]['out'].append(op.output)
 
-        ### make plans
+        # make plans
         plans = []
         for (fn, t_in, x_in), signals in unique_ops.items():
             fn_name = fn.__name__
@@ -115,7 +115,8 @@ class Simulator(sim_npy.Simulator):
 
             # check signal input and output shape (implicitly checks
             # for indexing errors)
-            vector_dims = lambda shape, dim: len(shape) == 1 and shape[0] == dim
+            vector_dims = lambda shape, dim: len(
+                shape) == 1 and shape[0] == dim
             unit_stride = lambda es: len(es) == 1 and es[0] == 1
 
             if x_in:
@@ -133,8 +134,7 @@ class Simulator(sim_npy.Simulator):
                 assert vector_dims(sig_out.shape, out_dim)
                 assert unit_stride(sig_out.elemstrides)
 
-            ### try to get OCL code
-            code = None
+            # try to get OCL code
             try:
                 # in_dims = (1, in_dim) if n_args == 2 else (1, )
                 in_dims = [1] if t_in else []
@@ -144,10 +144,10 @@ class Simulator(sim_npy.Simulator):
                 inputs = []
                 if t_in:  # append time
                     inputs.append(self.all_data[
-                            [self.sidx[self._time] for i in signals['out']]])
+                        [self.sidx[self._time] for i in signals['out']]])
                 if x_in:  # append x
                     inputs.append(self.all_data[
-                            [self.sidx[i] for i in signals['in']]])
+                        [self.sidx[i] for i in signals['in']]])
                 output = self.all_data[[self.sidx[i] for i in signals['out']]]
                 plan = plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
                                    input_names, inputs, output, tag=fn_name)
@@ -193,7 +193,8 @@ class Simulator(sim_npy.Simulator):
 
                     return step
 
-                plans.append(PythonPlan(make_step(), name=fn_name, tag=fn_name))
+                plans.append(
+                    PythonPlan(make_step(), name=fn_name, tag=fn_name))
 
         return plans
 
@@ -266,16 +267,19 @@ class Simulator(sim_npy.Simulator):
 
         ops, badops = split(ops, lambda x: x.__class__ is StochasticProcess)
         if len(badops) > 0:
-            raise NotImplementedError("Can only simulate StochasticProcess base class")
+            raise NotImplementedError(
+                "Can only simulate StochasticProcess base class")
 
         ops, badops = split(ops, lambda x: x.synapse is None)
         if len(badops) > 0:
-            raise NotImplementedError("Can only simulate noise with no synapse")
+            raise NotImplementedError(
+                "Can only simulate noise with no synapse")
 
         uniform, ops = split(ops, lambda x: isinstance(x.dist, Uniform))
         gaussian, ops = split(ops, lambda x: isinstance(x.dist, Gaussian))
         if len(ops) > 0:
-            raise NotImplementedError("Can only simulate Uniform or Gaussian noise")
+            raise NotImplementedError(
+                "Can only simulate Uniform or Gaussian noise")
 
         raise NotImplementedError("TODO")
 
@@ -347,10 +351,10 @@ class Simulator(sim_npy.Simulator):
         """
         Parameters
         ----------
-        sort : indicates the column to sort by (negative number sorts ascending)
+        sort : column to sort by (negative number sorts ascending)
             (0 = n_calls, 1 = runtime, 2 = q-time, 3 = subtime)
         """
-        ### make and sort table
+        # make and sort table
         table = []
         unknowns = []
         for p in self._dag.order:
@@ -377,7 +381,7 @@ class Simulator(sim_npy.Simulator):
             reverse = sort >= 0
             table.sort(key=lambda x: x[abs(sort)], reverse=reverse)
 
-        ### printing
+        # printing
         print '-' * 80
         print '%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'GF/s', 'GB/s')
 

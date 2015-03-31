@@ -6,10 +6,11 @@ PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 
 class BasePlan(object):
+
     def __init__(self, name="", tag="",
                  flops_per_call=None,
                  bw_per_call=None
-                ):
+                 ):
         self.name = name
         self.tag = tag
         self.atimes = []
@@ -26,10 +27,11 @@ class BasePlan(object):
             self.__class__.__name__,
             self.name,
             self.tag,
-            )
+        )
 
 
 class PythonPlan(BasePlan):
+
     def __init__(self, function, **kwargs):
         super(PythonPlan, self).__init__(**kwargs)
         self.function = function
@@ -47,6 +49,7 @@ class PythonPlan(BasePlan):
 
 
 class Plan(BasePlan):
+
     def __init__(self, queue, kern, gsize, lsize, **kwargs):
         super(Plan, self).__init__(**kwargs)
         assert 0 not in gsize, gsize
@@ -88,12 +91,13 @@ class Plan(BasePlan):
             self.queue,
             self.kern,
             self.gsize,
-            self.lsize, 
+            self.lsize,
             self.tag,
             self.name)
 
 
 class Marker(Plan):
+
     def __init__(self, queue):
         dummy = cl.Program(queue.context, """
         __kernel void dummy() {}
@@ -102,6 +106,7 @@ class Marker(Plan):
 
 
 class DAG(object):
+
     def __init__(self, context, marker, plandict, profiling, overlap=False):
         self.overlap = overlap
         self.context = context
@@ -119,8 +124,8 @@ class DAG(object):
                 self.clients[other].append(plan)
                 self.dg.add_edge(other, plan)
         self.order = nx.topological_sort(self.dg)
-        #for plan in self.order:
-            #print 'order', plan
+        # for plan in self.order:
+        # print 'order', plan
 
     def __call__(self):
         return self.call_n_times(1)
@@ -158,6 +163,7 @@ class DAG(object):
         boundary = self.marker.enqueue()
         all_evs = [boundary]
         stuff = []
+
         def remember(obj):
             stuff.append(obj)
         for ii in range(n):
@@ -168,7 +174,7 @@ class DAG(object):
                     tmp = [boundary] + preconditions[plan]
                 else:
                     tmp = None
-                #print 'tmp', tmp
+                # print 'tmp', tmp
                 ev = plan.enqueue(wait_for=tmp)
                 plan.queue.flush()
                 for client in self.clients[plan]:
@@ -182,7 +188,3 @@ class DAG(object):
             # -- the last `ev` we created
             boundary = ev
         return boundary, (all_evs, stuff)
-
-
-
-

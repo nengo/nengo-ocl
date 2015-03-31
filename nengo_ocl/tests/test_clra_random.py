@@ -1,18 +1,13 @@
 import logging
 import numpy as np
 import pyopencl as cl
-import pytest
 
-import nengo
-from nengo.neurons import LIF, LIFRate, Direct
 from nengo.utils.testing import Timer
 
-from nengo_ocl.ra_gemv import ragged_gather_gemv
-from nengo_ocl import raggedarray as ra
 from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 
-from nengo_ocl.clra_random import *
+from nengo_ocl.clra_random import plan_rand, plan_randn
 
 
 ctx = cl.create_some_context()
