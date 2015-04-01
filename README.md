@@ -2,9 +2,10 @@ OpenCL-based Nengo Simulator
 ============================
 
 This project is an OpenCL-based simulator for
-brain models built from NEural ENGineering Objects in
-[Nengo](https://github.com/ctn-waterloo/nengo). It can be orders of magnitude
+brain models built using [Nengo](https://github.com/nengo/nengo).
+It can be orders of magnitude
 faster than the default simulator in `nengo` for large models.
+
 
 Usage
 -----
@@ -35,30 +36,44 @@ print sim.data('A')
 ```
 
 
-Dependencies
-------------
+Dependencies and Installation
+-----------------------------
 
 General:
 * Python 2.6 or better (Python 3 untested)
 * One or more OpenCL implementations (test with e.g. PyOpenCl)
 
 Python packages:
-
-* mako
+* NumPy
 * nengo
 * networkx
-* NumPy
+* mako
 * PyOpenCL
 
+First, install [Nengo](http://github.com/nengo/nengo) from `pip`.
+For best performance, make sure a fast version of Numpy is installed
+by following the instructions in the
+[Nengo README](http://github.com/nengo/nengo/blob/master/README.rst).
+Currently, `nengo_ocl` is compatible with Nengo 2.0.1,
+supporting most features.
+
+Once Nengo is installed, install the remaining dependencies
 ```bash
-( set -e ; for PCK in networkx numpy mako pyopencl ; do pip install $PCK ; done )
+pip install networkx mako pyopencl
 ```
 
-Until Nengo has an official release, please use the Nengo compatibility branch
-
+This repository can then be installed by downloading the source
+and running
 ```bash
-git clone https://github.com/ctn-waterloo/nengo -b nengoocl-compat
+python setup.py install
 ```
+in the main directory.
+
+All the above commands may require
+`sudo` (if you keep your Python libraries in a root folder)
+or `--user` (if you keep your Python libraries in your home folder).
+The recommended option is to use a
+[virtualenv](https://virtualenv.pypa.io/en/latest/).
 
 
 Install Intel OCL on Debian/Ubuntu Linux
@@ -109,11 +124,14 @@ Details: http://software.intel.com/en-us/forums/topic/390630
     sudo ldconfig
     ```
 
+
 Install AMD OCL on Debian/Ubuntu Linux
 --------------------------------------
+
 Can be easy: AMD provides binary drivers and wants people to use OCL.
 [Instructions on PyOpenCL
 wiki](http://wiki.tiker.net/PyOpenCL/Installation/Linux/Ubuntu)
+
 
 Install AMD OCL on Debian Unstable
 ----------------------------------
@@ -127,14 +145,15 @@ But if you're using a virtual environment, you can
 amd-opencl-icd amd-libopencl1`
 and then `pip install pyopencl`.
 
+
 Install Nvidia OCL on Debian/Ubuntu Linux
 --------------------------------------
+
 Debian (at least the rolling "sid" distribution)
 provides easily-installable .deb files for OpenCL:
 
-```
+```bash
 sudo apt-get install nvidia-opencl-common nvidia-libopencl1
-
 ```
 
 Ensure that the nvidia driver version matches the opencl library version.
