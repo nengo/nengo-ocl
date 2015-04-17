@@ -509,6 +509,8 @@ class OCL_Translator(ast.NodeVisitor):
                 var = var.tolist()
             self._check_vector_length(len(var))
             return [self._parse_var(v) for v in var]
+        elif isinstance(var, slice):
+            return var
         else:
             raise NotImplementedError(
                 "Python objects of type %s are not supported" %
@@ -548,6 +550,10 @@ class OCL_Translator(ast.NodeVisitor):
             return None
         else:
             index = self.visit(ast_num)
+            if isinstance(index, slice):
+                # happens if index is a name referring to a slice
+                return index
+
             assert isinstance(index, NumExp), "Index must be a number"
             assert isinstance(index.value, int), "Index must be an integer"
             return index.value

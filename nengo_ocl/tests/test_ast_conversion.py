@@ -9,6 +9,7 @@ from nengo.dists import Uniform
 
 import nengo_ocl
 import nengo_ocl.ast_conversion as ast_conversion
+from nengo_ocl.ast_conversion import OCL_Function
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,24 @@ def OclSimulator(*args, **kwargs):
 
 def pytest_funcarg__Simulator(request):
     return OclSimulator
+
+
+def test_slice():
+    s = slice(1, None)
+    def func(x):
+        return x[s]
+    ocl_fn = OCL_Function(func, in_dims=(3,))
+    assert ocl_fn.code  # assert that we can make the code (no exceptions)
+
+
+@pytest.mark.xfail  # see https://github.com/nengo/nengo_ocl/issues/54
+def test_nested():
+    f = lambda x: x**2
+    def func(x):
+        return f(x)
+    ocl_fn = OCL_Function(func, in_dims=(3,))
+    print ocl_fn.init
+    print ocl_fn.code
 
 
 def _test_node(Simulator, fn, size_in=0):
@@ -122,6 +141,7 @@ def test_lambda_double(Simulator):
         _test_node(Simulator, d, size_in=1)
 
 
+@pytest.mark.xfail  # see https://github.com/nengo/nengo_ocl/issues/54
 def test_direct_connection(Simulator):
     """Test a direct-mode connection"""
 
@@ -162,14 +182,14 @@ def _test_conn(Simulator, fn, size_in, dist_in=None, n=1):
             u = nengo.Node(output=x[i])
             v = nengo.Ensemble(1, dimensions=size_in, neuron_type=nengo.Direct())
             w = nengo.Ensemble(1, dimensions=size_out, neuron_type=nengo.Direct())
-            nengo.Connection(u, v, synapse=0)
-            nengo.Connection(v, w, synapse=0, function=fn, eval_points=x)
+            nengo.Connection(u, v, synapse=None)
+            nengo.Connection(v, w, synapse=None, function=fn, eval_points=x)
             probes.append(nengo.Probe(w))
 
     # run model
     sim = Simulator(model)
     sim.step()
-    sim.step()
+    # sim.step()
     # sim.step()
 
     # compare output
@@ -181,6 +201,7 @@ def test_sin_conn(Simulator):
     _test_conn(Simulator, np.sin, 1, n=10)
 
 
+@pytest.mark.xfail  # see https://github.com/nengo/nengo_ocl/issues/54
 def test_functions(Simulator, n_points=10):
     """Test the function maps in ast_converter.py"""
     # TODO: split this into one test per function using py.test utilities
@@ -248,15 +269,15 @@ def test_functions(Simulator, n_points=10):
                            dist_in=arggens.get(fn, None), n=n_points)
             logger.info("Function `%s` passed" % fn.__name__)
         except Exception as e:
-            raise
             all_passed = False
             logger.warning("Function `%s` failed with:\n    %s%s"
                            % (fn.__name__, e.__class__.__name__, e.args))
 
-    assert(all_passed, "Some functions failed, "
-           "see logger warnings for details")
+    assert all_passed, ("Some functions failed, "
+                        "see logger warnings for details")
 
 
+@pytest.mark.xfail  # see https://github.com/nengo/nengo_ocl/issues/54
 def test_vector_functions(Simulator):
     d = 5
     boolean = [any, all, np.any, np.all]
@@ -279,8 +300,8 @@ def test_vector_functions(Simulator):
             logger.warning("Function `%s` failed with:\n    %s: %s"
                            % (fn.__name__, e.__class__.__name__, e.message))
 
-    assert(all_passed, "Some functions failed, "
-           "see logger warnings for details")
+    assert all_passed, ("Some functions failed, "
+                        "see logger warnings for details")
 
 
 if __name__ == '__main__':
