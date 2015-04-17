@@ -47,10 +47,10 @@ def allclose_tol(*args, **kwargs):
     return allclose(*args, **kwargs)
 
 
-def skip(pattern, msg):
+def xfail(pattern, msg):
     for key in tests:
         if fnmatch.fnmatch(key, pattern):
-            tests[key] = pytest.mark.skipif(True, reason=msg)(tests[key])
+            tests[key] = pytest.mark.xfail(True, reason=msg)(tests[key])
 
 
 nengo_dir = os.path.dirname(nengo.__file__)
@@ -58,45 +58,45 @@ modules = find_modules(nengo_dir, prefix='nengo')
 tests = load_functions(modules, arg_pattern='^(Ref)?Simulator$')
 
 # noise
-skip('test.nengo.tests.test_ensemble.test_noise*',
-     "NengoOCL does not support noise")
-skip('test.nengo.tests.test_simulator.test_noise*',
-     "NengoOCL does not support noise")
+xfail('test.nengo.tests.test_ensemble.test_noise*',
+      "NengoOCL does not support noise")
+xfail('test.nengo.tests.test_simulator.test_noise*',
+      "NengoOCL does not support noise")
 
 # learning rules
-skip('test.nengo.tests.test_learning_rules.test_unsupervised',
-     "Unsupervised learning rules not implemented")
-skip('test.nengo.tests.test_learning_rules.test_dt_dependence',
-     "Filtering matrices (i.e. learned transform) not implemented")
+xfail('test.nengo.tests.test_learning_rules.test_unsupervised',
+      "Unsupervised learning rules not implemented")
+xfail('test.nengo.tests.test_learning_rules.test_dt_dependence',
+      "Filtering matrices (i.e. learned transform) not implemented")
 
 # neuron types
-skip('test.nengo.tests.test_neurons.test_alif*',
-     "ALIF neurons not implemented")
-skip('test.nengo.tests.test_neurons.test_izhikevich',
-     "Izhikevich neurons not implemented")
+xfail('test.nengo.tests.test_neurons.test_alif*',
+      "ALIF neurons not implemented")
+xfail('test.nengo.tests.test_neurons.test_izhikevich',
+      "Izhikevich neurons not implemented")
 
 # nodes
-skip('test.nengo.tests.test_node.test_none',
-     "No error if nodes output None")
-skip('test.nengo.tests.test_node.test_unconnected_node',
-     "Unconnected nodes not supported")
-skip('test.nengo.tests.test_node.test_set_output',
-     "Unconnected nodes not supported")
-skip('test.nengo.tests.test_node.test_args',
-     "This test fails for an unknown reason")
+xfail('test.nengo.tests.test_node.test_none',
+      "No error if nodes output None")
+xfail('test.nengo.tests.test_node.test_unconnected_node',
+      "Unconnected nodes not supported")
+xfail('test.nengo.tests.test_node.test_set_output',
+      "Unconnected nodes not supported")
+xfail('test.nengo.tests.test_node.test_args',
+      "This test fails for an unknown reason")
 
 # synapses
-skip('test.nengo.tests.test_synapses.test_alpha',
-     "Only first-order filters implemented")
-skip('test.nengo.tests.test_synapses.test_general',
-     "Only first-order filters implemented")
+xfail('test.nengo.tests.test_synapses.test_alpha',
+      "Only first-order filters implemented")
+xfail('test.nengo.tests.test_synapses.test_general',
+      "Only first-order filters implemented")
 nengo.tests.test_synapses.allclose = allclose_tol  # looser tolerances
 
 # resetting
-skip('test.nengo.tests.test_learning_rules.test_reset',
-     "Resetting not implemented")
-skip('test.nengo.tests.test_neurons.test_reset',
-     "Resetting not implemented")
+xfail('test.nengo.tests.test_learning_rules.test_reset',
+      "Resetting not implemented")
+xfail('test.nengo.tests.test_neurons.test_reset',
+      "Resetting not implemented")
 
 
 locals().update(tests)
