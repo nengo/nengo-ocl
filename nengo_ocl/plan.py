@@ -1,7 +1,9 @@
 import time
-import pyopencl as cl
 from collections import defaultdict
+
 import networkx as nx
+import numpy as np
+import pyopencl as cl
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 
@@ -100,9 +102,10 @@ class Marker(Plan):
 
     def __init__(self, queue):
         dummy = cl.Program(queue.context, """
-        __kernel void dummy() {}
+        __kernel void dummy(int foo) {}
         """).build().dummy
-        Plan.__init__(self, queue, dummy, (1,), None)
+        dummy.set_args(np.int32(0))
+        Plan.__init__(self, queue, dummy, gsize=(1,), lsize=None)
 
 
 class DAG(object):
