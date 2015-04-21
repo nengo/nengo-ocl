@@ -82,12 +82,13 @@ def test_lif_step(upsample, n_elements):
     assert ra.allclose(OS, clOS.to_host())
 
 
-def test_lif_speed(heterogeneous=True):
+@pytest.mark.parametrize("heterogeneous", [False, True])
+def test_lif_speed(rng, heterogeneous):
     """Test the speed of the lif nonlinearity
 
     heterogeneous: if true, use a wide range of population sizes.
     """
-    rng = np.random
+    from nengo.utils.testing import Timer
 
     dt = 1e-3
     ref = 2e-3
@@ -113,20 +114,17 @@ def test_lif_speed(heterogeneous=True):
     clW = CLRA(queue, W)
     clOS = CLRA(queue, OS)
 
-    n_elements = [0, 2, 5, 10]
+    n_elements = [0, 1, 2, 5, 10, 50]
     for i, nel in enumerate(n_elements):
         plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, tau, dt,
                         n_elements=nel)
 
-        for j in range(1000):
-            plan(profiling=True)
+        with Timer() as timer:
+            for j in range(1000):
+                plan(profiling=True)
 
-        print "plan %d: n_elements = %d" % (i, nel)
-        print 'n_calls         ', plan.n_calls
-        print 'queued -> submit', plan.atimes
-        print 'submit -> start ', plan.btimes
-        print 'start -> end    ', plan.ctimes
-        # TODO: this is broken; no times are shown
+        print("plan %d: n_elements = %d, dur = %0.3f"
+              % (i, nel, timer.duration))
 
 
 @pytest.mark.parametrize("n_elements", [0, 1, 10])
