@@ -10,12 +10,21 @@ See http://pytest.org/latest/usage.html for more invocations.
 
 """
 import sys
-import os
 
 import nengo
 import nengo.tests.test_synapses
-from nengo.utils.testing import allclose, find_modules, load_functions
+from nengo.utils.testing import allclose
+import pyopencl as cl
 import pytest
+
+import nengo_ocl
+
+ctx = cl.create_some_context()
+
+
+class Simulator(nengo_ocl.Simulator):
+    def __init__(self, *args, **kwargs):
+        super(Simulator, self).__init__(*args, context=ctx, **kwargs)
 
 
 def allclose_tol(*args, **kwargs):
@@ -24,24 +33,7 @@ def allclose_tol(*args, **kwargs):
     return allclose(*args, **kwargs)
 
 
-nengo_dir = os.path.dirname(nengo.__file__)
-modules = find_modules(nengo_dir, prefix='nengo')
-tests = load_functions(modules, arg_pattern='^Simulator$')
-
 nengo.tests.test_synapses.allclose = allclose_tol  # looser tolerances
-
-locals().update(tests)
-
-# --- nengo_extras
-try:
-    import nengo_extras
-except ImportError:
-    pass
-else:
-    nengo_extras_dir = os.path.dirname(nengo_extras.__file__)
-    modules = find_modules(nengo_extras_dir, prefix='nengo_extras')
-    tests = load_functions(modules, arg_pattern='^Simulator$')
-    locals().update(tests)
 
 
 if __name__ == '__main__':
