@@ -442,8 +442,8 @@ def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
     outputs = dict(r=R)
     parameters = dict(tau=tau, ref=ref)
     text = """
-            j = max(j - 1, 0.0f);
-            r = 1.0 / (ref + tau * log1p(1.0/j));
+            j = max(j - 1.0f, 0.0f);
+            r = 1.0f / (ref + tau * log1p(1.0f/j));
             """
 
     return _plan_template(
