@@ -248,9 +248,9 @@ def plan_probes(queue, periods, X, Y, tag=None):
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void fn(
-            __global float *countdowns,
+            __global ${Ctype} *countdowns,
             __global int *bufpositions,
-            __global const float *periods,
+            __global const ${Ptype} *periods,
             __global const int *Xstarts,
             __global const int *Xshape0s,
             __global const int *Xshape1s,
@@ -260,7 +260,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
         )
         {
             const int n = get_global_id(1);
-            const float countdown = countdowns[n];
+            const ${Ctype} countdown = countdowns[n];
 
             if (countdown <= 0) {
                 const int n_dims = Xshape0s[n] * Xshape1s[n];
@@ -298,7 +298,9 @@ def plan_probes(queue, periods, X, Y, tag=None):
 
     textconf = dict(N=N,
                     Xtype=X.cl_buf.ocldtype,
-                    Ytype=Y.cl_buf.ocldtype)
+                    Ytype=Y.cl_buf.ocldtype,
+                    Ctype=cl_countdowns.ocldtype,
+                    Ptype=cl_periods.ocldtype)
     text = Template(text, output_encoding='ascii').render(**textconf)
 
     full_args = (
@@ -388,49 +390,56 @@ ${code}
 
 def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
              tag=None, n_elements=0, upsample=1):
+    for array in [V, W, outV, outW, outS]:
+        assert V.cl_buf.ocldtype == J.cl_buf.ocldtype
+
     inputs = dict(j=J, v=V, w=W)
     outputs = dict(ov=outV, ow=outW, os=outS)
     parameters = dict(tau=tau, ref=ref)
 
     dt = float(dt)
-    textconf = dict(upsample=upsample,
+    textconf = dict(Vtype=V.cl_buf.ocldtype,
+                    upsample=upsample,
                     dtu=dt / upsample,
                     dtu_inv=upsample / dt,
                     dt_inv=1 / dt,
                     V_threshold=1.)
-
     declares = """
-            char spiked;
-            %(Vtype)s dV, overshoot;
-            """ % ({'Vtype': V.cl_buf.ocldtype})
+        char spiked;
+        ${Vtype} dV, overshoot;
 
+        const ${Vtype} dtu = ${dtu},
+                       dtu_inv = ${dtu_inv},
+                       dt_inv = ${dt_inv},
+                       V_threshold = ${V_threshold};
+        """
     # TODO: could precompute -expm1(-dtu / tau)
     text = """
-            spiked = 0;
+        spiked = 0;
 
 % for ii in range(upsample):
-            dV = -expm1(-${dtu} / tau) * (j - v);
-            v += dV;
-            w -= ${dtu};
+        dV = -expm1(-dtu / tau) * (j - v);
+        v += dV;
+        w -= dtu;
 
-            if (v < 0 || w > ${dtu})
-                v = 0;
-            else if (w >= 0)
-                v *= 1.0 - w * ${dtu_inv};
+        if (v < 0 || w > dtu)
+            v = 0;
+        else if (w >= 0)
+            v *= 1 - w * dtu_inv;
 
-            if (v > ${V_threshold}) {
-                overshoot = ${dtu} * (v - ${V_threshold}) / dV;
-                w = ref - overshoot + ${dtu};
-                v = 0.0;
-                spiked = 1;
-            }
+        if (v > V_threshold) {
+            overshoot = dtu * (v - V_threshold) / dV;
+            w = ref - overshoot + dtu;
+            v = 0;
+            spiked = 1;
+        }
 % endfor
-            ov = v;
-            ow = w;
-            os = (spiked) ? ${dt_inv} : 0.0f;
-            """
+        ov = v;
+        ow = w;
+        os = (spiked) ? dt_inv : 0;
+        """
+    declares = Template(declares, output_encoding='ascii').render(**textconf)
     text = Template(text, output_encoding='ascii').render(**textconf)
-
     return _plan_template(
         queue, "cl_lif", text, declares=declares,
         tag=tag, n_elements=n_elements,
@@ -438,16 +447,23 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
 
 
 def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
+    assert R.cl_buf.ocldtype == J.cl_buf.ocldtype
+
     inputs = dict(j=J)
     outputs = dict(r=R)
     parameters = dict(tau=tau, ref=ref)
+    textconf = dict(Rtype=R.cl_buf.ocldtype)
+    declares = """
+        const ${Rtype} c0 = 0, c1 = 1;
+        """
     text = """
-            j = max(j - 1.0f, 0.0f);
-            r = 1.0f / (ref + tau * log1p(1.0f/j));
-            """
-
+        j = max(j - 1, c0);
+        r = c1 / (ref + tau * log1p(c1/j));
+        """
+    declares = Template(declares, output_encoding='ascii').render(**textconf)
     return _plan_template(
-        queue, "cl_lif_rate", text, tag=tag, n_elements=n_elements,
+        queue, "cl_lif_rate", text, declares=declares,
+        tag=tag, n_elements=n_elements,
         inputs=inputs, outputs=outputs, parameters=parameters)
 
 
@@ -480,7 +496,6 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         constant.
 
     """
-
     base = inputs.values()[0]   # input to use as reference (for lengths)
     N = len(base)
 
