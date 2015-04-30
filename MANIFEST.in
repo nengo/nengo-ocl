@@ -1,0 +1,5 @@
+include *.py
+include *.rst
+include *.sh
+include *.txt
+recursive-include examples *.py
