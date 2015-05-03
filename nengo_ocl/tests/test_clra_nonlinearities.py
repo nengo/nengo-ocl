@@ -4,6 +4,7 @@ import pyopencl as cl
 import pytest
 
 from nengo.neurons import LIF, LIFRate
+from nengo.utils.compat import range
 
 from nengo_ocl import raggedarray as ra
 from nengo_ocl.raggedarray import RaggedArray as RA
@@ -52,7 +53,7 @@ def test_lif_step(upsample, n_elements):
             nl.step_math(dt, J[i], OS[i], V[i], W[i])
         else:
             s = np.zeros_like(OS[i])
-            for j in xrange(upsample):
+            for j in range(upsample):
                 nl.step_math(dt / upsample, J[i], s, V[i], W[i])
                 OS[i] = (1./dt) * ((OS[i] > 0) | (s > 0))
 
@@ -63,15 +64,15 @@ def test_lif_step(upsample, n_elements):
 
     if 1:
         a, b = V, clV
-        for i in xrange(len(a)):
+        for i in range(len(a)):
             nc, _ = not_close(a[i], b[i]).nonzero()
             if len(nc) > 0:
                 j = nc[0]
-                print "i", i, "j", j
-                print "J", J[i][j], clJ[i][j]
-                print "V", V[i][j], clV[i][j]
-                print "W", W[i][j], clW[i][j]
-                print "...", len(nc) - 1, "more"
+                print("i", i, "j", j)
+                print("J", J[i][j], clJ[i][j])
+                print("V", V[i][j], clV[i][j])
+                print("W", W[i][j], clW[i][j])
+                print("...", len(nc) - 1, "more")
 
     n_spikes = np.sum([np.sum(os) for os in OS])
     if n_spikes < 1.0:

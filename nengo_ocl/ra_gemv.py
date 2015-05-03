@@ -1,5 +1,5 @@
-
 import numpy as np
+from nengo.utils.compat import range
 
 
 def raw_ragged_gather_gemv(
@@ -22,26 +22,26 @@ def raw_ragged_gather_gemv(
         Y_starts,
         Y_lens,
         Y_data):
-    for bb in xrange(BB):
+    for bb in range(BB):
         alpha = alphas[bb]
         beta = betas[bb]
         n_dot_products = A_js_lens[bb]
         y_offset = Y_starts[bb]
         y_in_offset = Y_in_starts[bb]
         M = Y_lens[bb]
-        for mm in xrange(M):
+        for mm in range(M):
             Y_data[y_offset + mm] = beta * Y_in_data[y_in_offset + mm]
 
-        for ii in xrange(n_dot_products):
+        for ii in range(n_dot_products):
             x_i = X_js_data[X_js_starts[bb] + ii]
             a_i = A_js_data[A_js_starts[bb] + ii]
             N_i = Ns[a_i]
             a_lda = A_ldas[a_i]
             x_offset = X_starts[x_i]
             a_offset = A_starts[a_i]
-            for mm in xrange(M):
+            for mm in range(M):
                 y_sum = 0.0
-                for nn in xrange(N_i):
+                for nn in range(N_i):
                     a_i_m_n = A_data[a_offset + nn * a_lda + mm]
                     y_sum += X_data[x_offset + nn] * a_i_m_n
                 Y_data[y_offset + mm] += alpha * y_sum
@@ -95,20 +95,20 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
             Y.buf)
     else:
         # -- less-close to the OpenCL impl
-        # print alpha
-        # print A.buf, 'A'
-        # print X.buf, 'X'
-        # print Y_in.buf, 'in'
+        # print(alpha)
+        # print(A.buf, 'A')
+        # print(X.buf, 'X')
+        # print(Y_in.buf, 'in')
 
-        for i in xrange(len(Y)):
+        for i in range(len(Y)):
             try:
                 y_i = gamma[i] + beta[i] * Y_in[i]  # -- ragged getitem
             except:
-                print i, gamma[i], beta[i], Y_in[i]
+                print(i, gamma[i], beta[i], Y_in[i])
                 raise
             alpha_i = alpha[i]
-            # print 'Gemv:',
-            # print i, gamma[i], beta[i], Y_in[i].ravel(), alpha_i,
+            # print('Gemv:',)
+            # print(i, gamma[i], beta[i], Y_in[i].ravel(), alpha_i,)
 
             x_js_i = X_js[i]  # -- ragged getitem
             A_js_i = A_js[i]  # -- ragged getitem
@@ -116,18 +116,18 @@ def ragged_gather_gemv(alpha, A, A_js, X, X_js,
             for xi, ai in zip(x_js_i, A_js_i):
                 x_ij = X[xi]  # -- ragged getitem
                 A_ij = A[ai]  # -- ragged getitem
-                # print 'A =',A_ij.ravel(), 'X =', x_ij.ravel(),
+                # print('A =',A_ij.ravel(), 'X =', x_ij.ravel(),)
                 try:
                     y_i += alpha_i * np.dot(A_ij, x_ij)
                 except:
-                    print tag, seq[i]
-                    print i, xi, ai, A_ij, x_ij
-                    print y_i.shape, A_ij.shape, x_ij.shape
+                    print(tag, seq[i])
+                    print(i, xi, ai, A_ij, x_ij)
+                    print(y_i.shape, A_ij.shape, x_ij.shape)
                     raise
-            # print '... Y <-', y_i.ravel()
+            # print('... Y <-', y_i.ravel())
             if 0:
                 if 'ai' in locals():
-                    print 'Gemv writing', tag, A_ij, x_ij, y_i
+                    print('Gemv writing', tag, A_ij, x_ij, y_i)
                 else:
-                    print 'Gemv writing', tag, y_i
+                    print('Gemv writing', tag, y_i)
             Y[i] = y_i

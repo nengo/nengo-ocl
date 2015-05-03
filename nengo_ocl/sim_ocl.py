@@ -36,8 +36,8 @@ class Simulator(sim_npy.Simulator):
     def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
                  n_prealloc_probes=1000, profiling=None, ocl_only=False):
         if context is None:
-            print 'No context argument was provided to sim_ocl.Simulator'
-            print "Calling pyopencl.create_some_context() for you now:"
+            print('No context argument was provided to sim_ocl.Simulator')
+            print("Calling pyopencl.create_some_context() for you now:")
             context = cl.create_some_context()
         if profiling is None:
             profiling = int(os.getenv("NENGO_OCL_PROFILING", 0))
@@ -386,18 +386,18 @@ class Simulator(sim_npy.Simulator):
             table.sort(key=lambda x: x[abs(sort)], reverse=reverse)
 
         # printing
-        print '-' * 80
-        print '%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'GF/s', 'GB/s')
+        print('-' * 80)
+        print('%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
 
         for r in table:
-            print '%i\t%2.3f\t%2.3f\t%2.3f\t<%s, tag=%s>' % r
+            print('%i\t%2.3f\t%2.3f\t%2.3f\t<%s, tag=%s>' % r)
 
-        print '-' * 80
+        print('-' * 80)
         col_sum = lambda c: sum(map(lambda x: x[c], table))
-        print 'totals:\t%2.3f\t%2.3f\t%2.3f' % (
-            col_sum(1), col_sum(2), col_sum(3))
+        print('totals:\t%2.3f\t%2.3f\t%2.3f' % (
+            col_sum(1), col_sum(2), col_sum(3)))
 
         if len(unknowns) > 0:
-            print
+            print('\n')
             for r in unknowns:
-                print "%s %s" % r
+                print("%s %s" % r)

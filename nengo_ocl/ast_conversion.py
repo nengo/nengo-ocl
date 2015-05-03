@@ -14,13 +14,19 @@ TODO:
   deal with this better, though.
 """
 
-import __builtin__
+try:
+    import __builtin__
+except ImportError:
+    # Renamed in Python 3
+    import builtins as __builtin__
 import ast
 import collections
 import inspect
 import math
 
 import numpy as np
+
+from nengo.utils.compat import range
 
 
 def number(x):
@@ -72,15 +78,11 @@ direct_funcs = {
     math.ceil: 'ceil',
     math.cos: 'cos',
     math.cosh: 'cosh',
-    math.erf: 'erf',
-    math.erfc: 'erfc',
     math.exp: 'exp',
-    math.expm1: 'expm1',
     math.fabs: 'fabs',
     math.floor: 'floor',
     math.isinf: 'isinf',
     math.isnan: 'isnan',
-    math.lgamma: 'lgamma',
     math.log: 'log',
     math.log10: 'log10',
     math.log1p: 'log1p',
@@ -120,6 +122,16 @@ direct_funcs = {
     np.tanh: 'tanh',
 }
 
+try:
+    # These are only available in Python 2.7+
+    direct_funcs[math.expm1] = 'expm1'
+    direct_funcs[math.erf] = 'erf'
+    direct_funcs[math.erfc] = 'erfc'
+    direct_funcs[math.lgamma] = 'lgamma'
+    direct_funcs[math.expm1] = 'expm1'
+except AttributeError:
+    pass
+
 # List of functions that are supported, but cannot be directly mapped onto
 # a unary OCL function
 indirect_funcs = {
@@ -128,7 +140,6 @@ indirect_funcs = {
     math.degrees: lambda x: BinExp(
         x, '*', BinExp(NumExp(180), '*', VarExp('M_1_PI'))),
     math.fmod: lambda x, y: FuncExp('fmod', x, y),
-    math.gamma: lambda x: FuncExp('exp', FuncExp('lgamma', x)),
     math.hypot: lambda x, y: FuncExp(
         'sqrt', BinExp(BinExp(x, '*', x), '+', BinExp(y, '*', y))),
     math.ldexp: lambda x, y: BinExp(x, '*', FuncExp('pow', NumExp(2), y)),
@@ -189,6 +200,12 @@ indirect_funcs = {
     np.square: lambda x: BinExp(x, '*', x),
     np.subtract: lambda x, y: BinExp(x, '-', y),
 }
+
+try:
+    # This is only available in Python 2.7+
+    indirect_funcs[math.gamma] = lambda x: FuncExp('exp', FuncExp('lgamma', x))
+except AttributeError:
+    pass
 
 
 def _recurse_binexp(op, x):
@@ -529,7 +546,7 @@ class OCL_Translator(ast.NodeVisitor):
             assert dim is not None, (
                 "Must provide input dimensionality for vectorized arguments")
             self._check_vector_length(dim)
-            return [VarExp('%s[%d]' % (name, i)) for i in xrange(dim)]
+            return [VarExp('%s[%d]' % (name, i)) for i in range(dim)]
         elif name in self.init:
             return VarExp(name)
         elif name in self.closures:
@@ -589,7 +606,7 @@ class OCL_Translator(ast.NodeVisitor):
             "Could not broadcast arguments with lengths %s" % arg_lens)
 
         result = [func(*[a[i] if len(a) > 1 else a[0] for a in args])
-                  for i in xrange(max_len)]
+                  for i in range(max_len)]
         result = [r.simplify() for r in result]
         return result[0] if len(result) == 1 else result
 
@@ -675,7 +692,7 @@ class OCL_Translator(ast.NodeVisitor):
 
         self._check_vector_length(n.value)
         result = []
-        for v in xrange(n.value):
+        for v in range(n.value):
             self.temp_names[temp_name] = NumExp(v)
             result.append(self.visit(expr.elt))
 
@@ -862,186 +879,147 @@ class OCL_Function(object):
 
 if __name__ == '__main__':
 
-    print '*' * 5 + 'Raw' + '*' * 50
-    ocl_fn = OCL_Function(np.sin, in_dims=(1,))
-    print ocl_fn.init
-    print ocl_fn.code
+    def ocl_f(*args, **kwargs):
+        ocl_fn = OCL_Function(*args, **kwargs)
+        print(ocl_fn.init)
+        print(ocl_fn.code)
+        print('\n')
+        return ocl_fn
 
-    print
-    print '*' * 5 + 'Multi sine' + '*' * 50
-    ocl_fn = OCL_Function(np.sin, in_dims=(3,))
-    print ocl_fn.init
-    print ocl_fn.code
+    print('*' * 5 + 'Raw' + '*' * 50)
+    ocl_f(np.sin, in_dims=(1,))
 
-    print
-    print '*' * 5 + 'List-return' + '*' * 50
+    print('*' * 5 + 'Multi sine' + '*' * 50)
+    ocl_f(np.sin, in_dims=(3,))
+
+    print('*' * 5 + 'List-return' + '*' * 50)
 
     def func(t):
-        # return list(range(1, 10))
         return [1, 2, 3]
-    ocl_fn = OCL_Function(func, in_dims=(1,))
-    print ocl_fn.init
-    print ocl_fn.code
+    ocl_f(func, in_dims=(1,))
 
-    print
-    print '*' * 5 + 'Multi-arg' + '*' * 50
+    print('*' * 5 + 'Multi-arg' + '*' * 50)
 
     def func(t, x):
         return t + x[:2] + x[2]
-    ocl_fn = OCL_Function(func, in_dims=(1, 3))
-    print ocl_fn.init
-    print ocl_fn.code
+    ocl_f(func, in_dims=(1, 3))
 
-    print
-    print '*' * 5 + 'Simplify' + '*' * 50
+    print('*' * 5 + 'Simplify' + '*' * 50)
 
     def func(y):
         return y + np.sin([1, 2, 3])
 
-    ocl_fn = OCL_Function(func, in_dims=(1,))
-    print ocl_fn.init
-    print ocl_fn.code
+    ocl_f(func, in_dims=(1,))
 
-    # multiplier = 3842.012
-    # def square(x):
-    #     print "wow: %f, %d, %s" % (0.3, 9, "hello")
-    #     # if x < 0.5 - 0.1:
-    #     if 1 + (2 == 2):
-    #         y = 2. * x
-    #         z -= 4 + (3 if x > 99 else 2)
-    #     elif x == 2:
-    #         y *= 9.12 if 3 > 4 else 0
-    #         z = 4*(x - 2)
-    #     else:
-    #         y = 9*x
-    #         z += x**(-1.1)
+    multiplier = 3842.012
 
-    #     return np.sin(multiplier * (y * z) + np.square(y))
+    def square(x):
+        print("wow: %f, %d, %s" % (0.3, 9, "hello"))
 
-    # square = OCL_Function(square, in_dim=1)
+        if 1 + (2 == 2):
+            y = 2. * x
+            z -= 4 + (3 if x > 99 else 2)  # noqa: F821
+        elif x == 2:
+            y *= 9.12 if 3 > 4 else 0
+            z = 4*(x - 2)
+        else:
+            y = 9*x
+            z += x**(-1.1)
 
-    # # print square(4)
-    # print square.init
-    # print square.code
+        return np.sin(multiplier * (y * z) + np.square(y))
+    ocl_f(square, in_dims=1)
 
-    # print '*' * 5 + 'Vector lambda' + '*' * 50
-    # insert = -0.5
-    # func = lambda x: x + 3 if all(x > 2) else x - 1
-    # ocl_fn = OCL_Function(func, in_dim=3)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    print('*' * 5 + 'Vector lambda' + '*' * 50)
+    insert = -0.5
+    func = lambda x: x + 3 if all(x > 2) else x - 1
+    ocl_f(func, in_dims=3)
 
-    # print '*' * 5 + 'Large input' + '*' * 50
-    # insert = -0.5
-    # func = lambda x: [x[1] * x[1051], x[3] * x[62]];
-    # ocl_fn = OCL_Function(func, in_dim=1100)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    if 0:
+        print('*' * 5 + 'Large input' + '*' * 50)
+        insert = -0.5
+        func = lambda x: [x[1] * x[1051], x[3] * x[62]]
+        ocl_f(func, in_dims=1100)
 
-    # print '*' * 5 + 'List comprehension' + '*' * 50
-    # insert = -0.5
-    # func = lambda x: [
-    #     np.maximum(0.1, np.sin(2)) * x[4 - i] for i in xrange(5)]
-    # ocl_fn = OCL_Function(func, in_dim=5)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    print('*' * 5 + 'List comprehension' + '*' * 50)
+    insert = -0.5
+    func = lambda x: [
+        np.maximum(0.1, np.sin(2)) * x[4 - i] for i in range(5)]
+    ocl_f(func, in_dims=5)
 
-    # print '*' * 5 + 'Unary minus' + '*' * 50
-    # insert = -0.5
-    # def function(x):
-    #     return x * -insert
+    print('*' * 5 + 'Unary minus' + '*' * 50)
+    insert = -0.5
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(x):
+        return x * -insert
+    ocl_f(function, in_dims=1)
 
-    # print '*' * 5 + 'Subtract' + '*' * 50
-    # def function(x):
-    #     return np.subtract(x[1], x[0])
+    print('*' * 5 + 'Subtract' + '*' * 50)
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(x):
+        return np.subtract(x[1], x[0])
+    ocl_f(function, in_dims=2)
 
-    # print '*' * 5 + 'List' + '*' * 50
-    # def function(y):
-    #     z = y[0] * y[1]
-    #     return [y[1], z]
+    print('*' * 5 + 'List' + '*' * 50)
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(y):
+        z = y[0] * y[1]
+        return [y[1], z]
+    ocl_f(function, in_dims=2)
 
-    # print '*' * 5 + 'Array' + '*' * 50
-    # value = np.arange(3)
-    # def function(y):
-    #     return value
+    print('*' * 5 + 'Array' + '*' * 50)
+    value = np.arange(3)
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(y):
+        return value
+    ocl_f(function, in_dims=value.size)
 
-    # print '*' * 5 + 'AsArray' + '*' * 50
-    # def function(y):
-    #     return np.asarray([y[0], y[1], 3])
+    print('*' * 5 + 'AsArray' + '*' * 50)
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(y):
+        return np.asarray([y[0], y[1], 3])
+    ocl_f(function, in_dims=2)
 
-    # print '*' * 5 + 'IfExp' + '*' * 50
-    # def function(y):
-    #     return 5 if y > 3 else 0
+    print('*' * 5 + 'IfExp' + '*' * 50)
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(y):
+        return 5 if y > 3 else 0
+    ocl_f(function, in_dims=1)
 
-    # print '*' * 5 + 'Sign' + '*' * 50
-    # def function(y):
-    #     return np.sign(y)
+    print('*' * 5 + 'Sign' + '*' * 50)
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(y):
+        return np.sign(y)
+    ocl_f(function, in_dims=1)
 
-    # print '*' * 5 + 'Radians' + '*' * 50
-    # power = 2
-    # def function(y):
-    #     return np.radians(y**power)
+    print('*' * 5 + 'Radians' + '*' * 50)
+    power = 2
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(y):
+        return np.radians(y**power)
+    ocl_f(function, in_dims=1)
 
-    # print '*' * 5 + 'Boolop' + '*' * 50
-    # power = 3.2
-    # def function(y):
-    #     if y > 3 and y < 5:
-    #         return y**power
-    #     else:
-    #         return np.sign(y)
+    print('*' * 5 + 'Boolop' + '*' * 50)
+    power = 3.2
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(y):
+        if y > 3 and y < 5:
+            return y**power
+        else:
+            return np.sign(y)
+    ocl_f(function, in_dims=1)
 
-    # print '*' * 5 + 'Nested return' + '*' * 50
-    # power = 3.2
-    # def function(y):
-    #     if y > 3 and y < 5:
-    #         return y**power
+    print('*' * 5 + 'Nested return' + '*' * 50)
+    power = 3.2
 
-    #     return np.sign(y)
+    def function(y):
+        if y > 3 and y < 5:
+            return y**power
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+        return np.sign(y)
+    ocl_f(function, in_dims=1)
 
-    # print '*' * 5 + 'Math constants' + '*' * 50
-    # def function(y):
-    #     return np.sin(np.pi * y) + np.e
+    print('*' * 5 + 'Math constants' + '*' * 50)
 
-    # ocl_fn = OCL_Function(function)
-    # print ocl_fn.init
-    # print ocl_fn.code
+    def function(y):
+        return np.sin(np.pi * y) + np.e
+    ocl_f(function, in_dims=1)

@@ -1,6 +1,8 @@
 """
 numpy Simulator in the style of the OpenCL one, to get design right.
 """
+from __future__ import print_function
+
 import logging
 import time
 from collections import defaultdict
@@ -288,7 +290,7 @@ def greedy_planner(operators):
             ancestors_of[op].difference_update(chosen)
 
     assert len(operators) == sum(len(p[1]) for p in rval)
-    # print 'greedy_planner: Program len:', len(rval)
+    # print('greedy_planner: Program len:', len(rval))
     return rval
 
 
@@ -453,7 +455,7 @@ class Simulator(Simulator):
 
         op_groups = planner(operators)
         self.op_groups = op_groups  # debug
-        # print '-' * 80
+        # print('-' * 80)
         # self.print_op_groups()
 
         for op in operators:
@@ -469,7 +471,7 @@ class Simulator(Simulator):
 
         self.all_data = _RaggedArray(
             [sigdict[sb] for sb in all_bases],
-            [getattr(sb, 'name', '') for ss in all_bases]
+            [getattr(sb, 'name', '') for sb in all_bases]
         )
 
         builder = ViewBuilder(all_bases, self.all_data)
@@ -495,9 +497,9 @@ class Simulator(Simulator):
 
     def print_op_groups(self):
         for op_type, op_list in self.op_groups:
-            print 'op_type', op_type.__name__
+            print('op_type', op_type.__name__)
             for op in op_list:
-                print '  ', op
+                print('  ', op)
 
     def plan_op_group(self, op_type, ops):
         return getattr(self, 'plan_' + op_type.__name__)(ops)
@@ -712,9 +714,9 @@ class Simulator(Simulator):
             X_js.append(X_js_i)
 
         if verbose:
-            print "in sig_vemv"
-            print "print A", A_js
-            print "print X", X_js
+            print("in sig_vemv")
+            print("print A", A_js)
+            print("print X", X_js)
 
         A_js = self.RaggedArray(A_js)
         X_js = self.RaggedArray(X_js)
@@ -722,9 +724,9 @@ class Simulator(Simulator):
         Y_in = self.all_data[Y_in_idxs]
 
         # if tag == 'transforms':
-        #     print '=' * 70
-        #     print A_js
-        #     print X_js
+        #     print('=' * 70)
+        #     print(A_js)
+        #     print(X_js)
 
         rval = self.plan_ragged_gather_gemv(
             alpha=alpha,
@@ -810,10 +812,10 @@ class Simulator(Simulator):
                     raise NotImplementedError()
 
             def __str__(self_):
-                import StringIO
+                from nengo.utils.compat import StringIO
                 sio = StringIO.StringIO()
                 for k in self_:
-                    print >> sio, k, self_[k]
+                    print(k, self_[k], file=sio)
                 return sio.getvalue()
 
         return Accessor()

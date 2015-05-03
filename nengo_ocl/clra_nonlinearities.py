@@ -1,8 +1,9 @@
 import numpy as np
 import pyopencl as cl
-from plan import Plan
 from mako.template import Template
-from clarray import to_device
+from nengo.utils.compat import range
+from .plan import Plan
+from .clarray import to_device
 from .clraggedarray import CLRaggedArray
 
 
@@ -238,7 +239,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
 
     # N.B.  X[i].shape = (M, N)
     #       Y[i].shape = (buf_len, M * N)
-    for i in xrange(N):
+    for i in range(N):
         assert X.shape0s[i] * X.shape1s[i] == Y.shape1s[i]
         assert X.stride0s[i] == X.shape1s[i]
         assert X.stride1s[i] == 1
@@ -527,7 +528,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     for vname, v in params.items():
         assert vname not in avars, "Name clash"
         assert len(v) == N
-        for i in xrange(N):
+        for i in range(N):
             assert v.shape0s[i] == base.shape0s[i] or v.shape0s[i] == 1, \
                 "%s.shape0s[%d] must be 1 or %d (not %d)" % \
                 (vname, i, base.shape0s[i], v.shape0s[i])
@@ -702,7 +703,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     text = Template(text, output_encoding='ascii').render(**textconf)
     if 0:
         for i, line in enumerate(text.split('\n')):
-            print "%3d %s" % (i + 1, line)
+            print("%3d %s" % (i + 1, line))
 
     full_args = []
     for vname, v in inputs.items() + outputs.items():

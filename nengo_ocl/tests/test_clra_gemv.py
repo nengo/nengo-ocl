@@ -3,9 +3,10 @@ import numpy as np
 import pyopencl as cl
 import pytest
 
+from nengo.utils.compat import range
+
 from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
-
 from nengo_ocl.clra_gemv import (
     plan_ragged_gather_gemv, plan_many_dots, plan_reduce, plan_ref)
 
@@ -22,7 +23,7 @@ def pytest_generate_tests(metafunc):
 
 def allclose(raA, raB):
     assert len(raA) == len(raB)
-    for i in xrange(len(raA)):
+    for i in range(len(raA)):
         if not np.allclose(raA[i], raB[i]):
             return False
     return True
@@ -59,7 +60,7 @@ def test_basic():
     plans[0]()
 
     # -- ensure they match
-    for i in xrange(len(A_js)):
+    for i in range(len(A_js)):
         aj, xj = int(A_js[i]), int(X_js[i])
         ref = alpha * np.dot(A[aj], X[xj]) + beta * Y[i]
         sim = clY[i]
@@ -78,11 +79,11 @@ def _test_random(k=4, p=1, m=10, n=10):
 
     rng = np.random.RandomState(3294)
 
-    aa = [rng.normal(size=(m, n)) for i in xrange(k)]
-    xx = [rng.normal(size=n) for i in xrange(k)]
-    yy = [rng.normal(size=m) for i in xrange(k)]
-    ajs = [rng.randint(k, size=p) for i in xrange(k)]
-    xjs = [rng.randint(k, size=p) for i in xrange(k)]
+    aa = [rng.normal(size=(m, n)) for i in range(k)]
+    xx = [rng.normal(size=n) for i in range(k)]
+    yy = [rng.normal(size=m) for i in range(k)]
+    ajs = [rng.randint(k, size=p) for i in range(k)]
+    xjs = [rng.randint(k, size=p) for i in range(k)]
 
     A = RA(aa)
     X = RA(xx)
@@ -110,13 +111,13 @@ def _test_random(k=4, p=1, m=10, n=10):
         queue, alpha, clA, clA_js, clX, clX_js, beta, clY)
     plans = prog.choose_plans()
 
-    print '-' * 5 + ' Plans ' + '-' * 45
+    print('-' * 5 + ' Plans ' + '-' * 45)
     for plan in plans:
-        print plan
+        print(plan)
         plan()
 
     # -- ensure they match
-    for i in xrange(k):
+    for i in range(k):
         ref = beta * Y[i]
         for aj, xj in zip(A_js[i], X_js[i]):
             ref += alpha * np.dot(A[aj], X[xj])
@@ -178,27 +179,27 @@ def check_from_shapes(
     plans[0]()
 
     # -- ensure they match
-    for i in xrange(len(A_js)):
-        # print 'gamma', gamma
-        # print 'Y[i] * beta + gamma', Y[i] * beta + gamma
-        # print A[0]
-        # print X[0]
-        # print 'AX', sum(
+    for i in range(len(A_js)):
+        # print('gamma', gamma)
+        # print('Y[i] * beta + gamma', Y[i] * beta + gamma)
+        # print(A[0])
+        # print(X[0])
+        # print('AX', sum(
         #     [np.dot(A[aj], X[xj])
-        #     for aj, xj in zip(A_js[i], X_js[i])])
+        #     for aj, xj in zip(A_js[i], X_js[i])]))
         ref = gamma + beta * Y[i] + alpha * sum(
             [np.dot(A[aj], X[xj])
              for aj, xj in zip(A_js[i], X_js[i])])
         sim = clY[i]
         if not np.allclose(ref, sim, atol=1e-3, rtol=1e-3):
-            print 'A_shapes',  A_shapes
-            print 'X_shapes', X_shapes
+            print('A_shapes',  A_shapes)
+            print('X_shapes', X_shapes)
             if len(ref) > 20:
-                print 'ref', ref[:10], '...', ref[-10:]
-                print 'sim', sim[:10], '...', sim[-10:]
+                print('ref', ref[:10], '...', ref[-10:])
+                print('sim', sim[:10], '...', sim[-10:])
             else:
-                print 'ref', ref
-                print 'sim', sim
+                print('ref', ref)
+                print('sim', sim)
             assert 0
 
 

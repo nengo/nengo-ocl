@@ -6,6 +6,7 @@ import pytest
 
 import nengo
 from nengo.dists import Uniform
+from nengo.utils.compat import range
 
 import nengo_ocl
 import nengo_ocl.ast_conversion as ast_conversion
@@ -27,6 +28,7 @@ def pytest_funcarg__Simulator(request):
 
 def test_slice():
     s = slice(1, None)
+
     def func(x):
         return x[s]
     ocl_fn = OCL_Function(func, in_dims=(3,))
@@ -36,11 +38,12 @@ def test_slice():
 @pytest.mark.xfail  # see https://github.com/nengo/nengo_ocl/issues/54
 def test_nested():
     f = lambda x: x**2
+
     def func(x):
         return f(x)
     ocl_fn = OCL_Function(func, in_dims=(3,))
-    print ocl_fn.init
-    print ocl_fn.code
+    print(ocl_fn.init)
+    print(ocl_fn.code)
 
 
 def _test_node(Simulator, fn, size_in=0):
@@ -160,7 +163,7 @@ def _test_conn(Simulator, fn, size_in, dist_in=None, n=1):
 
     # make input
     if dist_in is None:
-        dist_in = [Uniform(-10, 10) for i in xrange(size_in)]
+        dist_in = [Uniform(-10, 10) for i in range(size_in)]
     elif not isinstance(dist_in, (list, tuple)):
         dist_in = [dist_in]
     assert len(dist_in) == size_in
@@ -178,10 +181,12 @@ def _test_conn(Simulator, fn, size_in, dist_in=None, n=1):
     model = nengo.Network("test_%s" % fn.__name__, seed=seed)
     with model:
         probes = []
-        for i in xrange(n):
+        for i in range(n):
             u = nengo.Node(output=x[i])
-            v = nengo.Ensemble(1, dimensions=size_in, neuron_type=nengo.Direct())
-            w = nengo.Ensemble(1, dimensions=size_out, neuron_type=nengo.Direct())
+            v = nengo.Ensemble(1, dimensions=size_in,
+                               neuron_type=nengo.Direct())
+            w = nengo.Ensemble(1, dimensions=size_out,
+                               neuron_type=nengo.Direct())
             nengo.Connection(u, v, synapse=None)
             nengo.Connection(v, w, synapse=None, function=fn, eval_points=x)
             probes.append(nengo.Probe(w))

@@ -2,8 +2,9 @@
 OpenCL-based implementation of RaggedArray data structure.
 
 """
+from __future__ import print_function
 
-import StringIO
+from nengo.utils.compat import StringIO
 import numpy as np
 import pyopencl as cl
 from .clarray import to_device
@@ -64,12 +65,12 @@ class CLRaggedArray(object):
 
     def __str__(self):
         sio = StringIO.StringIO()
-        print 'names', self.names
+        print('names', self.names)
         namelen = max(len(n) for n in self.names)
         fmt = '%%%is' % namelen
         for ii, nn in enumerate(self.names):
-            print '->', self[ii]
-            print >> sio, (fmt % nn), self[ii]
+            print('->', self[ii])
+            print((fmt % nn), self[ii], file=sio)
         return sio.getvalue()
 
     @property
@@ -218,7 +219,7 @@ class CLRaggedArray(object):
                 offset=0,
                 strides=bytestrides)
             view[...] = new_value
-            # print temp_buf.view('float32')
+            # print(temp_buf.view('float32'))
             cl.enqueue_copy(self.queue, self.cl_buf.data, temp_buf,
                             device_offset=bytestart, is_blocking=True)
 

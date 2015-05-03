@@ -39,8 +39,8 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import pyopencl as cl
-from plan import Plan
 from mako.template import Template
+from .plan import Plan
 
 
 def get_sample_constants():

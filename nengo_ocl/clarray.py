@@ -10,7 +10,7 @@ class Array(cl_array.Array):
                  data=None, strides=None, offset=0):
         try:
             np.dtype(dtype)
-        except Exception, e:
+        except Exception as e:
             e.args = e.args + (dtype,)
             raise
         cl.array.Array.__init__(self, queue,
@@ -21,7 +21,7 @@ class Array(cl_array.Array):
                                 data=data,
                                 strides=tuple(map(int, strides)))
         if 0 in self.strides:
-            print self.strides
+            print(self.strides)
         self.offset = offset
         assert self.data.size >= self.size * self.dtype.itemsize
 
@@ -137,10 +137,10 @@ class Array(cl_array.Array):
         if queue is None:
             queue = self.queue
         hostbuf = np.empty(shape=(self.data.size,), dtype='int8')
-        # print self.data.size
-        # print hostbuf.shape
+        # print(self.data.size)
+        # print(hostbuf.shape)
         assert self.data.size >= self.size * self.dtype.itemsize
-        # print self.structure, hostbuf.size
+        # print(self.structure, hostbuf.size)
         cl.enqueue_copy(queue, hostbuf, self.data)
         queue.flush()
         try:
@@ -202,7 +202,7 @@ def empty(queue, shape, dtype, flags=cl.mem_flags.READ_WRITE,
     try:
         buf = cl.Buffer(queue.context, flags, size=bufsize)
     except:
-        print queue, flags, type(flags), bufsize, type(bufsize)
+        print(queue, flags, type(flags), bufsize, type(bufsize))
         raise
     return Array(queue, data=buf, dtype=dtype, shape=shape, strides=strides)
 

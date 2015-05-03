@@ -1,10 +1,10 @@
 from collections import defaultdict
 import numpy as np
 import pyopencl as cl
-from plan import Plan
 from mako.template import Template
-from clarray import to_device
-from clraggedarray import CLRaggedArray
+from .clarray import to_device
+from .clraggedarray import CLRaggedArray
+from .plan import Plan
 
 
 def dhist(seq):
@@ -130,7 +130,7 @@ class gemv_prog(object):
         self.plans = self.choose_plans()
 
     def print_geometry_summary(self, items=None, full=False):
-        print 'geometry_summary: tag=%s' % self.tag
+        print('geometry_summary: tag=%s' % self.tag)
         if items is None:
             gg = self.geometry
         else:
@@ -141,7 +141,7 @@ class gemv_prog(object):
         for dsi in ds:
             counts[dsi] += 1
         for dsi in sorted(counts):
-            print '  %6s\t%s' % (counts[dsi], dsi)
+            print('  %6s\t%s' % (counts[dsi], dsi))
 
     def _geometry(self):
         A_starts = self.A.starts
@@ -253,10 +253,10 @@ def ref_impl(p, items):
                          np.asarray(items, dtype='int32'))
     if 0:
         if len(items) < 10:
-            print 'Falling back on reference implementation'
+            print('Falling back on reference implementation')
             p.print_geometry_summary(items, full=True)
         else:
-            print 'Falling back on reference implementation'
+            print('Falling back on reference implementation')
             p.print_geometry_summary(items)
 
     assert all(s == 1 for s in p.A.stride1s)
@@ -363,7 +363,7 @@ def ref_impl(p, items):
     """
 
     text = Template(text, output_encoding='ascii').render(**p.__dict__)
-    # print text
+    # print(text)
 
     gsize = (
         max(p.geometry[ii]['y_len'] for ii in items),
@@ -405,7 +405,7 @@ def ref_impl(p, items):
         p.Y.cl_shape0s,
         p.Y.cl_buf]
 
-    # print [str(arr.dtype)[0] for arr in full_args]
+    # print([str(arr.dtype)[0] for arr in full_args])
     fn.set_args(*[arr.data for arr in full_args])
     rval = Plan(p.queue, fn, gsize, lsize, name="clra_gemv.ref_impl",
                 tag=p.tag,
@@ -480,7 +480,7 @@ def reduce_impl(p, items,
     })
     if 0:
         for k, v in textconf.items():
-            print k, v
+            print(k, v)
 
     textconf.update(p.__dict__)
 
@@ -708,11 +708,11 @@ def many_dots_impl(p, items):
     })
     if 0:
         for k, v in textconf.items():
-            print k, v
+            print(k, v)
     textconf.update(p.__dict__)
-    #    print 'float_gamma', textconf['float_gamma']
-    #    print 'cl_gamma', textconf['cl_gamma']
-    #    print 'clra_gamma', textconf['clra_gamma']
+    #    print('float_gamma', textconf['float_gamma'])
+    #    print('cl_gamma', textconf['cl_gamma'])
+    #    print('clra_gamma', textconf['clra_gamma'])
 
     text = """
         __kernel void fn(

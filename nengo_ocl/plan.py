@@ -128,7 +128,7 @@ class DAG(object):
                 self.dg.add_edge(other, plan)
         self.order = nx.topological_sort(self.dg)
         # for plan in self.order:
-        # print 'order', plan
+        #     print('order', plan)
 
     def __call__(self):
         return self.call_n_times(1)
@@ -177,7 +177,7 @@ class DAG(object):
                     tmp = [boundary] + preconditions[plan]
                 else:
                     tmp = None
-                # print 'tmp', tmp
+                # print('tmp', tmp)
                 ev = plan.enqueue(wait_for=tmp)
                 plan.queue.flush()
                 for client in self.clients[plan]:

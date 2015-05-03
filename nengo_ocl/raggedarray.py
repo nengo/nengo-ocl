@@ -2,7 +2,9 @@
 Numpy implementation of RaggedArray data structure.
 
 """
-import StringIO
+from __future__ import print_function
+
+from nengo.utils.compat import StringIO
 import numpy as np
 
 
@@ -91,7 +93,7 @@ class RaggedArray(object):
         namelen = max(len(n) for n in self.names)
         fmt = '%%%is' % namelen
         for ii, nn in enumerate(self.names):
-            print >> sio, (fmt % nn), self[ii]
+            print((fmt % nn), self[ii], file=sio)
         return sio.getvalue()
 
     def shallow_copy(self):
@@ -161,12 +163,12 @@ class RaggedArray(object):
                     offset=byteoffset,
                     strides=bytestrides)
             except:
-                print self.names[item]
-                print shape
-                print self.dtype
-                print self.buf.size
-                print byteoffset
-                print bytestrides
+                print(self.names[item])
+                print(shape)
+                print(self.dtype)
+                print(self.buf.size)
+                print(byteoffset)
+                print(bytestrides)
                 raise
             return view
 
@@ -199,11 +201,11 @@ class RaggedArray(object):
                 offset=byteoffset,
                 strides=bytestrides)
         except:
-            print shape
-            print self.dtype
-            print self.buf.size
-            print byteoffset
-            print bytestrides
+            print(shape)
+            print(self.dtype)
+            print(self.buf.size)
+            print(byteoffset)
+            print(bytestrides)
 
             raise
         return view

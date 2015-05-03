@@ -2,6 +2,8 @@ import numpy as np
 import pyopencl as cl
 import pytest
 
+from nengo.utils.compat import range
+
 from nengo_ocl import raggedarray as ra
 from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
@@ -13,7 +15,7 @@ ctx = cl.create_some_context()
 def make_random_pair(n, d=1, low=20, high=40):
     """Helper to make a pair of RaggedArrays, one host and one device"""
     shapes = zip(*(np.random.randint(low=low, high=high, size=n).tolist()
-                   for dd in xrange(d)))
+                   for dd in range(d)))
     vals = [np.random.normal(size=shape) for shape in shapes]
     A = RA(vals)
 
