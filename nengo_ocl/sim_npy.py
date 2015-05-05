@@ -447,7 +447,7 @@ class Simulator(Simulator):
         operators.append(DotInc(self._dt, self._one, self._time))
 
         # -- convert DotInc, Reset, Copy, and ProdUpdate to MultiProdUpdate
-        operators = map(MultiProdUpdate.convert_to, operators)
+        operators = list(map(MultiProdUpdate.convert_to, operators))
         operators = MultiProdUpdate.compress(operators)
         self.operators = operators
         all_signals = signals_from_operators(operators)
@@ -510,7 +510,7 @@ class Simulator(Simulator):
                 view_builder, ops)
         else:
             for op in ops:
-                map(view_builder.append_view, op.all_signals)
+                list(map(view_builder.append_view, op.all_signals))
 
     def setup_views_MultiProdUpdate(self, view_builder, ops):
         def as2d(view):
@@ -553,8 +553,8 @@ class Simulator(Simulator):
 
                 AX_views.extend([A_view, X_view])
 
-            map(view_builder.append_view,
-                op.all_signals + AX_views + YYB_views)
+            list(map(view_builder.append_view,
+                     op.all_signals + AX_views + YYB_views))
             self._AX_views[op] = AX_views
             self._YYB_views[op] = YYB_views
 
@@ -674,9 +674,9 @@ class Simulator(Simulator):
         sidx = self.sidx
 
         if callable(beta):
-            beta_sigs = map(beta, seq)
+            beta_sigs = list(map(beta, seq))
             beta = self.RaggedArray(
-                map(sidx.__getitem__, beta_sigs))
+                list(map(sidx.__getitem__, beta_sigs)))
 
         Y_sigs = [Y_sig_fn(item) for item in seq]
         if Y_in_sig_fn is None:
@@ -758,10 +758,7 @@ class Simulator(Simulator):
         """
         Return internally shaped signals, which are always 2d
         """
-        try:
-            return self.all_data[self.sidx[item]]
-        except KeyError:
-            return self.all_data[self.sidx[self.model.memo[id(item)]]]
+        return self.all_data[self.sidx[item]]
 
     @property
     def signals(self):
@@ -779,10 +776,7 @@ class Simulator(Simulator):
                     '__step__': self._step,
                 }.get(item, item)
 
-                try:
-                    raw = self.all_data[self.sidx[item]]
-                except KeyError:
-                    raw = self.all_data[self.sidx[self.model.memo[id(item)]]]
+                raw = self.all_data[self.sidx[item]]
                 assert raw.ndim == 2
                 if item.ndim == 0:
                     return raw[0, 0]
@@ -794,8 +788,6 @@ class Simulator(Simulator):
                     raise NotImplementedError()
 
             def __setitem__(_, item, val):
-                if item not in self.sidx:
-                    item = self.model.memo[id(item)]
                 raw = self.all_data[self.sidx[item]]
                 assert raw.ndim == 2
                 incoming = np.asarray(val)
@@ -813,7 +805,7 @@ class Simulator(Simulator):
 
             def __str__(self_):
                 from nengo.utils.compat import StringIO
-                sio = StringIO.StringIO()
+                sio = StringIO()
                 for k in self_:
                     print(k, self_[k], file=sio)
                 return sio.getvalue()

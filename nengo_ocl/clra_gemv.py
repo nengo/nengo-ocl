@@ -362,7 +362,7 @@ def ref_impl(p, items):
         }
     """
 
-    text = Template(text, output_encoding='ascii').render(**p.__dict__)
+    text = Template(text, output_encoding='ascii').render(**p.__dict__).decode('ascii')
     # print(text)
 
     gsize = (
@@ -610,7 +610,7 @@ def reduce_impl(p, items,
     }
         """
 
-    text = Template(text, output_encoding='ascii').render(**textconf)
+    text = Template(text, output_encoding='ascii').render(**textconf).decode('ascii')
 
     fn = cl.Program(p.queue.context, text).build().fn
 
@@ -795,7 +795,7 @@ def many_dots_impl(p, items):
     }
         """
 
-    text = Template(text, output_encoding='ascii').render(**textconf)
+    text = Template(text, output_encoding='ascii').render(**textconf).decode('ascii')
 
     fn = cl.Program(p.queue.context, text).build().fn
 

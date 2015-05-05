@@ -89,7 +89,7 @@ class RaggedArray(object):
         assert 0 not in shape1s
 
     def __str__(self):
-        sio = StringIO.StringIO()
+        sio = StringIO()
         namelen = max(len(n) for n in self.names)
         fmt = '%%%is' % namelen
         for ii, nn in enumerate(self.names):

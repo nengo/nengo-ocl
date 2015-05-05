@@ -2,6 +2,8 @@ import numpy as np
 import pyopencl as cl
 import pyopencl.array as cl_array
 
+from nengo.utils.compat import is_string
+
 
 # XXX: use cl.array.Array, which has strides, flags
 class Array(cl_array.Array):
@@ -155,7 +157,7 @@ class Array(cl_array.Array):
 
 def ocldtype(obj):
     obj = str(obj)
-    if isinstance(obj, basestring):
+    if is_string(obj):
         return {
             'float32': 'float',
             'float64': 'double',
@@ -170,7 +172,7 @@ def ocldtype(obj):
 def to_device(queue, arr, flags=cl.mem_flags.READ_WRITE):
     arr = np.asarray(arr)
     if len(arr.data) > 0:
-        buf = cl.Buffer(queue.context, flags, size=len(arr.data))
+        buf = cl.Buffer(queue.context, flags, size=arr.nbytes)
         cl.enqueue_copy(queue, buf, arr.data).wait()
     else:
         buf = None

@@ -93,7 +93,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
 
     textconf = dict(Atype=A.cl_buf.ocldtype, Xtype=X.cl_buf.ocldtype,
                     Ytype=Y.cl_buf.ocldtype)
-    text = Template(text, output_encoding='ascii').render(**textconf)
+    text = Template(text, output_encoding='ascii').render(**textconf).decode('ascii')
 
     full_args = (
         A.cl_shape0s,
@@ -191,7 +191,7 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
         Xtype=X.cl_buf.ocldtype, Ytype=Y.cl_buf.ocldtype,
         Atype=A.cl_buf.ocldtype, Btype=B.cl_buf.ocldtype
     )
-    text = Template(text, output_encoding='ascii').render(**textconf)
+    text = Template(text, output_encoding='ascii').render(**textconf).decode('ascii')
 
     full_args = (
         X.cl_shape0s,
@@ -302,7 +302,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
                     Ytype=Y.cl_buf.ocldtype,
                     Ctype=cl_countdowns.ocldtype,
                     Ptype=cl_periods.ocldtype)
-    text = Template(text, output_encoding='ascii').render(**textconf)
+    text = Template(text, output_encoding='ascii').render(**textconf).decode("ascii")
 
     full_args = (
         cl_countdowns,
@@ -373,7 +373,7 @@ ${code}
                     N=N, input_names=input_names, input_types=input_types,
                     oname=ast_conversion.OUTPUT_NAME, otype=output_type,
                     )
-    text = Template(text, output_encoding='ascii').render(**textconf)
+    text = Template(text, output_encoding='ascii').render(**textconf).decode('ascii')
 
     full_args = []
     for x in inputs:
@@ -439,8 +439,8 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
         ow = w;
         os = (spiked) ? dt_inv : 0;
         """
-    declares = Template(declares, output_encoding='ascii').render(**textconf)
-    text = Template(text, output_encoding='ascii').render(**textconf)
+    declares = Template(declares, output_encoding='ascii').render(**textconf).decode('ascii')
+    text = Template(text, output_encoding='ascii').render(**textconf).decode('ascii')
     return _plan_template(
         queue, "cl_lif", text, declares=declares,
         tag=tag, n_elements=n_elements,
@@ -461,7 +461,7 @@ def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
         j = max(j - 1, c0);
         r = c1 / (ref + tau * log1p(c1/j));
         """
-    declares = Template(declares, output_encoding='ascii').render(**textconf)
+    declares = Template(declares, output_encoding='ascii').render(**textconf).decode('ascii')
     return _plan_template(
         queue, "cl_lif_rate", text, declares=declares,
         tag=tag, n_elements=n_elements,
@@ -497,7 +497,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         constant.
 
     """
-    base = inputs.values()[0]   # input to use as reference (for lengths)
+    base = list(inputs.values())[0]   # input to use as reference (for lengths)
     N = len(base)
 
     # split parameters into static and updated params
@@ -513,7 +513,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                 raise
 
     avars = {}
-    for vname, v in inputs.items() + outputs.items():
+    for vname, v in list(inputs.items()) + list(outputs.items()):
         assert vname not in avars, "Name clash"
         assert len(v) == N
         assert all_equal(v.shape0s, base.shape0s)
@@ -588,7 +588,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             int ${name}_isvector = ${name}_shape0s[n] > 1;
             if (${name}_isvector) cur_${name} += m;
 % endfor
-% for name, [type, offset] in ivars.items() + ovars.items() + pvars.items():
+% for name, [type, offset] in list(ivars.items()) + list(ovars.items()) + list(pvars.items()):
             ${type} ${name};
 % endfor
 % for name, [type, value] in static_params.items():
@@ -625,7 +625,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                 m = 0;
                 if (n >= ${N}) return;
 
-    % for name, [_, offset] in ivars.items() + ovars.items() + pvars.items():
+    % for name, [_, offset] in list(ivars.items()) + list(ovars.items()) + list(pvars.items()):
                 cur_${name} = in_${name} + ${offset};
     % endfor
     % for name, _ in pvars.items():
@@ -633,7 +633,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                 if (!${name}_isvector) ${name} = *cur_${name};
     % endfor
             } else {
-    % for name, _ in ivars.items() + ovars.items():
+    % for name, _ in list(ivars.items()) + list(ovars.items()):
                 cur_${name}++;
     % endfor
     % for name, _ in pvars.items():
@@ -700,13 +700,13 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         }
         """
 
-    text = Template(text, output_encoding='ascii').render(**textconf)
+    text = Template(text, output_encoding='ascii').render(**textconf).decode('ascii')
     if 0:
         for i, line in enumerate(text.split('\n')):
             print("%3d %s" % (i + 1, line))
 
     full_args = []
-    for vname, v in inputs.items() + outputs.items():
+    for vname, v in list(inputs.items()) + list(outputs.items()):
         full_args.extend([v.cl_starts, v.cl_buf])
     for vname, v in params.items():
         full_args.extend([v.cl_starts, v.cl_shape0s, v.cl_buf])

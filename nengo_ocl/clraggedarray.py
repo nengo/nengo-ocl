@@ -64,9 +64,8 @@ class CLRaggedArray(object):
         self.names = np_raggedarray.names
 
     def __str__(self):
-        sio = StringIO.StringIO()
-        print('names', self.names)
-        namelen = max(len(n) for n in self.names)
+        sio = StringIO()
+        namelen = max([0] + [len(n) for n in self.names])
         fmt = '%%%is' % namelen
         for ii, nn in enumerate(self.names):
             print('->', self[ii])

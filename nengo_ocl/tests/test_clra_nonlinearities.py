@@ -99,7 +99,7 @@ def test_lif_speed(rng, heterogeneous):
         n_neurons = [1.0e5] * 5 + [1e3] * 50
     else:
         n_neurons = [1.1e5] * 5
-    n_neurons = map(int, n_neurons)
+    n_neurons = list(map(int, n_neurons))
 
     J = RA([rng.randn(n) for n in n_neurons])
     V = RA([rng.uniform(low=0, high=1, size=n) for n in n_neurons])

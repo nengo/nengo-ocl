@@ -417,7 +417,11 @@ class FuncExp(Expression):
                 raise NotImplementedError(
                     "'%s' function is not supported" % (fn.__name__))
 
-            if converter.func_code.co_argcount != len(args):
+            try:
+                argcount = converter.func_code.co_argcount
+            except AttributeError:
+                argcount = converter.__code__.co_argcount
+            if argcount != len(args):
                 raise NotImplementedError(
                     "'%s' function is not supported for %d arguments"
                     % (fn.__name__, len(args)))
@@ -488,7 +492,10 @@ class OCL_Translator(ast.NodeVisitor):
         ff.visit(a)
         function_def = ff.fn_node
 
-        self.arg_names = [arg.id for arg in function_def.args.args]
+        try:
+            self.arg_names = [arg.id for arg in function_def.args.args]
+        except AttributeError:
+            self.arg_names = [arg.arg for arg in function_def.args.args]
         if in_dims is None:
             in_dims = [None] * len(self.arg_names)
         self.arg_dims = in_dims
@@ -504,7 +511,6 @@ class OCL_Translator(ast.NodeVisitor):
             else:
                 self.function_name = "<lambda>"
 
-            self.arg_names = [arg.id for arg in function_def.args.args]
             # wrap lambda expression to look like a one-line function
             r = ast.Return()
             r.value = function_def.body
@@ -599,8 +605,8 @@ class OCL_Translator(ast.NodeVisitor):
     def _broadcast_args(self, func, args):
         """Apply 'func' element-wise to lists of args"""
         as_list = lambda x: list(x) if iterable(x) else [x]
-        args = map(as_list, args)
-        arg_lens = map(len, args)
+        args = list(map(as_list, args))
+        arg_lens = list(map(len, args))
         max_len = max(arg_lens)
         assert all(n in [0, 1, max_len] for n in arg_lens), (
             "Could not broadcast arguments with lengths %s" % arg_lens)
@@ -844,11 +850,18 @@ class OCL_Function(object):
         source = inspect.getsource(fn)
         source = strip_leading_whitespace(source)
 
-        globals_dict = fn.func_globals
-        closure_dict = (
-            dict(zip(fn.func_code.co_freevars,
-                     [c.cell_contents for c in fn.func_closure]))
-            if fn.func_closure is not None else {})
+        try:
+            globals_dict = fn.func_globals
+            closure_dict = (
+                dict(zip(fn.func_code.co_freevars,
+                         [c.cell_contents for c in fn.func_closure]))
+                if fn.func_closure is not None else {})
+        except AttributeError:
+            globals_dict = fn.__globals__
+            closure_dict = ({var: contents for var, contents in
+                             zip(fn.__code__.co_freevars,
+                                 [c.cell_contents for c in fn.__closure__])}
+                            if fn.__closure__ is not None else {})
 
         return OCL_Translator(source, globals_dict, closure_dict,
                               in_dims=self.in_dims, out_dim=self.out_dim)

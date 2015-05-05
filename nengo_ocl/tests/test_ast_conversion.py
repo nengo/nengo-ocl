@@ -168,7 +168,7 @@ def _test_conn(Simulator, fn, size_in, dist_in=None, n=1):
         dist_in = [dist_in]
     assert len(dist_in) == size_in
 
-    x = zip(*[d.sample(n, rng=rng) for d in dist_in])  # preserve types
+    x = list(zip(*[d.sample(n, rng=rng) for d in dist_in]))  # preserve types
     # x = zip(*[arggen.gen(n, rng=rng) for arggen in arggens])
     y = [fn(xx) for xx in x]
 
