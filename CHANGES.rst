@@ -19,8 +19,8 @@ Release History
    - Bugfixes
    - Documentation
 
-0.1.0 (unreleased)
-==================
+0.1.0 (June 8, 2015)
+====================
 
 Initial release of Nengo OpenCL!
 Supports Nengo 2.0.x on Python 2.6+ and 3.3+.
