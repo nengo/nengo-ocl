@@ -170,7 +170,8 @@ def plan_rand(queue, state, samples, tag=None):
     textconf = dict(
         Ytype=ocldtype, n_streams=n_streams, nY=nY,
         sample_constants=sample_constants, sample_code=sample_code)
-    text = Template(text, output_encoding='ascii').render(**textconf).decode('ascii')
+    text = Template(text, output_encoding='ascii').render(
+        **textconf).decode('ascii')
 
     full_args = (
         state.cl_buf,
@@ -272,7 +273,8 @@ def plan_randn(queue, state, samples, tag=None):
         sample_constants=sample_constants,
         sample_code0=sample_code0,
         sample_code1=sample_code1)
-    text = Template(text, output_encoding='ascii').render(**textconf).decode('ascii')
+    text = Template(text, output_encoding='ascii').render(
+        **textconf).decode('ascii')
 
     full_args = (
         state.cl_buf,
