@@ -15,6 +15,7 @@ from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalView, SignalDict
 from nengo.utils.compat import OrderedDict
+import nengo.utils.numpy as npext
 
 from nengo_ocl.raggedarray import RaggedArray as _RaggedArray
 
@@ -381,7 +382,6 @@ class Simulator(Simulator):
 
     def __init__(self, network, dt=0.001, seed=None, model=None,
                  planner=greedy_planner):
-        assert seed is None, "Seed not used"
         dt = float(dt)
 
         if model is None:
@@ -455,6 +455,11 @@ class Simulator(Simulator):
             self._plan.extend(self.plan_op_group(op_type, op_list))
         self._plan.extend(self.plan_probes())
         self.all_bases = all_bases
+
+        # --- set seed
+        seed = np.random.randint(npext.maxint) if seed is None else seed
+        self.seed = seed
+        self.rng = np.random.RandomState(self.seed)
 
     def _prep_all_data(self):
         pass
@@ -699,5 +704,5 @@ class Simulator(Simulator):
 
         return Accessor()
 
-    def reset(self):
+    def reset(self, seed=None):
         raise NotImplementedError("Resetting not implemented")

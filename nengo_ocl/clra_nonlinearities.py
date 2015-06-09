@@ -1,8 +1,10 @@
 import numpy as np
 import pyopencl as cl
 from mako.template import Template
+import nengo.dists as nengod
 from nengo.utils.compat import range
 
+from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, as_ascii, to_device
 from nengo_ocl.plan import Plan
 
@@ -800,5 +802,240 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     _fn.set_args(*[arr.data for arr in full_args])
 
     rval = Plan(queue, _fn, gsize, lsize=None, name=name, tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
+
+
+def init_rng(queue, seed):
+
+    work_items = queue.device.max_work_group_size
+    ranluxcltab = to_device(queue, np.zeros(28 * work_items, dtype='int32'))
+
+    text = """
+        #include "pyopencl-ranluxcl.cl"
+
+        ////////// MAIN FUNCTION //////////
+        __kernel void init_rng(
+            uint ins,
+            __global ranluxcl_state_t *ranluxcltab
+        )
+        {
+            ranluxcl_initialization(ins, ranluxcltab);
+        }
+        """
+
+    textconf = dict()
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    kernel = cl.Program(queue.context, text).build().init_rng
+    gsize = (work_items,)
+    lsize = None
+    kernel(queue, gsize, lsize, np.uint32(seed), ranluxcltab.data)
+    queue.finish()
+
+    return ranluxcltab
+
+
+_dist_enums = {nengod.Uniform: 0, nengod.Gaussian: 1}
+_dist_params = {
+    nengod.Uniform: lambda d: np.array([d.low, d.high], dtype=np.float32),
+    nengod.Gaussian: lambda d: np.array([d.mean, d.std], dtype=np.float32),
+    }
+dist_header = """
+#include "pyopencl-ranluxcl.cl"
+
+inline float4 sample_dist(
+    int dist, __global const float *params, ranluxcl_state_t *state)
+{
+    switch (dist) {
+        case 0:  // Uniform (params: low, high)
+            //return ranluxcl32(state);
+            return params[0] + (params[1] - params[0]) * ranluxcl32(state);
+        case 1:  // Gaussian (params: mean, std)
+            //return 0.0f;
+            return params[0] + params[1] * ranluxcl32norm(state);
+        default:
+            return 0.0f;
+    }
+}
+
+inline float getfloat4(float4 a, int i) {
+    switch (i) {
+        case 0: return a.s0;
+        case 1: return a.s1;
+        case 2: return a.s2;
+        case 3: return a.s3;
+    }
+}
+"""
+
+
+def get_dist_enums_params(dists):
+    enums = [np.array(_dist_enums[d.__class__], dtype=int) for d in dists]
+    params = [_dist_params[d.__class__](d) for d in dists]
+    return RaggedArray(enums), RaggedArray(params)
+
+
+def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
+                    tag=None):
+    N = len(Y)
+    assert len(Y) == len(dist_enums) == len(dist_params) == len(scale)
+
+    assert dist_enums.cl_buf.ctype == 'int'
+    assert scale.cl_buf.ctype == 'int'
+
+    for i in range(N):
+        assert Y.shape1s[i] == 1
+        assert Y.stride0s[i] == 1
+        assert Y.stride1s[i] == 1
+
+        assert dist_enums.shape0s[i] == dist_enums.shape1s[i] == 1
+        assert dist_params.shape1s[i] == 1
+
+        assert scale.shape0s[i] == scale.shape1s[i] == 1
+        assert scale.stride0s[i] == scale.stride1s[i] == 1
+
+    text = """
+        ${dist_header}
+
+        ////////// MAIN FUNCTION //////////
+        __kernel void whitenoise(
+            __global const int *shape0s,
+            __global const int *Ystarts,
+            __global ${Ytype} *Ydata,
+            __global const int *Estarts,
+            __global const int *Edata,
+            __global const int *Pstarts,
+            __global const ${Ptype} *Pdata,
+            __global const int *scalestarts,
+            __global const int *scaledata,
+            __global ranluxcl_state_t *ranluxcltab
+        )
+        {
+            const int i0 = get_global_id(0);
+            const int k = get_global_id(1);
+            const int m = shape0s[k];
+            if (i0 >= m)
+                return;
+
+            __global ${Ytype} *y = Ydata + Ystarts[k];
+
+            ranluxcl_state_t state;
+            ranluxcl_download_seed(&state, ranluxcltab);
+
+            const int scale = *(scaledata + scalestarts[k]);
+            const int dist_enum = *(Edata + Estarts[k]);
+            __global const float *dist_params = Pdata + Pstarts[k];
+
+            float4 samples;
+            float sample;
+            int samplei = 4;
+            for (int i = i0; i < m; i += get_global_size(0))
+            {
+                if (samplei >= 4) {
+                    samples = sample_dist(dist_enum, dist_params, &state);
+                    samplei = 0;
+                }
+
+                sample = getfloat4(samples, samplei);
+                y[i] = (scale) ? ${sqrt_dt_inv} * sample : sample;
+                samplei++;
+            }
+
+            ranluxcl_upload_seed(&state, ranluxcltab);
+        }
+        """
+
+    textconf = dict(Ytype=Y.cl_buf.ctype, Ptype=dist_params.cl_buf.ctype,
+                    sqrt_dt_inv=1. / np.sqrt(dt), dist_header=dist_header)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        Y.cl_shape0s,
+        Y.cl_starts,
+        Y.cl_buf,
+        dist_enums.cl_starts,
+        dist_enums.cl_buf,
+        dist_params.cl_starts,
+        dist_params.cl_buf,
+        scale.cl_starts,
+        scale.cl_buf,
+        ranluxcltab,
+    )
+    _fn = cl.Program(queue.context, text).build().whitenoise
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    max_len = min(queue.device.max_work_group_size, max(Y.shape0s))
+    gsize = (max_len, N)
+    lsize = (max_len, 1)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitenoise", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
+
+
+def plan_whitesignal(queue, Y, t, signals, dt, tag=None):
+    N = len(Y)
+    assert len(Y) == len(t) == len(signals)
+
+    for i in range(N):
+        assert Y.shape1s[i] == 1
+        assert Y.stride0s[i] == Y.stride1s[i] == 1
+
+        assert t.shape0s[i] == t.shape1s[i] == 1
+
+        assert Y.shape0s[i] == signals.shape1s[i]
+        assert signals.stride1s[i] == 1
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void whitesignal(
+            __global const int *Yshape0s,
+            __global const int *Ystarts,
+            __global ${Ytype} *Ydata,
+            __global const int *Tstarts,
+            __global ${Ttype} *Tdata,
+            __global const int *Sshape0s,
+            __global const int *Sstarts,
+            __global ${Stype} *Sdata
+        )
+        {
+            int i = get_global_id(0);
+            const int k = get_global_id(1);
+            const int m = Yshape0s[k];
+            if (i >= m)
+                return;
+
+            __global ${Ytype} *y = Ydata + Ystarts[k];
+            __global ${Ytype} *s = Sdata + Sstarts[k];
+            const float t = *(Tdata + Tstarts[k]);
+            const int nt = Sshape0s[k];
+            const int ti = (int)round(t / ${dt}) % nt;
+
+            for (; i < m; i += get_global_size(0))
+                y[i] = s[m*ti + i];
+        }
+        """
+
+    textconf = dict(Ytype=Y.cl_buf.ctype, Ttype=t.cl_buf.ctype,
+                    Stype=signals.cl_buf.ctype, dt=dt)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        Y.cl_shape0s,
+        Y.cl_starts,
+        Y.cl_buf,
+        t.cl_starts,
+        t.cl_buf,
+        signals.cl_shape0s,
+        signals.cl_starts,
+        signals.cl_buf,
+    )
+    _fn = cl.Program(queue.context, text).build().whitesignal
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    max_len = min(queue.device.max_work_group_size, max(Y.shape0s))
+    gsize = (max_len, N)
+    lsize = (max_len, 1)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitesignal", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval

@@ -6,9 +6,8 @@ import warnings
 import numpy as np
 import pyopencl as cl
 
-from nengo.dists import Uniform, Gaussian
 from nengo.neurons import LIF, LIFRate
-from nengo.processes import StochasticProcess
+from nengo.processes import WhiteNoise, FilteredNoise, WhiteSignal
 from nengo.synapses import LinearFilter, Alpha, Lowpass
 from nengo.utils.compat import OrderedDict
 from nengo.utils.filter_design import cont2discrete
@@ -21,12 +20,18 @@ from nengo_ocl.clraggedarray import CLRaggedArray
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_lif, plan_lif_rate, plan_direct, plan_probes,
-    plan_slicedcopy, plan_filter_synapse, plan_elementwise_inc)
+    plan_slicedcopy, plan_filter_synapse, plan_elementwise_inc,
+    init_rng, get_dist_enums_params, plan_whitenoise, plan_whitesignal)
 from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
 from nengo_ocl.ast_conversion import OCL_Function
 
 logger = logging.getLogger(__name__)
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
+
+
+def get_closures(f):
+    return collections.OrderedDict(zip(
+        f.__code__.co_freevars, (c.cell_contents for c in f.__closure__)))
 
 
 class Simulator(sim_npy.Simulator):
@@ -53,6 +58,7 @@ class Simulator(sim_npy.Simulator):
 
         self.n_prealloc_probes = n_prealloc_probes
         self.ocl_only = ocl_only
+        self.cl_rng_state = None
 
         # -- allocate data
         sim_npy.Simulator.__init__(
@@ -72,6 +78,10 @@ class Simulator(sim_npy.Simulator):
         self._dag = DAG(context, self.step_marker,
                         self._plandict,
                         self.profiling)
+
+    def _init_cl_rng(self):
+        if self.cl_rng_state is None:
+            self.cl_rng_state = init_rng(self.queue, self.seed)
 
     def plan_op_group(self, *args):
         # -- HACK: SLOWLY removing sim_npy from the project...
@@ -273,34 +283,55 @@ class Simulator(sim_npy.Simulator):
         B = self.RaggedArray(nums)
         return [plan_filter_synapse(self.queue, X, Y, A, B)]
 
-    def plan_SimNoise(self, ops):
-        def split(iterable, condition):
-            a = []
-            b = []
-            for i in iterable:
-                if condition(i):
-                    a.append(i)
-                else:
-                    b.append(i)
-            return a, b
+    def plan_SimProcess(self, all_ops):
+        groups = groupby(all_ops, lambda op: op.process.__class__)
+        plans = []
+        for process_class, ops in groups:
+            if process_class is WhiteNoise:
+                plans.extend(self._plan_WhiteNoise(ops))
+            elif process_class is FilteredNoise:
+                plans.extend(self._plan_FilteredNoise(ops))
+            elif process_class is WhiteSignal:
+                plans.extend(self._plan_WhiteSignal(ops))
+            else:
+                raise ValueError("Unsupported process type '%s'"
+                                 % process_class.__name__)
 
-        ops, badops = split(ops, lambda x: x.__class__ is StochasticProcess)
-        if len(badops) > 0:
-            raise NotImplementedError(
-                "Can only simulate StochasticProcess base class")
+        return plans
 
-        ops, badops = split(ops, lambda x: x.synapse is None)
-        if len(badops) > 0:
-            raise NotImplementedError(
-                "Can only simulate noise with no synapse")
+    def _plan_WhiteNoise(self, ops):
+        self._init_cl_rng()
+        for op in ops:
+            assert op.input is None
 
-        uniform, ops = split(ops, lambda x: isinstance(x.dist, Uniform))
-        gaussian, ops = split(ops, lambda x: isinstance(x.dist, Gaussian))
-        if len(ops) > 0:
-            raise NotImplementedError(
-                "Can only simulate Uniform or Gaussian noise")
+        Y = self.all_data[[self.sidx[op.output] for op in ops]]
+        scale = self.RaggedArray([np.int32(op.process.scale) for op in ops])
+        enums, params = get_dist_enums_params([op.process.dist for op in ops])
+        enums = CLRaggedArray(self.queue, enums)
+        params = CLRaggedArray(self.queue, params)
+        dt = self.model.dt
+        return [plan_whitenoise(self.queue, Y, enums, params, scale, dt,
+                                self.cl_rng_state, tag="whitenoise")]
 
-        raise NotImplementedError("TODO")
+    def _plan_FilteredNoise(self, ops):
+        raise NotImplementedError()
+
+    def _plan_WhiteSignal(self, ops):
+        Y = self.all_data[[self.sidx[op.output] for op in ops]]
+        t = self.all_data[[self.sidx[self._time] for _ in ops]]
+
+        dt = self.model.dt
+        signals = []
+        for op in ops:
+            assert op.input is None and op.output is not None
+            f = op.process.make_step(0, op.output.size, dt, self.rng)
+            closures = get_closures(f)
+            assert closures['dt'] == dt
+            signals.append(closures['signal'])
+
+        signals = self.RaggedArray(signals)
+        return [plan_whitesignal(self.queue, Y, t, signals, dt,
+                                 tag="whitesignal")]
 
     def plan_probes(self):
         if len(self.model.probes) == 0:
