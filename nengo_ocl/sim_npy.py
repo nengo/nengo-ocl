@@ -15,7 +15,7 @@ from nengo.simulator import ProbeDict, Simulator
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, PreserveValue, Reset
 from nengo.builder.signal import Signal, SignalView, SignalDict
-from nengo.utils.compat import OrderedDict
+from nengo.utils.compat import OrderedDict, range
 
 from nengo_ocl.plan import PythonPlan
 from nengo_ocl.ra_gemv import ragged_gather_gemv
@@ -844,7 +844,7 @@ class Simulator(Simulator):
         self.run_steps(steps)
 
     def run_steps(self, N, verbose=False):
-        for i in xrange(N):
+        for i in range(N):
             self.step()
 
     def reset(self):

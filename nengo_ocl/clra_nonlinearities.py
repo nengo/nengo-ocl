@@ -3,7 +3,7 @@ import pyopencl as cl
 from mako.template import Template
 from nengo.utils.compat import range
 from .plan import Plan
-from .clarray import to_device
+from .clarray import as_ascii, to_device
 from .clraggedarray import CLRaggedArray
 
 
@@ -33,7 +33,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     assert A.cl_buf.ocldtype == Y.cl_buf.ocldtype
 
     text = """
-        ${Ytype} get_element(
+        inline ${Ytype} get_element(
             __global const ${Ytype} *data,
             const int shape0, const int shape1, const int stride0,
             const int i, const int j
@@ -93,8 +93,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
 
     textconf = dict(Atype=A.cl_buf.ocldtype, Xtype=X.cl_buf.ocldtype,
                     Ytype=Y.cl_buf.ocldtype)
-    text = Template(text, output_encoding='ascii').render(
-        **textconf).decode('ascii')
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
         A.cl_shape0s,
@@ -192,8 +191,7 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
         Xtype=X.cl_buf.ocldtype, Ytype=Y.cl_buf.ocldtype,
         Atype=A.cl_buf.ocldtype, Btype=B.cl_buf.ocldtype
     )
-    text = Template(text, output_encoding='ascii').render(
-        **textconf).decode('ascii')
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
         X.cl_shape0s,
@@ -304,8 +302,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
                     Ytype=Y.cl_buf.ocldtype,
                     Ctype=cl_countdowns.ocldtype,
                     Ptype=cl_periods.ocldtype)
-    text = Template(text, output_encoding='ascii').render(
-        **textconf).decode("ascii")
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
         cl_countdowns,
@@ -376,8 +373,7 @@ ${code}
                     N=N, input_names=input_names, input_types=input_types,
                     oname=ast_conversion.OUTPUT_NAME, otype=output_type,
                     )
-    text = Template(text, output_encoding='ascii').render(
-        **textconf).decode('ascii')
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = []
     for x in inputs:
@@ -443,10 +439,9 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
         ow = w;
         os = (spiked) ? dt_inv : 0;
         """
-    declares = Template(declares, output_encoding='ascii').render(
-        **textconf).decode('ascii')
-    text = Template(text, output_encoding='ascii').render(
-        **textconf).decode('ascii')
+    declares = as_ascii(
+        Template(declares, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
     return _plan_template(
         queue, "cl_lif", text, declares=declares,
         tag=tag, n_elements=n_elements,
@@ -467,8 +462,8 @@ def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
         j = max(j - 1, c0);
         r = c1 / (ref + tau * log1p(c1/j));
         """
-    declares = Template(declares, output_encoding='ascii').render(
-        **textconf).decode('ascii')
+    declares = as_ascii(
+        Template(declares, output_encoding='ascii').render(**textconf))
     return _plan_template(
         queue, "cl_lif_rate", text, declares=declares,
         tag=tag, n_elements=n_elements,
@@ -709,8 +704,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         }
         """
 
-    text = Template(text, output_encoding='ascii').render(
-        **textconf).decode('ascii')
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
     if 0:
         for i, line in enumerate(text.split('\n')):
             print("%3d %s" % (i + 1, line))

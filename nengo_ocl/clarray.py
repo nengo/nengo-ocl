@@ -2,7 +2,16 @@ import numpy as np
 import pyopencl as cl
 import pyopencl.array as cl_array
 
-from nengo.utils.compat import is_string
+from nengo.utils.compat import PY2, is_string
+
+
+def as_ascii(string):
+    if not PY2 and isinstance(string, bytes):  # Python 3
+        return string.decode('ascii')
+    elif not isinstance(string, str):
+        return str(string)
+    else:
+        return string
 
 
 # XXX: use cl.array.Array, which has strides, flags

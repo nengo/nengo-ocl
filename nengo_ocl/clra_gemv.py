@@ -2,7 +2,7 @@ from collections import defaultdict
 import numpy as np
 import pyopencl as cl
 from mako.template import Template
-from .clarray import to_device
+from .clarray import as_ascii, to_device
 from .clraggedarray import CLRaggedArray
 from .plan import Plan
 
@@ -362,9 +362,8 @@ def ref_impl(p, items):
         }
     """
 
-    text = Template(text, output_encoding='ascii').render(
-        **p.__dict__).decode('ascii')
-    # print(text)
+    text = as_ascii(
+        Template(text, output_encoding='ascii').render(**p.__dict__))
 
     gsize = (
         max(p.geometry[ii]['y_len'] for ii in items),
@@ -611,8 +610,7 @@ def reduce_impl(p, items,
     }
         """
 
-    text = Template(text, output_encoding='ascii').render(
-        **textconf).decode('ascii')
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     fn = cl.Program(p.queue.context, text).build().fn
 
@@ -797,9 +795,7 @@ def many_dots_impl(p, items):
     }
         """
 
-    text = Template(text, output_encoding='ascii').render(
-        **textconf).decode('ascii')
-
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
     fn = cl.Program(p.queue.context, text).build().fn
 
     full_args = [
