@@ -277,6 +277,10 @@ def greedy_planner(operators):
             else:
                 chosen.append(ops_writing_to_base[0])
 
+        if not chosen:
+            # remaining candidates can be done in any order (no outputs)
+            chosen.extend(candidates)
+
         # -- ops that produced multiple outputs show up multiple times
         chosen = stable_unique(chosen)
         assert chosen

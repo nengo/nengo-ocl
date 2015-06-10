@@ -128,6 +128,13 @@ class Simulator(sim_npy.Simulator):
             else:
                 in_dim = None
 
+            # if any functions have no output, must do them in Python
+            if any(s is None for s in signals['out']):
+                assert all(s is None for s in signals['out'])
+                plans.append(self._plan_pythonfn(
+                    fn, t_in, signals, fn_name=fn_name))
+                continue
+
             out_dim = signals['out'][0].size
             for sig_out in signals['out']:
                 assert sig_out.size == out_dim
@@ -136,7 +143,6 @@ class Simulator(sim_npy.Simulator):
 
             # try to get OCL code
             try:
-                # in_dims = (1, in_dim) if n_args == 2 else (1, )
                 in_dims = [1] if t_in else []
                 in_dims += [in_dim] if x_in else []
                 ocl_fn = OCL_Function(fn, in_dims=in_dims, out_dim=out_dim)
@@ -161,42 +167,36 @@ class Simulator(sim_npy.Simulator):
                     raise
 
                 # not successfully translated to OCL, so do it in Python
-                dt = self.model.dt
-
-                # Need make_step function so that variables get copied
-                def make_step(t_in=t_in, x_in=x_in):
-                    f = fn
-                    t_idx = self.sidx[self._time]
-                    out_idx = [self.sidx[s] for s in signals['out']]
-
-                    if not x_in:
-                        def step():
-                            t = self.all_data[t_idx][0, 0] - dt
-                            for sout in out_idx:
-                                y = np.asarray(f(t) if t_in else f())
-                                if y.ndim == 1:
-                                    y = y[:, None]
-                                self.all_data[sout] = y
-                    else:
-                        in_idx = [self.sidx[s] for s in signals['in']]
-
-                        def step():
-                            t = self.all_data[t_idx][0, 0]
-                            for sin, sout in zip(in_idx, out_idx):
-                                x = self.all_data[sin]
-                                if x.ndim == 2 and x.shape[1] == 1:
-                                    x = x[:, 0]
-                                y = np.asarray(f(t, x) if t_in else f(x))
-                                if y.ndim == 1:
-                                    y = y[:, None]
-                                self.all_data[sout] = y
-
-                    return step
-
-                plans.append(
-                    PythonPlan(make_step(), name=fn_name, tag=fn_name))
+                plans.append(self._plan_pythonfn(
+                    fn, t_in, signals, fn_name=fn_name))
 
         return plans
+
+    def _plan_pythonfn(self, fn, t_in, signals, fn_name=""):
+        dt = self.model.dt
+        t_idx = self.sidx[self._time]
+        in_idx = [self.sidx[s] if s else None for s in signals['in']]
+        out_idx = [self.sidx[s] if s else None for s in signals['out']]
+        assert len(in_idx) == len(out_idx)
+        ix_iy = list(zip(in_idx, out_idx))
+
+        def step():
+            t = self.all_data[t_idx][0, 0] - dt if t_in else 0
+            for ix, iy in ix_iy:
+                if ix is not None:
+                    x = self.all_data[ix]
+                    if x.ndim == 2 and x.shape[1] == 1:
+                        x = x[:, 0]
+                    y = fn(t, x) if t_in else fn(x)
+                else:
+                    y = fn(t) if t_in else fn()
+                if iy is not None:
+                    y = np.asarray(y)
+                    if y.ndim == 1:
+                        y = y[:, None]
+                    self.all_data[iy] = y
+
+        return PythonPlan(step, name=fn_name, tag=fn_name)
 
     def plan_SimNeurons(self, all_ops):
         groups = groupby(all_ops, lambda op: op.neurons.__class__)
