@@ -2,9 +2,9 @@ import numpy as np
 import pyopencl as cl
 from mako.template import Template
 from nengo.utils.compat import range
-from .plan import Plan
-from .clarray import as_ascii, to_device
-from .clraggedarray import CLRaggedArray
+
+from nengo_ocl.clraggedarray import CLRaggedArray, as_ascii, to_device
+from nengo_ocl.plan import Plan
 
 
 def all_equal(a, b):
@@ -29,8 +29,8 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
         assert Y.stride1s[i] == 1
         assert A.stride1s[i] == 1
 
-    assert X.cl_buf.ocldtype == Y.cl_buf.ocldtype
-    assert A.cl_buf.ocldtype == Y.cl_buf.ocldtype
+    assert X.cl_buf.ctype == Y.cl_buf.ctype
+    assert A.cl_buf.ctype == Y.cl_buf.ctype
 
     text = """
         inline ${Ytype} get_element(
@@ -91,8 +91,8 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
         }
         """
 
-    textconf = dict(Atype=A.cl_buf.ocldtype, Xtype=X.cl_buf.ocldtype,
-                    Ytype=Y.cl_buf.ocldtype)
+    textconf = dict(Atype=A.cl_buf.ctype, Xtype=X.cl_buf.ctype,
+                    Ytype=Y.cl_buf.ctype)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
@@ -188,8 +188,8 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
         """
 
     textconf = dict(
-        Xtype=X.cl_buf.ocldtype, Ytype=Y.cl_buf.ocldtype,
-        Atype=A.cl_buf.ocldtype, Btype=B.cl_buf.ocldtype
+        Xtype=X.cl_buf.ctype, Ytype=Y.cl_buf.ctype,
+        Atype=A.cl_buf.ctype, Btype=B.cl_buf.ctype
     )
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
@@ -235,7 +235,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
     cl_countdowns = to_device(queue, periods - 1)
     cl_bufpositions = to_device(queue, np.zeros(N, dtype='int32'))
 
-    assert X.cl_buf.ocldtype == Y.cl_buf.ocldtype
+    assert X.cl_buf.ctype == Y.cl_buf.ctype
 
     # N.B.  X[i].shape = (M, N)
     #       Y[i].shape = (buf_len, M * N)
@@ -298,10 +298,10 @@ def plan_probes(queue, periods, X, Y, tag=None):
         """
 
     textconf = dict(N=N,
-                    Xtype=X.cl_buf.ocldtype,
-                    Ytype=Y.cl_buf.ocldtype,
-                    Ctype=cl_countdowns.ocldtype,
-                    Ptype=cl_periods.ocldtype)
+                    Xtype=X.cl_buf.ctype,
+                    Ytype=Y.cl_buf.ctype,
+                    Ctype=cl_countdowns.ctype,
+                    Ptype=cl_periods.ctype)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
@@ -335,8 +335,8 @@ def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
     for x in inputs:
         assert len(x) == len(output)
     N = len(inputs[0])
-    input_types = [x.cl_buf.ocldtype for x in inputs]
-    output_type = output.cl_buf.ocldtype
+    input_types = [x.cl_buf.ctype for x in inputs]
+    output_type = output.cl_buf.ctype
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -392,14 +392,14 @@ ${code}
 def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
              tag=None, n_elements=0, upsample=1):
     for array in [V, W, outV, outW, outS]:
-        assert V.cl_buf.ocldtype == J.cl_buf.ocldtype
+        assert V.cl_buf.ctype == J.cl_buf.ctype
 
     inputs = dict(j=J, v=V, w=W)
     outputs = dict(ov=outV, ow=outW, os=outS)
     parameters = dict(tau=tau, ref=ref)
 
     dt = float(dt)
-    textconf = dict(Vtype=V.cl_buf.ocldtype,
+    textconf = dict(Vtype=V.cl_buf.ctype,
                     upsample=upsample,
                     dtu=dt / upsample,
                     dtu_inv=upsample / dt,
@@ -449,12 +449,12 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
 
 
 def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
-    assert R.cl_buf.ocldtype == J.cl_buf.ocldtype
+    assert R.cl_buf.ctype == J.cl_buf.ctype
 
     inputs = dict(j=J)
     outputs = dict(r=R)
     parameters = dict(tau=tau, ref=ref)
-    textconf = dict(Rtype=R.cl_buf.ocldtype)
+    textconf = dict(Rtype=R.cl_buf.ctype)
     declares = """
         const ${Rtype} c0 = 0, c1 = 1;
         """
@@ -523,7 +523,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         # N.B. - we should be able to ignore ldas as long as all vectors
         assert all_equal(v.shape1s, 1)
 
-        dtype = v.cl_buf.ocldtype
+        dtype = v.cl_buf.ctype
         offset = '%(name)s_starts[n]' % {'name': vname}
         avars[vname] = (dtype, offset)
 
@@ -536,7 +536,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                 (vname, i, base.shape0s[i], v.shape0s[i])
             assert v.shape1s[i] == 1
 
-        dtype = v.cl_buf.ocldtype
+        dtype = v.cl_buf.ctype
         offset = '%(name)s_starts[n]' % {'name': vname}
         avars[vname] = (dtype, offset)
 

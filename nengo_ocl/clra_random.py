@@ -62,12 +62,12 @@ def get_sample_constants():
     """
 
 
-def get_sample_code(ocldtype, oname='sample'):
+def get_sample_code(ctype, oname='sample'):
     """Implements the MRG31k3p random number generator.
 
     Adapted from Theano under their license (reprinted above).
     """
-    if ocldtype == 'float':
+    if ctype == 'float':
         norm = '4.6566126e-10f'  # numpy.float32(1.0/(2**31+65))
         # this was determined by finding the biggest number such that
         # numpy.float32(number * M1) < 1.0
@@ -118,9 +118,9 @@ def plan_rand(queue, state, samples, tag=None):
     assert all(s1 == st0 for s1, st0 in zip(samples.shape1s, samples.stride0s))
     assert all(s == 1 for s in samples.stride1s)
 
-    ocldtype = samples.cl_buf.ocldtype
+    ctype = samples.cl_buf.ctype
     sample_constants = get_sample_constants()
-    sample_code = get_sample_code(ocldtype)
+    sample_code = get_sample_code(ctype)
 
     text = """
     __kernel void fn(
@@ -168,7 +168,7 @@ def plan_rand(queue, state, samples, tag=None):
     """
 
     textconf = dict(
-        Ytype=ocldtype, n_streams=n_streams, nY=nY,
+        Ytype=ctype, n_streams=n_streams, nY=nY,
         sample_constants=sample_constants, sample_code=sample_code)
     text = Template(text, output_encoding='ascii').render(
         **textconf).decode('ascii')
@@ -204,10 +204,10 @@ def plan_randn(queue, state, samples, tag=None):
     assert all(s1 == st0 for s1, st0 in zip(samples.shape1s, samples.stride0s))
     assert all(s == 1 for s in samples.stride1s)
 
-    ocldtype = samples.cl_buf.ocldtype
+    ctype = samples.cl_buf.ctype
     sample_constants = get_sample_constants()
-    sample_code0 = get_sample_code(ocldtype, oname='sample0')
-    sample_code1 = get_sample_code(ocldtype, oname='sample1')
+    sample_code0 = get_sample_code(ctype, oname='sample0')
+    sample_code1 = get_sample_code(ctype, oname='sample1')
 
     text = """
     __kernel void fn(
@@ -269,7 +269,7 @@ def plan_randn(queue, state, samples, tag=None):
     """
 
     textconf = dict(
-        Ytype=ocldtype, n_streams=n_streams, nY=nY,
+        Ytype=ctype, n_streams=n_streams, nY=nY,
         sample_constants=sample_constants,
         sample_code0=sample_code0,
         sample_code1=sample_code1)

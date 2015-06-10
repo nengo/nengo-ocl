@@ -4,7 +4,6 @@ numpy Simulator in the style of the OpenCL one, to get design right.
 from __future__ import print_function
 
 import logging
-import time
 from collections import defaultdict
 
 import networkx as nx
@@ -17,8 +16,6 @@ from nengo.builder.operator import Operator, Copy, DotInc, PreserveValue, Reset
 from nengo.builder.signal import Signal, SignalView, SignalDict
 from nengo.utils.compat import OrderedDict, range
 
-from nengo_ocl.plan import PythonPlan
-from nengo_ocl.ra_gemv import ragged_gather_gemv
 from nengo_ocl.raggedarray import RaggedArray as _RaggedArray
 
 logger = logging.getLogger(__name__)
@@ -83,7 +80,7 @@ class MultiProdUpdate(Operator):
 
     @classmethod
     def convert_to(cls, op):
-        def assert_ok():
+        def assert_ok(op, rval):
             assert set(op.reads).issuperset(rval.reads), (rval.reads, op.reads)
             assert rval.incs == op.incs
             assert rval.sets == op.sets
@@ -93,28 +90,25 @@ class MultiProdUpdate(Operator):
         if isinstance(op, Reset):
             rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value,
                        as_update=False, tag=getattr(op, 'tag', ''))
-            assert_ok()
         elif isinstance(op, Copy):
             rval = cls(op.dst, op.src, beta=1, gamma=0,
                        as_update=op.as_update, tag=op.tag)
-            assert_ok()
         elif isinstance(op, DotInc):
             rval = cls(op.Y, op.Y, beta=1, gamma=0,
                        as_update=op.as_update, tag=op.tag)
             rval.add_AX(op.A, op.X)
-            assert_ok()
         elif isinstance(op, PreserveValue):
             rval = cls(op.dst, op.dst, beta=1, gamma=0, as_update=False,
                        tag=getattr(op, 'tag', ''))
             rval._incs_Y = False
-            assert_ok()
         elif isinstance(op, StepUpdate):
             # TODO: get rid of `op.one` and `add_AX` here; use `gamma`
             rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=True, tag="")
             rval.add_AX(op.one, op.one)
-            assert_ok()
         else:
             return op
+
+        assert_ok(op, rval)
         return rval
 
     def add_AX(self, A, X):
@@ -314,25 +308,6 @@ def isview(obj):
     return obj.base is not None and obj.base is not obj
 
 
-def shape0(obj):
-    try:
-        return obj.shape[0]
-    except IndexError:
-        return 1
-
-
-def shape1(obj):
-    try:
-        return obj.shape[1]
-    except IndexError:
-        return 1
-
-
-def idxs(seq, offset):
-    rval = dict((s, i + offset) for (i, s) in enumerate(seq))
-    return rval, offset + len(rval)
-
-
 def stable_unique(seq):
     seen = set()
     rval = []
@@ -357,13 +332,9 @@ class ViewBuilder(object):
         self.stride0s = []
         self.stride1s = []
         self.names = []
-        # self.orig_len = len(self.all_signals)
-        # self.base_starts = self.all_data_A.starts
 
     def append_view(self, obj):
         assert obj.size
-        shape0(obj)
-        shape1(obj)
 
         if obj in self.sidx:
             return
@@ -379,8 +350,8 @@ class ViewBuilder(object):
 
         idx = self.sidx[obj.base]
         self.starts.append(self.rarray.starts[idx] + obj.offset)
-        self.shape0s.append(shape0(obj))
-        self.shape1s.append(shape1(obj))
+        self.shape0s.append(obj.shape[0] if obj.ndim > 0 else 1)
+        self.shape1s.append(obj.shape[1] if obj.ndim > 1 else 1)
         if obj.ndim == 0:
             self.stride0s.append(1)
             self.stride1s.append(1)
@@ -459,8 +430,6 @@ class Simulator(Simulator):
 
         op_groups = planner(operators)
         self.op_groups = op_groups  # debug
-        # print('-' * 80)
-        # self.print_op_groups()
 
         for op in operators:
             op.init_signals(sigdict)
@@ -498,12 +467,6 @@ class Simulator(Simulator):
 
     def _prep_all_data(self):
         pass
-
-    def print_op_groups(self):
-        for op_type, op_list in self.op_groups:
-            print('op_type', op_type.__name__)
-            for op in op_list:
-                print('  ', op)
 
     def plan_op_group(self, op_type, ops):
         return getattr(self, 'plan_' + op_type.__name__)(ops)
@@ -604,66 +567,6 @@ class Simulator(Simulator):
         )
         return constant_b_gemvs + vector_b_gemvs
 
-    def plan_ElementwiseInc(self, ops):
-        sidx = self.sidx
-
-        def elementwise_inc(profiling=False):
-            for op in ops:
-                A = self.all_data[sidx[op.A]]
-                X = self.all_data[sidx[op.X]]
-                Y = self.all_data[sidx[op.Y]]
-                Y[...] += A * X
-        return [elementwise_inc]
-
-    def plan_SimDirect(self, ops):
-        sidx = self.sidx
-
-        def direct(profiling=False):
-            for op in ops:
-                J = self.all_data[sidx[op.J]]
-                output = op.fn(J)
-                self.all_data[sidx[op.output]] = output
-        return [direct]
-
-    def plan_SimPyFunc(self, ops):
-        sidx = self.sidx
-        t = self.all_data[sidx[self._time]]
-
-        def pyfunc(profiling=False):
-            for op in ops:
-                output = self.all_data[sidx[op.output]]
-                args = [t[0, 0]] if op.t_in else []
-                args += [self.all_data[sidx[op.x]]] if op.x is not None else []
-                out = np.asarray(op.fn(*args))
-                if out.ndim == 1:
-                    output[...] = out[:, None]
-                else:
-                    output[...] = out
-        return [pyfunc]
-
-    def plan_SimNeurons(self, ops):
-        dt = self.model.dt
-        sidx = self.sidx
-
-        def neurons(profiling=False):
-            for op in ops:
-                J = self.all_data[sidx[op.J]]
-                output = self.all_data[sidx[op.output]]
-                states = [self.all_data[sidx[s]] for s in op.states]
-                op.neurons.step_math(dt, J, output, *states)
-        return [neurons]
-
-    def plan_SimFilterSynapse(self, ops):
-        assert all(len(op.num) == 1 and len(op.den) == 1 for op in ops)
-
-        def synapse(profiling=False):
-            for op in ops:
-                x = self.all_data[self.sidx[op.input]]
-                y = self.all_data[self.sidx[op.output]]
-                y *= -op.den[0]
-                y += op.num[0] * x
-        return [synapse]
-
     def RaggedArray(self, *args, **kwargs):
         return _RaggedArray(*args, **kwargs)
 
@@ -727,11 +630,6 @@ class Simulator(Simulator):
         Y = self.all_data[Y_idxs]
         Y_in = self.all_data[Y_in_idxs]
 
-        # if tag == 'transforms':
-        #     print('=' * 70)
-        #     print(A_js)
-        #     print(X_js)
-
         rval = self.plan_ragged_gather_gemv(
             alpha=alpha,
             A=self.all_data, A_js=A_js,
@@ -748,15 +646,6 @@ class Simulator(Simulator):
             return rval.plans
         except AttributeError:
             return [rval]
-
-    def plan_ragged_gather_gemv(self, alpha, A, A_js, X, X_js,
-                                beta, Y, Y_in=None, tag=None, seq=None,
-                                gamma=None):
-        fn = lambda: ragged_gather_gemv(alpha, A, A_js, X, X_js, beta, Y,
-                                        Y_in=Y_in, gamma=gamma,
-                                        tag=tag,
-                                        use_raw_fn=False)
-        return PythonPlan(fn, name="npy_ragged_gather_gemv", tag=tag)
 
     def __getitem__(self, item):
         """
@@ -816,40 +705,12 @@ class Simulator(Simulator):
 
         return Accessor()
 
-    def plan_probes(self):
-        if self.model.probes:
-            def probe_fn(profiling=False):
-                t0 = time.time()
-                probes = self.model.probes
-                for probe in probes:
-                    period = (1 if probe.sample_every is None
-                              else int(probe.sample_every / self.dt))
-                    if self.n_steps % period == 0:
-                        self._probe_outputs[probe].append(
-                            self.signals[self.model.sig[probe]['in']].copy())
-                t1 = time.time()
-                probe_fn.cumtime += t1 - t0
-            probe_fn.cumtime = 0.0
-            return [probe_fn]
-        else:
-            return []
-
-    def step(self):
-        profiling = self.profiling
-        for fn in self._plan:
-            fn(profiling)
-        self.n_steps += 1
-
     def run(self, time_in_seconds):
         """Simulate for the given length of time."""
         steps = int(np.round(float(time_in_seconds) / self.model.dt))
         logger.debug("Running %s for %f seconds, or %d steps",
                      self.model.label, time_in_seconds, steps)
         self.run_steps(steps)
-
-    def run_steps(self, N, verbose=False):
-        for i in range(N):
-            self.step()
 
     def reset(self):
         raise NotImplementedError("Resetting not implemented")

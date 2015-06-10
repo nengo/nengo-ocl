@@ -1,10 +1,11 @@
 from collections import defaultdict
+
 import numpy as np
 import pyopencl as cl
 from mako.template import Template
-from .clarray import as_ascii, to_device
-from .clraggedarray import CLRaggedArray
-from .plan import Plan
+
+from nengo_ocl.clraggedarray import CLRaggedArray, as_ascii, to_device
+from nengo_ocl.plan import Plan
 
 
 def dhist(seq):
@@ -270,37 +271,37 @@ def ref_impl(p, items):
         __kernel void gemv_ref(
             __global int *items,
     % if cl_alpha is not None:
-            __global ${cl_alpha.ocldtype} * alphas,
+            __global ${cl_alpha.ctype} * alphas,
     % endif
     % if (A_js is not None):
             __global int *A_starts,
             __global int *A_shape1s,
             __global int *A_stride0s,
-            __global ${A.cl_buf.ocldtype} *A_data,
+            __global ${A.cl_buf.ctype} *A_data,
             __global int *A_js_starts,
             __global int *A_js_shape0s,
             __global int *A_js_data,
             __global int *X_starts,
             __global int *X_stride0s,
-            __global ${X.cl_buf.ocldtype} *X_data,
+            __global ${X.cl_buf.ctype} *X_data,
             __global int *X_js_starts,
             __global int *X_js_data,
     % endif
     % if cl_beta is not None:
-            __global ${cl_beta.ocldtype} * betas,
+            __global ${cl_beta.ctype} * betas,
     % endif
     % if clra_beta is not None:
             __global int *beta_starts,
             __global int *beta_data,
     % endif
     % if cl_gamma is not None:
-            __global ${cl_gamma.ocldtype} * gammas,
+            __global ${cl_gamma.ctype} * gammas,
     % endif
             __global int *Y_in_starts,
-            __global ${Y_in.cl_buf.ocldtype} *Y_in_data,
+            __global ${Y_in.cl_buf.ctype} *Y_in_data,
             __global int *Y_starts,
             __global int *Y_shape0s,
-            __global ${Y.cl_buf.ocldtype} *Y_data)
+            __global ${Y.cl_buf.ctype} *Y_data)
         {
             const int mm = get_global_id(0);
             const int bb = items[get_global_id(1)];
@@ -311,19 +312,19 @@ def ref_impl(p, items):
                 const int y_in_offset = Y_in_starts[bb];
 
     % if float_beta is not None:
-                const ${Y.cl_buf.ocldtype} beta = ${float_beta};
+                const ${Y.cl_buf.ctype} beta = ${float_beta};
     % elif cl_beta is not None:
-                const ${cl_beta.ocldtype} beta = betas[bb];
+                const ${cl_beta.ctype} beta = betas[bb];
     % elif clra_beta is not None:
                 const int beta_offset = beta_starts[bb];
-                const ${clra_beta.cl_buf.ocldtype} beta
+                const ${clra_beta.cl_buf.ctype} beta
                     = beta_data[beta_offset + mm];
     % endif
 
     % if float_gamma is not None:
-                const ${Y.cl_buf.ocldtype} gamma = ${float_gamma};
+                const ${Y.cl_buf.ctype} gamma = ${float_gamma};
     % elif cl_gamma is not None:
-                const ${cl_gamma.ocldtype} gamma = gammas[bb];
+                const ${cl_gamma.ctype} gamma = gammas[bb];
     % endif
 
                 Y_data[y_offset + mm] =
@@ -334,7 +335,7 @@ def ref_impl(p, items):
                 X_js_data += X_js_starts[bb];
                 A_js_data += A_js_starts[bb];
 
-                ${Y.cl_buf.ocldtype} y_sum = 0;
+                ${Y.cl_buf.ctype} y_sum = 0;
                 for (int ii = 0; ii < n_dot_products; ++ii)
                 {
                     const int x_ji = X_js_data[ii];
@@ -487,24 +488,24 @@ def reduce_impl(p, items,
     text = """
         __kernel void gemv_reduce(
             const __global int *gstructure,
-            const __global ${A.cl_buf.ocldtype} *A_data,
-            const __global ${X.cl_buf.ocldtype} *X_data,
+            const __global ${A.cl_buf.ctype} *A_data,
+            const __global ${X.cl_buf.ctype} *X_data,
             % if cl_beta is not None:
-            const __global ${cl_beta.ocldtype} * betas,
+            const __global ${cl_beta.ctype} * betas,
             % endif
-            const __global ${Y_in.cl_buf.ocldtype} *Y_in_data,
-            __global ${Y.cl_buf.ocldtype} *Y_data)
+            const __global ${Y_in.cl_buf.ctype} *Y_in_data,
+            __global ${Y.cl_buf.ctype} *Y_data)
     {
         __local int lstructure[${n_structure_vars}];
     % if segment_size > 1:
         // we'll cache X in shared memory so we load it only once
         // for the whole segment
-        __local ${X.cl_buf.ocldtype} lX[${group_size}];
+        __local ${X.cl_buf.ctype} lX[${group_size}];
     % endif
         //Scratch space for the dot products
-        __local ${Y.cl_buf.ocldtype}
+        __local ${Y.cl_buf.ctype}
             partialDotProduct[${segment_size}][${group_size}];
-        __local ${Y.cl_buf.ocldtype}
+        __local ${Y.cl_buf.ctype}
             y_sum_pre[${segment_size}];
         const int local_idx = get_local_id(0)
             + get_local_id(1) * get_local_size(0);
@@ -717,17 +718,17 @@ def many_dots_impl(p, items):
     text = """
         __kernel void gemv_many_dots(
             const __global int *gstructure,
-            const __global ${A.cl_buf.ocldtype} *A_data,
-            const __global ${X.cl_buf.ocldtype} *X_data,
+            const __global ${A.cl_buf.ctype} *A_data,
+            const __global ${X.cl_buf.ctype} *X_data,
             % if cl_beta is not None:
-            const __global ${cl_beta.ocldtype} * betas,
+            const __global ${cl_beta.ctype} * betas,
             % endif
-            const __global ${Y_in.cl_buf.ocldtype} *Y_in_data,
-            __global ${Y.cl_buf.ocldtype} *Y_data)
+            const __global ${Y_in.cl_buf.ctype} *Y_in_data,
+            __global ${Y.cl_buf.ctype} *Y_data)
     {
         __local int lstructure[${n_structure_vars}];
-        __local ${Y.cl_buf.ocldtype} y_sum_pre[${segment_size}];
-        __local ${Y.cl_buf.ocldtype} \
+        __local ${Y.cl_buf.ctype} y_sum_pre[${segment_size}];
+        __local ${Y.cl_buf.ctype} \
             y_sum_post[${dot_block_size}][${segment_size}];
         const int local_idx = get_local_id(0) \
             + get_local_id(1) * get_local_size(0);
