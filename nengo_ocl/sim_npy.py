@@ -217,10 +217,10 @@ def is_op(op):
 
 def exact_dependency_graph(operators):
     from nengo.utils.simulator import operator_depencency_graph
-
     edges = operator_depencency_graph(operators)
-    dg = nx.DiGraph()
 
+    dg = nx.DiGraph()
+    dg.add_nodes_from(operators)  # add all operators
     for source, dests in edges.items():
         dg.add_edges_from((source, dest) for dest in dests)
 
