@@ -12,7 +12,7 @@ import numpy as np
 from nengo.cache import get_default_decoder_cache
 from nengo.simulator import ProbeDict, Simulator
 from nengo.builder.builder import Model
-from nengo.builder.operator import Operator, Copy, DotInc, PreserveValue, Reset
+from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalView, SignalDict
 from nengo.utils.compat import OrderedDict, range
 
@@ -97,10 +97,6 @@ class MultiProdUpdate(Operator):
             rval = cls(op.Y, op.Y, beta=1, gamma=0,
                        as_update=op.as_update, tag=op.tag)
             rval.add_AX(op.A, op.X)
-        elif isinstance(op, PreserveValue):
-            rval = cls(op.dst, op.dst, beta=1, gamma=0, as_update=False,
-                       tag=getattr(op, 'tag', ''))
-            rval._incs_Y = False
         elif isinstance(op, StepUpdate):
             # TODO: get rid of `op.one` and `add_AX` here; use `gamma`
             rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=True, tag="")
@@ -524,6 +520,9 @@ class Simulator(Simulator):
                      op.all_signals + AX_views + YYB_views))
             self._AX_views[op] = AX_views
             self._YYB_views[op] = YYB_views
+
+    def plan_PreserveValue(self, ops):
+        return []  # do nothing
 
     def plan_MultiProdUpdate(self, ops):
         constant_bs = [op for op in ops
