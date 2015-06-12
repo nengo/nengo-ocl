@@ -225,17 +225,10 @@ def plan_probes(queue, periods, X, Y, tag=None):
     P : raggedarray of ints
         The period (in time-steps) of each probe
     """
-
     assert len(X) == len(Y)
     assert len(X) == len(periods)
-    N = len(X)
-
-    periods = np.asarray(periods, dtype='float32')
-    cl_periods = to_device(queue, periods)
-    cl_countdowns = to_device(queue, periods - 1)
-    cl_bufpositions = to_device(queue, np.zeros(N, dtype='int32'))
-
     assert X.cl_buf.ctype == Y.cl_buf.ctype
+    N = len(X)
 
     # N.B.  X[i].shape = (M, N)
     #       Y[i].shape = (buf_len, M * N)
@@ -245,6 +238,11 @@ def plan_probes(queue, periods, X, Y, tag=None):
         assert X.stride1s[i] == 1
         assert Y.stride0s[i] == Y.shape1s[i]
         assert Y.stride1s[i] == 1
+
+    periods = np.asarray(periods, dtype='float32')
+    cl_periods = to_device(queue, periods)
+    cl_countdowns = to_device(queue, periods - 1)
+    cl_bufpositions = to_device(queue, np.zeros(N, dtype='int32'))
 
     text = """
         ////////// MAIN FUNCTION //////////
