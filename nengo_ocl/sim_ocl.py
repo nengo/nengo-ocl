@@ -12,6 +12,7 @@ from nengo.processes import StochasticProcess
 from nengo.synapses import LinearFilter, Alpha, Lowpass
 from nengo.utils.compat import OrderedDict
 from nengo.utils.filter_design import cont2discrete
+from nengo.utils.progress import ProgressTracker
 from nengo.utils.stdlib import groupby
 
 from nengo_ocl import sim_npy
@@ -330,25 +331,29 @@ class Simulator(sim_npy.Simulator):
         self.queue.finish()
 
     def step(self):
-        return self.run_steps(1)
+        return self.run_steps(1, progress_bar=False)
 
-    def run_steps(self, N, verbose=False):
+    def run_steps(self, N, progress_bar=True):
         has_probes = hasattr(self, '_cl_probe_plan')
 
         if has_probes:
             # -- precondition: the probe buffers have been drained
             bufpositions = self._cl_probe_plan.cl_bufpositions.get()
             assert np.all(bufpositions == 0)
-        # -- we will go through N steps of the simulator
-        #    in groups of up to B at a time, draining
-        #    the probe buffers after each group of B
-        while N:
-            B = min(N, self._max_steps_between_probes) if has_probes else N
-            self._dag.call_n_times(B)
-            if has_probes:
-                self.drain_probe_buffers()
-            N -= B
-            self.n_steps += B
+
+        with ProgressTracker(N, progress_bar) as progress:
+            # -- we will go through N steps of the simulator
+            #    in groups of up to B at a time, draining
+            #    the probe buffers after each group of B
+            while N:
+                B = min(N, self._max_steps_between_probes) if has_probes else N
+                self._dag.call_n_times(B)
+                if has_probes:
+                    self.drain_probe_buffers()
+                N -= B
+                self.n_steps += B
+                progress.step(n=B)
+
         if self.profiling > 1:
             self.print_profiling()
 

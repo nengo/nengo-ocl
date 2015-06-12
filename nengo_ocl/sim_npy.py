@@ -704,12 +704,5 @@ class Simulator(Simulator):
 
         return Accessor()
 
-    def run(self, time_in_seconds):
-        """Simulate for the given length of time."""
-        steps = int(np.round(float(time_in_seconds) / self.model.dt))
-        logger.debug("Running %s for %f seconds, or %d steps",
-                     self.model.label, time_in_seconds, steps)
-        self.run_steps(steps)
-
     def reset(self):
         raise NotImplementedError("Resetting not implemented")
