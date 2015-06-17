@@ -32,12 +32,12 @@ when creating a simulator for your model::
        probe_a = nengo.Probe(a, synapse=0.01)
        probe_b = nengo.Probe(b, synapse=0.01)
 
-   from nengo_ocl.sim_ocl
+   import nengo_ocl
    import pyopencl as cl
    ctx = cl.create_some_context()
 
    # build the model
-   sim = nengo_ocl.sim_ocl..Simulator(model, context=ctx)
+   sim = nengo_ocl.Simulator(model, context=ctx)
    # run the model
    sim.run(10)
 
