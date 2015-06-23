@@ -50,7 +50,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
         }
 
         ////////// MAIN FUNCTION //////////
-        __kernel void fn(
+        __kernel void elementwise_inc(
             __global const int *Ashape0s,
             __global const int *Ashape1s,
             __global const int *Astride0s,
@@ -112,7 +112,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
         Y.cl_starts,
         Y.cl_buf,
     )
-    _fn = cl.Program(queue.context, text).build().fn
+    _fn = cl.Program(queue.context, text).build().elementwise_inc
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_group = queue.device.max_work_group_size
@@ -151,7 +151,7 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
 
     text = """
         ////////// MAIN FUNCTION //////////
-        __kernel void fn(
+        __kernel void filter_synapse(
             __global const int *shape0s,
             __global const int *Xstarts,
             __global const ${Xtype} *Xdata,
@@ -206,7 +206,7 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
         B.cl_shape0s,
         B.cl_buf,
     )
-    _fn = cl.Program(queue.context, text).build().fn
+    _fn = cl.Program(queue.context, text).build().filter_synapse
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_len = min(queue.device.max_work_group_size, max(X.shape0s))
@@ -248,7 +248,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
 
     text = """
         ////////// MAIN FUNCTION //////////
-        __kernel void fn(
+        __kernel void probes(
             __global ${Ctype} *countdowns,
             __global int *bufpositions,
             __global const ${Ptype} *periods,
@@ -315,7 +315,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
         Y.cl_starts,
         Y.cl_buf,
     )
-    _fn = cl.Program(queue.context, text).build().fn
+    _fn = cl.Program(queue.context, text).build().probes
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_len = min(queue.device.max_work_group_size, max(X.shape0s))
@@ -340,7 +340,7 @@ def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
 
     text = """
         ////////// MAIN FUNCTION //////////
-        __kernel void fn(
+        __kernel void direct(
 % for iname, itype in zip(input_names, input_types):
             __global const int *${iname}_starts__,
             __global const ${itype} *${iname}_data__,
@@ -380,7 +380,7 @@ ${code}
         full_args.extend([x.cl_starts, x.cl_buf])
     full_args.extend([output.cl_starts, output.cl_buf])
     # full_args = (X.cl_starts, X.cl_buf, Y.cl_starts, Y.cl_buf)
-    _fn = cl.Program(queue.context, text).build().fn
+    _fn = cl.Program(queue.context, text).build().direct
     _fn.set_args(*[arr.data for arr in full_args])
 
     gsize = (N,)
@@ -544,7 +544,8 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     ovars = dict((k, avars[k]) for k in outputs.keys())
     pvars = dict((k, avars[k]) for k in params.keys())
 
-    textconf = dict(N=N, n_elements=n_elements, tag=str(tag),
+    fn_name = "%s_%d" % (name, n_elements)
+    textconf = dict(fn_name=fn_name, N=N, n_elements=n_elements,
                     declares=declares, core_text=core_text,
                     ivars=ivars, ovars=ovars, pvars=pvars,
                     static_params=static_params)
@@ -554,7 +555,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         gsize = (int(np.ceil(np.sum(base.shape0s) / float(n_elements))),)
         text = """
         ////////// MAIN FUNCTION //////////
-        __kernel void fn(
+        __kernel void ${fn_name}(
 % for name, [type, offset] in ivars.items():
             __global const int *${name}_starts,
             __global const ${type} *in_${name},
@@ -653,7 +654,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         gsize = (int(np.max(base.shape0s)), int(N))
         text = """
         ////////// MAIN FUNCTION //////////
-        __kernel void fn(
+        __kernel void ${fn_name}(
 % for name, [type, offset] in ivars.items():
             __global const int *${name}_starts,
             __global const ${type} *in_${name},
@@ -717,7 +718,8 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     full_args.append(base.cl_shape0s)
     full_args = tuple(full_args)
 
-    _fn = cl.Program(queue.context, text).build().fn
+    fns = cl.Program(queue.context, text).build()
+    _fn = getattr(fns, fn_name)
     _fn.set_args(*[arr.data for arr in full_args])
 
     rval = Plan(queue, _fn, gsize, lsize=None, name=name, tag=tag)

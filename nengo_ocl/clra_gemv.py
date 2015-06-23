@@ -267,7 +267,7 @@ def ref_impl(p, items):
     assert all(s == 1 for s in p.Y_in.stride1s)
 
     text = """
-        __kernel void fn(
+        __kernel void gemv_ref(
             __global int *items,
     % if cl_alpha is not None:
             __global ${cl_alpha.ocldtype} * alphas,
@@ -369,7 +369,7 @@ def ref_impl(p, items):
         max(p.geometry[ii]['y_len'] for ii in items),
         len(items))
     lsize = None
-    fn = cl.Program(p.queue.context, text).build().fn
+    fn = cl.Program(p.queue.context, text).build().gemv_ref
     full_args = [cl_items]
     if p.cl_alpha is not None:
         full_args += [p.cl_alpha]
@@ -485,7 +485,7 @@ def reduce_impl(p, items,
     textconf.update(p.__dict__)
 
     text = """
-        __kernel void fn(
+        __kernel void gemv_reduce(
             const __global int *gstructure,
             const __global ${A.cl_buf.ocldtype} *A_data,
             const __global ${X.cl_buf.ocldtype} *X_data,
@@ -612,7 +612,7 @@ def reduce_impl(p, items,
 
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
-    fn = cl.Program(p.queue.context, text).build().fn
+    fn = cl.Program(p.queue.context, text).build().gemv_reduce
 
     full_args = [
         cl_gstructure,
@@ -715,7 +715,7 @@ def many_dots_impl(p, items):
     #    print('clra_gamma', textconf['clra_gamma'])
 
     text = """
-        __kernel void fn(
+        __kernel void gemv_many_dots(
             const __global int *gstructure,
             const __global ${A.cl_buf.ocldtype} *A_data,
             const __global ${X.cl_buf.ocldtype} *X_data,
@@ -796,7 +796,7 @@ def many_dots_impl(p, items):
         """
 
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
-    fn = cl.Program(p.queue.context, text).build().fn
+    fn = cl.Program(p.queue.context, text).build().gemv_many_dots
 
     full_args = [
         cl_gstructure,
