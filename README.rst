@@ -113,13 +113,20 @@ in the PyOpenCL documentation:
 
 * `Installing PyOpenCL on Windows <http://wiki.tiker.net/PyOpenCL/Installation/Windows>`_
 * `Installing PyOpenCL on Mac OS X <http://wiki.tiker.net/PyOpenCL/Installation/Mac>`_
-* `Installing PyOpenCL on Linux <http://wiki.tiker.net/PyOpenCL/Installation/Linux>`_
+* `Installing PyOpenCL on Linux <http://wiki.tiker.net/PyOpenCL/Installation/Linux>`_,
+  and a `more detailed guide <http://wiki.tiker.net/OpenCLHowTo>`_
 
 Below are instructions that have worked for the
 Nengo OCL developers at one point in time.
 
 Intel OCL on Debian/Ubuntu Linux
 --------------------------------
+
+NOTE: the Intel SDK for OpenCL is no longer available. Intel OpenCL drivers
+can be found `on Intel's website <https://software.intel.com/en-us/articles/opencl-drivers>`_,
+but the installation procedure may differ from below
+(see `the PyOpenCL wiki <http://wiki.tiker.net/OpenCLHowTo#Installing_the_Intel_CPU_ICD>`_
+for more up-to-date instructions).
 
 Intel provides an OpenCL driver for at least some of their multicore processors.
 Core-i7 and Xeon chips can be quite good for running Nengo simulations.
