@@ -1,6 +1,7 @@
 import collections
 import logging
 import os
+import warnings
 
 import numpy as np
 import pyopencl as cl
@@ -159,12 +160,12 @@ class Simulator(sim_npy.Simulator):
                                    input_names, inputs, output, tag=fn_name)
                 plans.append(plan)
             except Exception as e:
-                logger.warning(
-                    "Function '%s' could not be converted to OCL due to %s%s"
-                    % (fn_name, e.__class__.__name__, e.args))
-
                 if self.ocl_only:
                     raise
+
+                warnings.warn(
+                    "Function '%s' could not be converted to OCL due to %s%s"
+                    % (fn_name, e.__class__.__name__, e.args), RuntimeWarning)
 
                 # not successfully translated to OCL, so do it in Python
                 plans.append(self._plan_pythonfn(
