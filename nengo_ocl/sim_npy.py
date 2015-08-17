@@ -80,13 +80,6 @@ class MultiProdUpdate(Operator):
 
     @classmethod
     def convert_to(cls, op):
-        def assert_ok(op, rval):
-            assert set(op.reads).issuperset(rval.reads), (rval.reads, op.reads)
-            assert rval.incs == op.incs
-            assert rval.sets == op.sets
-            assert all(s.size for s in rval.all_signals), op
-            assert set(rval.updates) == set(
-                op.updates), (rval.updates, op.updates)
         if isinstance(op, Reset):
             rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value,
                        as_update=False, tag=getattr(op, 'tag', ''))
@@ -104,7 +97,11 @@ class MultiProdUpdate(Operator):
         else:
             return op
 
-        assert_ok(op, rval)
+        assert set(op.reads).issuperset(rval.reads), (rval.reads, op.reads)
+        assert rval.incs == op.incs
+        assert rval.sets == op.sets
+        assert all(s.size for s in rval.all_signals), op
+        assert set(rval.updates) == set(op.updates), (rval.updates, op.updates)
         return rval
 
     def add_AX(self, A, X):

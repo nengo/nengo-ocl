@@ -46,8 +46,8 @@ class Simulator(sim_npy.Simulator):
         self.context = context
         self.profiling = profiling
         if self.profiling:
-            self.queue = cl.CommandQueue(context,
-                                         properties=PROFILING_ENABLE)
+            self.queue = cl.CommandQueue(
+                context, properties=PROFILING_ENABLE)
         else:
             self.queue = cl.CommandQueue(context)
 
@@ -61,6 +61,7 @@ class Simulator(sim_npy.Simulator):
         # -- set up the DAG for executing OCL kernels
         self._plandict = OrderedDict()
         self.step_marker = Marker(self.queue)
+
         # -- marker is used to do the op_groups in order
         deps = []
         for op_type, op_list in self.op_groups:
