@@ -14,7 +14,7 @@ from nengo.simulator import ProbeDict, Simulator
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalView, SignalDict
-from nengo.utils.compat import OrderedDict, range
+from nengo.utils.compat import OrderedDict
 
 from nengo_ocl.raggedarray import RaggedArray as _RaggedArray
 
@@ -50,7 +50,7 @@ class MultiProdUpdate(Operator):
     y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)
     """
 
-    def __init__(self, Y, Y_in, beta, gamma, tag, as_update):
+    def __init__(self, Y, Y_in, beta, gamma, tag, as_update=False):
         self.Y = Y
         self.Y_in = Y_in
         if Y.shape != Y_in.shape:
@@ -82,13 +82,11 @@ class MultiProdUpdate(Operator):
     def convert_to(cls, op):
         if isinstance(op, Reset):
             rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value,
-                       as_update=False, tag=getattr(op, 'tag', ''))
+                       tag=getattr(op, 'tag', ''))
         elif isinstance(op, Copy):
-            rval = cls(op.dst, op.src, beta=1, gamma=0,
-                       as_update=op.as_update, tag=op.tag)
+            rval = cls(op.dst, op.src, beta=1, gamma=0, tag=op.tag)
         elif isinstance(op, DotInc):
-            rval = cls(op.Y, op.Y, beta=1, gamma=0,
-                       as_update=op.as_update, tag=op.tag)
+            rval = cls(op.Y, op.Y, beta=1, gamma=0, tag=op.tag)
             rval.add_AX(op.A, op.X)
         elif isinstance(op, StepUpdate):
             # TODO: get rid of `op.one` and `add_AX` here; use `gamma`

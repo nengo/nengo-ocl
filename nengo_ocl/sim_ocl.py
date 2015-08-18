@@ -21,7 +21,7 @@ from nengo_ocl.clraggedarray import CLRaggedArray
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_lif, plan_lif_rate, plan_direct, plan_probes,
-    plan_filter_synapse, plan_elementwise_inc)
+    plan_slicedcopy, plan_filter_synapse, plan_elementwise_inc)
 from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
 from nengo_ocl.ast_conversion import OCL_Function
 
@@ -89,6 +89,18 @@ class Simulator(sim_npy.Simulator):
 
     def plan_ragged_gather_gemv(self, *args, **kwargs):
         return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
+
+    def plan_SlicedCopy(self, ops):
+        A = self.all_data[[self.sidx[op.a] for op in ops]]
+        B = self.all_data[[self.sidx[op.b] for op in ops]]
+        Ainds = self.RaggedArray([
+            np.arange(op.a.size, dtype=np.int32)[op.a_slice] for op in ops])
+        Binds = self.RaggedArray([
+            np.arange(op.b.size, dtype=np.int32)[op.b_slice] for op in ops])
+        incs = self.RaggedArray([
+            np.array(op.inc, dtype=np.int32) for op in ops])
+        return [plan_slicedcopy(self.queue, A, B, Ainds, Binds, incs,
+                                tag='slicedcopy')]
 
     def plan_ElementwiseInc(self, ops):
         A = self.all_data[[self.sidx[op.A] for op in ops]]
@@ -206,16 +218,16 @@ class Simulator(sim_npy.Simulator):
         plans = []
         for neuron_class, ops in groups:
             if neuron_class is LIF:
-                plans.extend(self.plan_SimLIF(ops))
+                plans.extend(self._plan_LIF(ops))
             elif neuron_class is LIFRate:
-                plans.extend(self.plan_SimLIFRate(ops))
+                plans.extend(self._plan_LIFRate(ops))
             else:
                 raise ValueError("Unsupported neuron type '%s'"
                                  % neuron_class.__name__)
 
         return plans
 
-    def plan_SimLIF(self, ops):
+    def _plan_LIF(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
         V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
         W = self.all_data[[self.sidx[op.states[1]] for op in ops]]
@@ -228,7 +240,7 @@ class Simulator(sim_npy.Simulator):
         return [plan_lif(self.queue, J, V, W, V, W, S, ref, tau, dt,
                          tag="lif", n_elements=2)]
 
-    def plan_SimLIFRate(self, ops):
+    def _plan_LIFRate(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
         R = self.all_data[[self.sidx[op.output] for op in ops]]
         ref = self.RaggedArray(

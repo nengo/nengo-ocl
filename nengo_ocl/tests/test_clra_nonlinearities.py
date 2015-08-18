@@ -11,7 +11,7 @@ from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 
 from nengo_ocl.clra_nonlinearities import (
-    plan_lif, plan_lif_rate, plan_elementwise_inc)
+    plan_lif, plan_lif_rate, plan_elementwise_inc, plan_slicedcopy)
 
 
 ctx = cl.create_some_context()
@@ -164,9 +164,7 @@ def test_lif_rate(n_elements):
     assert ra.allclose(R, clR.to_host())
 
 
-def test_elementwise_inc():
-
-    rng = np.random.RandomState(8)
+def test_elementwise_inc(rng):
     Xsizes = [(3, 3), (32, 64), (457, 342), (1, 100)]
     Asizes = [(3, 3), (1, 1),   (457, 342), (100, 1)]
     A = RA([rng.normal(size=size) for size in Asizes])
@@ -184,6 +182,54 @@ def test_elementwise_inc():
 
     # check result
     for y, yy in zip(Y, clY.to_host()):
+        assert np.allclose(y, yy)
+
+
+def test_slicedcopy(rng):
+    sizes = rng.randint(20, 200, size=10)
+    A = RA([rng.normal(size=size) for size in sizes])
+    B = RA([rng.normal(size=size) for size in sizes])
+    incs = RA([rng.randint(0, 2) for _ in sizes])
+
+    Ainds = []
+    Binds = []
+    for size in sizes:
+        r = np.arange(size, dtype=np.int32)
+        u = rng.choice([0, 1, 2])
+        if u == 0:
+            Ainds.append(r)
+            Binds.append(r)
+        elif u == 1:
+            Ainds.append(r[:10])
+            Binds.append(r[-10:])
+        elif u == 2:
+            n = rng.randint(2, size - 2)
+            Ainds.append(rng.permutation(size)[:n])
+            Binds.append(rng.permutation(size)[:n])
+
+    Ainds = RA(Ainds)
+    Binds = RA(Binds)
+
+    queue = cl.CommandQueue(ctx)
+    clA = CLRA(queue, A)
+    clB = CLRA(queue, B)
+    clAinds = CLRA(queue, Ainds)
+    clBinds = CLRA(queue, Binds)
+    clincs = CLRA(queue, incs)
+
+    # compute on host
+    for i in range(len(sizes)):
+        if incs[i]:
+            B[i][Binds[i]] += A[i][Ainds[i]]
+        else:
+            B[i][Binds[i]] = A[i][Ainds[i]]
+
+    # compute on device
+    plan = plan_slicedcopy(queue, clA, clB, clAinds, clBinds, clincs)
+    plan()
+
+    # check result
+    for y, yy in zip(B, clB.to_host()):
         assert np.allclose(y, yy)
 
 

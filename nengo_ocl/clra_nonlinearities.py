@@ -15,6 +15,85 @@ def _indent(s, i):
     return '\n'.join([(' ' * i) + line for line in s.split('\n')])
 
 
+def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
+    N = len(A)
+    assert len(A) == len(B) == len(Ainds) == len(Binds)
+
+    for i in range(N):
+        assert A.stride0s[i] == 1
+        assert A.stride1s[i] == 1
+        assert B.stride0s[i] == 1
+        assert B.stride1s[i] == 1
+        assert Ainds.stride0s[i] == 1
+        assert Ainds.stride1s[i] == 1
+        assert Binds.stride0s[i] == 1
+        assert Binds.stride1s[i] == 1
+        assert Ainds.shape0s[i] == Binds.shape0s[i]
+
+    assert A.cl_buf.ctype == B.cl_buf.ctype
+    assert Ainds.cl_buf.ctype == Binds.cl_buf.ctype == 'int'
+    assert incs.cl_buf.ctype == 'int'
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void slicedcopy(
+            __global const int *Astarts,
+            __global const ${Atype} *Adata,
+            __global const int *Bstarts,
+            __global ${Btype} *Bdata,
+            __global const int *Ishape0s,
+            __global const int *AIstarts,
+            __global const int *AIdata,
+            __global const int *BIstarts,
+            __global const int *BIdata,
+            __global const int *incdata
+        )
+        {
+            const int n = get_global_id(1);
+            __global const ${Atype} *a = Adata + Astarts[n];
+            __global ${Btype} *b = Bdata + Bstarts[n];
+            __global const int *aind = AIdata + AIstarts[n];
+            __global const int *bind = BIdata + BIstarts[n];
+            const int inc = incdata[n];
+
+            int i = get_global_id(0);
+            if (inc)
+                for (; i < Ishape0s[n]; i += get_global_size(0))
+                    b[bind[i]] += a[aind[i]];
+            else
+                for (; i < Ishape0s[n]; i += get_global_size(0))
+                    b[bind[i]] = a[aind[i]];
+        }
+        """
+
+    textconf = dict(Atype=A.cl_buf.ctype, Btype=B.cl_buf.ctype)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        A.cl_starts,
+        A.cl_buf,
+        B.cl_starts,
+        B.cl_buf,
+        Ainds.cl_shape0s,
+        Ainds.cl_starts,
+        Ainds.cl_buf,
+        Binds.cl_starts,
+        Binds.cl_buf,
+        incs.cl_buf,
+    )
+    _fn = cl.Program(queue.context, text).build().slicedcopy
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    max_group = queue.device.max_work_group_size
+    n = min(max(Ainds.shape0s), max_group)
+    gsize = (n, N)
+    lsize = (n, 1)
+    rval = Plan(
+        queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
+
+
 def plan_elementwise_inc(queue, A, X, Y, tag=None):
     """Implements an element-wise increment Y += A * X"""
     N = len(X)
