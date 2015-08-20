@@ -86,10 +86,8 @@ xfail('test.nengo.tests.test_node.test_args',
       "This test fails for an unknown reason")
 
 # synapses
-xfail('test.nengo.tests.test_synapses.test_alpha',
-      "Only first-order filters implemented")
-xfail('test.nengo.tests.test_synapses.test_general',
-      "Only first-order filters implemented")
+xfail('test.nengo.tests.test_synapses.test_triangle',
+      "Only linear filters implemented")
 nengo.tests.test_synapses.allclose = allclose_tol  # looser tolerances
 
 # resetting

@@ -8,9 +8,8 @@ import pyopencl as cl
 
 from nengo.neurons import LIF, LIFRate
 from nengo.processes import WhiteNoise, FilteredNoise, WhiteSignal
-from nengo.synapses import LinearFilter, Alpha, Lowpass
+from nengo.synapses import LinearFilter
 from nengo.utils.compat import OrderedDict
-from nengo.utils.filter_design import cont2discrete
 from nengo.utils.progress import ProgressTracker
 from nengo.utils.stdlib import groupby
 
@@ -20,7 +19,7 @@ from nengo_ocl.clraggedarray import CLRaggedArray
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_lif, plan_lif_rate, plan_direct, plan_probes,
-    plan_slicedcopy, plan_filter_synapse, plan_elementwise_inc,
+    plan_slicedcopy, plan_linear_synapse, plan_elementwise_inc,
     init_rng, get_dist_enums_params, plan_whitenoise, plan_whitesignal)
 from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
 from nengo_ocl.ast_conversion import OCL_Function
@@ -264,24 +263,16 @@ class Simulator(sim_npy.Simulator):
     def plan_SimSynapse(self, ops):
         for op in ops:
             assert isinstance(op.synapse, LinearFilter)
+        steps = [op.synapse.make_step(self.model.dt, []) for op in ops]
+        A = self.RaggedArray([f.den for f in steps])
+        B = self.RaggedArray([f.num for f in steps])
         X = self.all_data[[self.sidx[op.input] for op in ops]]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-
-        dt = self.model.dt
-        nums = []
-        dens = []
-        for s in (op.synapse for op in ops):
-            if isinstance(s, (Alpha, Lowpass)) and s.tau <= 0.03 * dt:
-                num, den = [1], [1, 0]  # simply copies the first value
-            else:
-                num, den, _ = cont2discrete((s.num, s.den), dt, method='zoh')
-                num = num.flatten()
-            nums.append(num[1:] if num[0] == 0 else num)
-            dens.append(den[1:])  # drop first element (equal to 1)
-
-        A = self.RaggedArray(dens)
-        B = self.RaggedArray(nums)
-        return [plan_filter_synapse(self.queue, X, Y, A, B)]
+        Xbuf = self.RaggedArray(
+            [np.zeros((b.size, x.size)) for b, x in zip(B, X)])
+        Ybuf = self.RaggedArray(
+            [np.zeros((a.size, y.size)) for a, y in zip(A, Y)])
+        return [plan_linear_synapse(self.queue, X, Y, A, B, Xbuf, Ybuf)]
 
     def plan_SimProcess(self, all_ops):
         groups = groupby(all_ops, lambda op: op.process.__class__)

@@ -22,6 +22,8 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     assert len(A) == len(B) == len(Ainds) == len(Binds)
 
     for i in range(N):
+        for arr in [A, B, Ainds, Binds]:
+            assert arr.stride1s[i] == 1
         assert A.stride0s[i] == 1
         assert A.stride1s[i] == 1
         assert B.stride0s[i] == 1
@@ -102,6 +104,8 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     assert len(Y) == N and len(A) == N
 
     for i in range(N):
+        for arr in [A, X, Y]:
+            assert arr.stride1s[i] == 1
         assert X.shape0s[i] in [1, Y.shape0s[i]]
         assert X.shape1s[i] in [1, Y.shape1s[i]]
         assert A.shape0s[i] in [1, Y.shape0s[i]]
@@ -201,12 +205,12 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     gsize = (mn, N)
     lsize = (mn, 1)
     rval = Plan(
-        queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
+        queue, _fn, gsize, lsize=lsize, name="cl_elementwise_inc", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
 
 
-def plan_filter_synapse(queue, X, Y, A, B, tag=None):
+def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     """
     Implements a filter of the form
 
@@ -216,54 +220,103 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
     assert len(Y) == N and len(A) == N and len(B) == N
 
     for i in range(N):
+        for arr in [X, Y, A, B, Xbuf, Ybuf]:
+            assert arr.shape1s[i] == arr.stride0s[i]
+            assert arr.stride1s[i] == 1
+        for arr in [X, Y, A, B]:  # vectors
+            assert arr.shape1s[i] == 1
         assert X.shape0s[i] == Y.shape0s[i]
-        assert X.shape1s[i] == 1
-        assert Y.shape1s[i] == 1
-        assert X.stride1s[i] == 1
-        assert Y.stride1s[i] == 1
-        assert A.shape1s[i] == 1
-        assert B.shape1s[i] == 1
 
-        # This currently assumes that each filter has one numerator coefficient
-        # and one denominator coefficient. Generalized filters are on the TODO
-        # list. Generalized filters will require buffering the data.
-        assert A.shape0s[i] <= 1
-        assert B.shape0s[i] == 1
+        assert B.shape0s[i] >= 1
+        if B.shape0s[i] > 1:
+            assert Xbuf.shape0s[i] == B.shape0s[i]
+        assert Xbuf.shape1s[i] == X.shape0s[i]
+        if A.shape0s[i] > 1:
+            assert Ybuf.shape0s[i] == A.shape0s[i]
+        assert Ybuf.shape1s[i] == Y.shape0s[i]
+
+    assert X.cl_buf.ctype == Xbuf.cl_buf.ctype
+    assert Y.cl_buf.ctype == Ybuf.cl_buf.ctype
+
+    Xbufpos = to_device(queue, np.zeros(N, dtype='int32'))
+    Ybufpos = to_device(queue, np.zeros(N, dtype='int32'))
 
     text = """
         ////////// MAIN FUNCTION //////////
-        __kernel void filter_synapse(
+        __kernel void linear_synapse(
             __global const int *shape0s,
             __global const int *Xstarts,
             __global const ${Xtype} *Xdata,
             __global const int *Ystarts,
             __global ${Ytype} *Ydata,
-            __global const int *Astarts,
             __global const int *Ashape0s,
+            __global const int *Astarts,
             __global const ${Atype} *Adata,
-            __global const int *Bstarts,
             __global const int *Bshape0s,
-            __global const ${Btype} *Bdata
+            __global const int *Bstarts,
+            __global const ${Btype} *Bdata,
+            __global const int *Xbufstarts,
+            __global ${Xtype} *Xbufdata,
+            __global const int *Ybufstarts,
+            __global ${Ytype} *Ybufdata,
+            __global int *Xbufpos,
+            __global int *Ybufpos
         )
         {
-            const int n = get_global_id(1);
-            __global const ${Xtype} *x = Xdata + Xstarts[n];
-            __global ${Ytype} *y = Ydata + Ystarts[n];
-            __global const ${Atype} *a = Adata + Astarts[n];
-            __global const ${Btype} *b = Bdata + Bstarts[n];
+            int i = get_global_id(0);
+            const int k = get_global_id(1);
+            __global const ${Xtype} *x = Xdata + Xstarts[k];
+            __global ${Ytype} *y = Ydata + Ystarts[k];
+            __global const ${Atype} *a = Adata + Astarts[k];
+            __global const ${Btype} *b = Bdata + Bstarts[k];
 
-            const int na = Ashape0s[n];
-            for (int i = get_global_id(0);
-                 i < shape0s[n];
-                 i += get_global_size(0))
-            {
-                if (na == 0) {
+            const int n = shape0s[k];
+            const int na = Ashape0s[k];
+            const int nb = Bshape0s[k];
+            if (na == 0 && nb == 1) {
+                for (; i < n; i += get_global_size(0))
                     y[i] = b[0] * x[i];
-                } else {
-                    // Filtering code assuming one A coeff and one B coeff
+            } else if (na == 1 && nb == 1) {
+                for (; i < n; i += get_global_size(0)) {
                     y[i] *= -a[0];
                     y[i] += b[0] * x[i];
                 }
+            } else {  // general filtering
+                __global ${Xtype} *xbuf = Xbufdata + Xbufstarts[k];
+                __global ${Ytype} *ybuf = Ybufdata + Ybufstarts[k];
+                const int ix = Xbufpos[k];
+                const int iy = Ybufpos[k];
+                const int ix1 = (ix > 0) ? ix - 1 : nb - 1;
+                const int iy1 = (iy > 0) ? iy - 1 : na - 1;
+
+                ${Ytype} yi;
+                int j, jj;
+                for (; i < n; i += get_global_size(0)) {
+                    yi = b[0] * x[i];
+                    if (nb > 1) {
+                        xbuf[ix*n + i] = x[i];  // copy input to buffer
+                        for (j = 1; j < nb; j++) {
+                            jj = (ix + j) % nb;
+                            yi += b[j] * xbuf[jj*n + i];
+                        }
+                    }
+
+                    if (na > 0) {
+                        yi -= a[0] * y[i];
+                        if (na > 1) {
+                            for (j = 1; j < na; j++) {
+                                jj = (iy + j) % na;
+                                yi -= a[j] * ybuf[jj*n + i];
+                            }
+                            ybuf[iy1*n + i] = yi;  // copy output to buffer
+                        }
+                    }
+
+                    y[i] = yi;
+                }
+
+                Xbufpos[k] = ix1;
+                Ybufpos[k] = iy1;
             }
         }
         """
@@ -280,21 +333,27 @@ def plan_filter_synapse(queue, X, Y, A, B, tag=None):
         X.cl_buf,
         Y.cl_starts,
         Y.cl_buf,
-        A.cl_starts,
         A.cl_shape0s,
+        A.cl_starts,
         A.cl_buf,
-        B.cl_starts,
         B.cl_shape0s,
+        B.cl_starts,
         B.cl_buf,
+        Xbuf.cl_starts,
+        Xbuf.cl_buf,
+        Ybuf.cl_starts,
+        Ybuf.cl_buf,
+        Xbufpos,
+        Ybufpos,
     )
-    _fn = cl.Program(queue.context, text).build().filter_synapse
+    _fn = cl.Program(queue.context, text).build().linear_synapse
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_len = min(queue.device.max_work_group_size, max(X.shape0s))
     gsize = (max_len, N)
     lsize = (max_len, 1)
     rval = Plan(
-        queue, _fn, gsize, lsize=lsize, name="cl_filter_synapses", tag=tag)
+        queue, _fn, gsize, lsize=lsize, name="cl_linear_synapse", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
 
@@ -314,6 +373,8 @@ def plan_probes(queue, periods, X, Y, tag=None):
     # N.B.  X[i].shape = (M, N)
     #       Y[i].shape = (buf_len, M * N)
     for i in range(N):
+        for arr in [X, Y]:
+            assert arr.stride1s[i] == 1
         assert X.shape0s[i] * X.shape1s[i] == Y.shape1s[i]
         assert X.stride0s[i] == X.shape1s[i]
         assert X.stride1s[i] == 1
@@ -885,6 +946,9 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
     assert scale.cl_buf.ctype == 'int'
 
     for i in range(N):
+        for arr in [Y, dist_enums, dist_params, scale]:
+            assert arr.stride1s[i] == 1
+
         assert Y.shape1s[i] == 1
         assert Y.stride0s[i] == 1
         assert Y.stride1s[i] == 1
@@ -978,6 +1042,9 @@ def plan_whitesignal(queue, Y, t, signals, dt, tag=None):
     assert len(Y) == len(t) == len(signals)
 
     for i in range(N):
+        for arr in [Y, t, signals]:
+            assert arr.stride1s[i] == 1
+
         assert Y.shape1s[i] == 1
         assert Y.stride0s[i] == Y.stride1s[i] == 1
 
