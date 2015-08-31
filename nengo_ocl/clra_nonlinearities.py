@@ -1243,3 +1243,136 @@ def plan_whitesignal(queue, Y, t, signals, dt, tag=None):
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitesignal", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
+
+
+def plan_conv2(queue, X, Y, filters, biases, shapes, local, tag=None):
+    """
+    Parameters
+    ----------
+        filters = (n, channels x size_i x size_j)               # global
+        filters = (n x ni x nj, channels x size_i x size_j)     # local
+    """
+    N = len(X)
+    assert all(len(ary) == N for ary in [X, Y, filters, biases, shapes, local])
+
+    for i in range(N):
+        for arr in [X, Y, filters, biases, shapes]:
+            assert arr.stride0s[i] == arr.shape1s[i]
+            assert arr.stride1s[i] == 1
+
+        assert shapes.shape0s[i] == 6 and shapes.shape1s[i] == 1
+
+    assert local.shape == (N,)
+    assert shapes.cl_buf.ctype == local.ctype == 'int'
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void conv2(
+            __global const int *Sstarts,
+            __global const int *Sdata,
+            __global const int *Xstarts,
+            __global ${Xtype} *Xdata,
+            __global const int *Ystarts,
+            __global ${Ytype} *Ydata,
+            __global const int *Fstarts,
+            __global ${Ftype} *Fdata,
+            __global const int *Bstarts,
+            __global ${Btype} *Bdata,
+            __global const int *localdata
+        )
+        {
+            int ij = get_global_id(0);
+            const int n = get_global_id(1);
+
+            __global const int *shapes = Sdata + Sstarts[n];
+            const int nf = shapes[0];
+            const int ni = shapes[1];
+            const int nj = shapes[2];
+            const int c = shapes[3];
+            const int si = shapes[4];
+            const int sj = shapes[5];
+            const int nij = ni * nj;
+            const int sij = si * sj;
+            const int csij = c * sij;
+            const int si2 = (si - 1) / 2;
+            const int sj2 = (sj - 1) / 2;
+
+            int local_filters = localdata[n];
+            __global ${Xtype} *x = Xdata + Xstarts[n];
+            __global ${Ytype} *y = Ydata + Ystarts[n];
+            __global ${Ftype} *f = Fdata + Fstarts[n];
+            __global ${Btype} *b = Bdata + Bstarts[n];
+
+            if (!local_filters) {
+                // standard convolution
+                for (; ij < nij; ij += get_global_size(0)) {
+                    const int i = ij / nj;
+                    const int j = ij - i * nj;
+
+                    for (int k = 0; k < nf; k++) {
+                        ${Ytype} out = b[k*nij + ij];
+
+                        for (int cc = 0; cc < c; cc++)
+                        for (int ii = max(-si2, -i); ii < min(si2+1, ni-i); ii++)
+                        for (int jj = max(-sj2, -j); jj < min(sj2+1, nj-j); jj++) {
+                            out += f[k*csij + cc*sij + (si2+ii)*sj + (sj2+jj)]
+                                 * x[cc*nij + (i+ii)*nj + (j+jj)];
+                        }
+
+                        y[k*nij + ij] = out;
+                    }
+                }
+            } else {
+                // local filters
+                __global ${Ftype} *fij;
+
+                for (; ij < nij; ij += get_global_size(0)) {
+                    const int i = ij / nj;
+                    const int j = ij - i * nj;
+
+                    for (int k = 0; k < nf; k++) {
+                        fij = &f[(k*nij + ij)*csij];
+
+                        ${Ytype} out = b[k*nij + ij];
+
+                        for (int cc = 0; cc < c; cc++)
+                        for (int ii = max(-si2, -i); ii < min(si2+1, ni-i); ii++)
+                        for (int jj = max(-sj2, -j); jj < min(sj2+1, nj-j); jj++) {
+                            out += fij[cc*sij + (si2+ii)*sj + (sj2+jj)]
+                                 * x[cc*nij + (i+ii)*nj + (j+jj)];
+                        }
+
+                        y[k*nij + ij] = out;
+                    }
+                }
+            }
+        }
+        """
+
+    textconf = dict(Xtype=X.cl_buf.ctype, Ytype=Y.cl_buf.ctype,
+                    Ftype=filters.cl_buf.ctype, Btype=biases.cl_buf.ctype)
+
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        shapes.cl_starts,
+        shapes.cl_buf,
+        X.cl_starts,
+        X.cl_buf,
+        Y.cl_starts,
+        Y.cl_buf,
+        filters.cl_starts,
+        filters.cl_buf,
+        biases.cl_starts,
+        biases.cl_buf,
+        local,
+    )
+    _fn = cl.Program(queue.context, text).build().conv2
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    max_len = min(queue.device.max_work_group_size, 32)  # TODO: better max
+    gsize = (max_len, N)
+    lsize = (max_len, 1)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
