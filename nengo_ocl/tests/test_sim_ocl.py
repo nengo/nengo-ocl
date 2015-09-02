@@ -36,11 +36,6 @@ def pytest_funcarg__Simulator(request):
     return OclSimulator
 
 
-def pytest_funcarg__RefSimulator(request):
-    """The Simulator class being tested."""
-    return OclSimulator
-
-
 def allclose_tol(*args, **kwargs):
     """Use looser tolerance"""
     kwargs.setdefault('atol', 1e-7)
@@ -55,13 +50,7 @@ def xfail(pattern, msg):
 
 nengo_dir = os.path.dirname(nengo.__file__)
 modules = find_modules(nengo_dir, prefix='nengo')
-tests = load_functions(modules, arg_pattern='^(Ref)?Simulator$')
-
-# noise
-xfail('test.nengo.tests.test_ensemble.test_noise*',
-      "NengoOCL does not support noise")
-xfail('test.nengo.tests.test_simulator.test_noise*',
-      "NengoOCL does not support noise")
+tests = load_functions(modules, arg_pattern='^Simulator$')
 
 # learning rules
 xfail('test.nengo.tests.test_learning_rules.test_unsupervised',
@@ -74,14 +63,18 @@ xfail('test.nengo.tests.test_neurons.test_alif*',
       "ALIF neurons not implemented")
 xfail('test.nengo.tests.test_neurons.test_izhikevich',
       "Izhikevich neurons not implemented")
+xfail('test.nengo.tests.test_neurons.test_lif_min_voltage',
+      "Min voltage not implemented")
 
 # nodes
 xfail('test.nengo.tests.test_node.test_none',
       "No error if nodes output None")
-xfail('test.nengo.tests.test_node.test_unconnected_node',
-      "Unconnected nodes not supported")
-xfail('test.nengo.tests.test_node.test_set_output',
-      "Unconnected nodes not supported")
+
+# processes
+xfail('test.nengo.tests.test_processes.test_brownnoise',
+      "Filtered noise processes not yet implemented")
+xfail('test.nengo.tests.test_simulator.test_noise_copies_ok',
+      "Filtered noise processes not yet implemented")
 
 # synapses
 xfail('test.nengo.tests.test_synapses.test_triangle',
@@ -93,7 +86,8 @@ xfail('test.nengo.tests.test_learning_rules.test_reset',
       "Resetting not implemented")
 xfail('test.nengo.tests.test_neurons.test_reset',
       "Resetting not implemented")
-
+xfail('test.nengo.tests.test_processes.test_reset',
+      "Resetting not implemented")
 
 locals().update(tests)
 
