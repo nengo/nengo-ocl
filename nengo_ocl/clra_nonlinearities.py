@@ -1174,9 +1174,10 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
     return rval
 
 
-def plan_whitesignal(queue, Y, t, signals, dt, tag=None):
+def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     N = len(Y)
     assert len(Y) == len(t) == len(signals)
+    assert pres_t is None or pres_t.shape == (N,)
 
     for i in range(N):
         for arr in [Y, t, signals]:
@@ -1192,7 +1193,10 @@ def plan_whitesignal(queue, Y, t, signals, dt, tag=None):
 
     text = """
         ////////// MAIN FUNCTION //////////
-        __kernel void whitesignal(
+        __kernel void presentinput(
+    % if Ptype is not None:
+            __global ${Ptype} *Pdata,
+    % endif
             __global const int *Yshape0s,
             __global const int *Ystarts,
             __global ${Ytype} *Ydata,
@@ -1211,20 +1215,26 @@ def plan_whitesignal(queue, Y, t, signals, dt, tag=None):
 
             __global ${Ytype} *y = Ydata + Ystarts[k];
             __global ${Ytype} *s = Sdata + Sstarts[k];
-            const float t = *(Tdata + Tstarts[k]);
+            const int it = *(Tdata + Tstarts[k]);
             const int nt = Sshape0s[k];
-            const int ti = (int)round(t / ${dt}) % nt;
+    % if Ptype is not None:
+            const float pt = Pdata[k];
+            const int ti = (int)((it + 0.5f) * (${dt}f / pt)) % nt;
+    % else:
+            const int ti = (int)it % nt;
+    % endif
 
             for (; i < m; i += get_global_size(0))
                 y[i] = s[m*ti + i];
         }
         """
 
-    textconf = dict(Ytype=Y.ctype, Ttype=t.ctype,
-                    Stype=signals.ctype, dt=dt)
+    textconf = dict(Ytype=Y.ctype, Ttype=t.ctype, Stype=signals.ctype,
+                    Ptype=pres_t.ctype if pres_t is not None else None,
+                    dt=dt)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
-    full_args = (
+    full_args = ((pres_t,) if pres_t is not None else ()) + (
         Y.cl_shape0s,
         Y.cl_starts,
         Y.cl_buf,
@@ -1234,13 +1244,14 @@ def plan_whitesignal(queue, Y, t, signals, dt, tag=None):
         signals.cl_starts,
         signals.cl_buf,
     )
-    _fn = cl.Program(queue.context, text).build().whitesignal
+    _fn = cl.Program(queue.context, text).build().presentinput
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_len = min(queue.device.max_work_group_size, max(Y.shape0s))
     gsize = (max_len, N)
     lsize = (max_len, 1)
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitesignal", tag=tag)
+    rval = Plan(
+        queue, _fn, gsize, lsize=lsize, name="cl_presentinput", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
 

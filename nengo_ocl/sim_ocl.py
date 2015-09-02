@@ -18,7 +18,7 @@ from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_reset, plan_slicedcopy,
     plan_direct, plan_lif, plan_lif_rate,
     plan_probes, plan_linear_synapse, plan_elementwise_inc,
-    init_rng, get_dist_enums_params, plan_whitenoise, plan_whitesignal,
+    init_rng, get_dist_enums_params, plan_whitenoise, plan_presentinput,
     plan_conv2)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.ast_conversion import OCL_Function
@@ -334,7 +334,7 @@ class Simulator(sim_npy.Simulator):
 
     def _plan_WhiteSignal(self, ops):
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self._time] for _ in ops]]
+        t = self.all_data[[self.sidx[self._step] for _ in ops]]
 
         dt = self.model.dt
         signals = []
@@ -344,7 +344,17 @@ class Simulator(sim_npy.Simulator):
             signals.append(get_closures(f)['signal'])
 
         signals = self.RaggedArray(signals)
-        return [plan_whitesignal(self.queue, Y, t, signals, dt)]
+        return [plan_presentinput(self.queue, Y, t, signals, dt)]
+
+    def _plan_PresentInput(self, ops):
+        ps = [op.process for op in ops]
+        Y = self.all_data[[self.sidx[op.output] for op in ops]]
+        t = self.all_data[[self.sidx[self._step] for _ in ops]]
+        inputs = self.RaggedArray([
+            p.inputs.reshape(p.inputs.shape[0], -1) for p in ps])
+        pres_t = self.Array([p.presentation_time for p in ps])
+        dt = self.model.dt
+        return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
 
     def _plan_Conv2(self, ops):
         ps = [op.process for op in ops]
