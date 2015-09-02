@@ -157,6 +157,9 @@ class Simulator(sim_npy.Simulator):
             # if any functions have no output, must do them in Python
             if any(s is None for s in signals['out']):
                 assert all(s is None for s in signals['out'])
+                warnings.warn(
+                    "Function '%s' could not be converted to OCL since it has "
+                    "no outputs." % (fn_name), RuntimeWarning)
                 plans.append(self._plan_pythonfn(
                     fn, t_in, signals, fn_name=fn_name))
                 continue
