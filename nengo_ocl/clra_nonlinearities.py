@@ -519,7 +519,6 @@ ${code}
     for x in inputs:
         full_args.extend([x.cl_starts, x.cl_buf])
     full_args.extend([output.cl_starts, output.cl_buf])
-    # full_args = (X.cl_starts, X.cl_buf, Y.cl_starts, Y.cl_buf)
     _fn = cl.Program(queue.context, text).build().direct
     _fn.set_args(*[arr.data for arr in full_args])
 

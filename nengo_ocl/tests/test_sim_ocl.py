@@ -82,8 +82,6 @@ xfail('test.nengo.tests.test_node.test_unconnected_node',
       "Unconnected nodes not supported")
 xfail('test.nengo.tests.test_node.test_set_output',
       "Unconnected nodes not supported")
-xfail('test.nengo.tests.test_node.test_args',
-      "This test fails for an unknown reason")
 
 # synapses
 xfail('test.nengo.tests.test_synapses.test_triangle',
