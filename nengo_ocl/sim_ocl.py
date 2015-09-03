@@ -330,27 +330,29 @@ class Simulator(sim_npy.Simulator):
 
     def plan_probes(self):
         if len(self.model.probes) == 0:
+            self._max_steps_between_probes = None
+            self._cl_probe_plan = None
             return []
+        else:
+            n_prealloc = self.n_prealloc_probes
 
-        n_prealloc = self.n_prealloc_probes
+            probes = self.model.probes
+            periods = [1 if p.sample_every is None else
+                       p.sample_every / self.dt
+                       for p in probes]
 
-        probes = self.model.probes
-        periods = [1 if p.sample_every is None else
-                   p.sample_every / self.dt
-                   for p in probes]
+            X = self.all_data[
+                [self.sidx[self.model.sig[p]['in']] for p in probes]]
+            Y = self.RaggedArray(
+                [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
+                 for p in probes])
 
-        X = self.all_data[
-            [self.sidx[self.model.sig[p]['in']] for p in probes]]
-        Y = self.RaggedArray(
-            [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
-             for p in probes])
+            cl_plan = plan_probes(self.queue, periods, X, Y, tag="probes")
+            self._max_steps_between_probes = n_prealloc * min(periods)
 
-        cl_plan = plan_probes(self.queue, periods, X, Y, tag="probes")
-        self._max_steps_between_probes = n_prealloc * min(periods)
-
-        cl_plan.Y = Y
-        self._cl_probe_plan = cl_plan
-        return [cl_plan]
+            cl_plan.Y = Y
+            self._cl_probe_plan = cl_plan
+            return [cl_plan]
 
     def drain_probe_buffers(self):
         self.queue.finish()
@@ -373,7 +375,7 @@ class Simulator(sim_npy.Simulator):
         return self.run_steps(1, progress_bar=False)
 
     def run_steps(self, N, progress_bar=True):
-        has_probes = hasattr(self, '_cl_probe_plan')
+        has_probes = self._cl_probe_plan is not None
 
         if has_probes:
             # -- precondition: the probe buffers have been drained
