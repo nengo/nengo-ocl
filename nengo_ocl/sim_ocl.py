@@ -19,7 +19,7 @@ from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import (
-    plan_lif, plan_lif_rate, plan_direct, plan_probes,
+    plan_timeupdate, plan_lif, plan_lif_rate, plan_direct, plan_probes,
     plan_slicedcopy, plan_linear_synapse, plan_elementwise_inc,
     init_rng, get_dist_enums_params, plan_whitenoise, plan_whitesignal)
 from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
@@ -99,6 +99,12 @@ class Simulator(sim_npy.Simulator):
 
     def plan_ragged_gather_gemv(self, *args, **kwargs):
         return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
+
+    def plan_TimeUpdate(self, ops):
+        op, = ops
+        step = self.all_data[[self.sidx[op.step]]]
+        time = self.all_data[[self.sidx[op.time]]]
+        return [plan_timeupdate(self.queue, step, time, self.model.dt)]
 
     def plan_SlicedCopy(self, ops):
         A = self.all_data[[self.sidx[op.a] for op in ops]]

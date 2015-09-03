@@ -17,6 +17,40 @@ def _indent(s, i):
     return '\n'.join([(' ' * i) + line for line in s.split('\n')])
 
 
+def plan_timeupdate(queue, step, time, dt):
+    assert len(step) == len(time) == 1
+    assert step.cl_buf.ctype == time.cl_buf.ctype == 'float'
+    assert step.shape0s[0] == step.shape1s[0] == 1
+    assert time.shape0s[0] == time.shape1s[0] == 1
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void timeupdate(
+            __global const int *step_starts,
+            __global float *step_data,
+            __global const int *time_starts,
+            __global float *time_data
+        )
+        {
+            __global float *step = step_data + step_starts[0];
+            __global float *time = time_data + time_starts[0];
+            step[0] += 1;
+            time[0] = ${dt} * step[0];
+        }
+        """
+
+    text = as_ascii(Template(text, output_encoding='ascii').render(dt=dt))
+    full_args = (step.cl_starts, step.cl_buf, time.cl_starts, time.cl_buf)
+    _fn = cl.Program(queue.context, text).build().timeupdate
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    gsize = (1,)
+    lsize = None
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_timeupdate")
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
+
+
 def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     N = len(A)
     assert len(A) == len(B) == len(Ainds) == len(Binds)
@@ -92,8 +126,7 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     n = min(max(Ainds.shape0s), max_group)
     gsize = (n, N)
     lsize = (n, 1)
-    rval = Plan(
-        queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
 

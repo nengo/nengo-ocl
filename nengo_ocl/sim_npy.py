@@ -22,27 +22,20 @@ from nengo_ocl.raggedarray import RaggedArray as _RaggedArray
 logger = logging.getLogger(__name__)
 
 
-class StepUpdate(Operator):
+class TimeUpdate(Operator):
+    """Updates the simulation time"""
 
-    """Does Y += 1 as an update"""
+    def __init__(self, step, time):
+        self.step = step
+        self.time = time
 
-    def __init__(self, Y, one):
-        self.Y = Y
-        self.one = one
-        self.reads = [self.one]
-        self.updates = [self.Y]
+        self.reads = []
+        self.updates = [step, time]
         self.incs = []
         self.sets = []
 
     def __str__(self):
-        return 'StepUpdate(%s)' % (self.Y)
-
-    def make_step(self, signals, dt):
-        Y = signals[self.Y]
-
-        def step():
-            Y[...] += 1
-        return step
+        return 'TimeUpdate()'
 
 
 class MultiProdUpdate(Operator):
@@ -89,10 +82,10 @@ class MultiProdUpdate(Operator):
         elif isinstance(op, DotInc):
             rval = cls(op.Y, op.Y, beta=1, gamma=0, tag=op.tag)
             rval.add_AX(op.A, op.X)
-        elif isinstance(op, StepUpdate):
-            # TODO: get rid of `op.one` and `add_AX` here; use `gamma`
-            rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=True, tag="")
-            rval.add_AX(op.one, op.one)
+        # elif isinstance(op, StepUpdate):
+        #     # TODO: get rid of `op.one` and `add_AX` here; use `gamma`
+        #     rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=True, tag="")
+        #     rval.add_AX(op.one, op.one)
         else:
             return op
 
@@ -399,33 +392,29 @@ class Simulator(Simulator):
         sigdict = SignalDict()
         self._step = Signal(np.array(0.0, dtype=np.float64), name='step')
         self._time = Signal(np.array(0.0, dtype=np.float64), name='time')
-        self._one = Signal(np.array(1.0, dtype=np.float64), name='ONE')
-        self._zero = Signal(np.array(0.0, dtype=np.float64), name='ZERO')
-        self._dt = Signal(np.array(dt, dtype=np.float64), name='DT')
 
         operators = list(self.model.operators)
-
-        # -- add some time-keeping to the copied model
-        #    this will be used by e.g. plan_SimPyFunc
-        operators.append(StepUpdate(self._step, self._one))
-        operators.append(Reset(self._time))
-        operators.append(DotInc(self._dt, self._step, self._time))
-        operators.append(DotInc(self._dt, self._one, self._time))
 
         # -- convert DotInc, Reset, Copy, and ProdUpdate to MultiProdUpdate
         operators = list(map(MultiProdUpdate.convert_to, operators))
         operators = MultiProdUpdate.compress(operators)
+
+        # -- Plan the order of operations, combining where appropriate
+        op_groups = planner(operators)
+
+        # -- Add time operator after planning, to ensure it goes first
+        time_op = TimeUpdate(self._step, self._time)
+        operators.insert(0, time_op)
+        op_groups.insert(0, (type(time_op), [time_op]))
+
+        # -- Initialize signals
         self.operators = operators
+        self.op_groups = op_groups
         all_signals = signals_from_operators(operators)
         all_bases = stable_unique([sig.base for sig in all_signals])
 
-        op_groups = planner(operators)
-        self.op_groups = op_groups  # debug
-
         for op in operators:
             op.init_signals(sigdict)
-
-        self.n_steps = 0
 
         # Add built states to the probe dictionary
         self._probe_outputs = self.model.params
@@ -439,7 +428,6 @@ class Simulator(Simulator):
         )
 
         builder = ViewBuilder(all_bases, self.all_data)
-        # self._DotInc_views = {}
         self._AX_views = {}
         for op_type, op_list in op_groups:
             self.setup_views(builder, op_type, op_list)
@@ -460,6 +448,8 @@ class Simulator(Simulator):
         seed = np.random.randint(npext.maxint) if seed is None else seed
         self.seed = seed
         self.rng = np.random.RandomState(self.seed)
+
+        self.n_steps = 0
 
     def _prep_all_data(self):
         pass
