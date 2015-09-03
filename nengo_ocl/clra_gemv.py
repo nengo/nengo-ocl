@@ -687,7 +687,7 @@ def many_dots_impl(p, items):
         max_y_len,
         MAX_SEGMENT_SIZE)
     dot_block_size = min(
-        max_n_dots,
+        max(max_n_dots, 1),
         int(p.queue.device.max_work_group_size / segment_size),
     )
 
