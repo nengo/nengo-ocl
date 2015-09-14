@@ -22,7 +22,7 @@ from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_reset, plan_slicedcopy, plan_lif, plan_lif_rate,
     plan_direct, plan_probes, plan_linear_synapse, plan_elementwise_inc,
     init_rng, get_dist_enums_params, plan_whitenoise, plan_whitesignal)
-from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
+from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.ast_conversion import OCL_Function
 
 logger = logging.getLogger(__name__)
@@ -67,34 +67,12 @@ class Simulator(sim_npy.Simulator):
         sim_npy.Simulator.__init__(
             self, network=network, dt=dt, seed=seed, model=model)
 
-        # -- set up the DAG for executing OCL kernels
-        self._plandict = OrderedDict()
-        self.step_marker = Marker(self.queue)
-
-        # -- marker is used to do the op_groups in order
-        deps = []
-        for op_type, op_list in self.op_groups:
-            deps = self.plandict_op_group(op_type, op_list, deps)
-        probe_plans = self.plan_probes()
-        for p in probe_plans:
-            self._plandict[p] = deps
-        self._dag = DAG(context, self.step_marker,
-                        self._plandict,
-                        self.profiling)
+        # -- create object to execute list of plans
+        self._plans = Plans(self._plan, self.profiling)
 
     def _init_cl_rng(self):
         if self.cl_rng_state is None:
             self.cl_rng_state = init_rng(self.queue, self.seed)
-
-    def plan_op_group(self, *args):
-        # -- HACK: SLOWLY removing sim_npy from the project...
-        return []
-
-    def plandict_op_group(self, op_type, op_list, deps):
-        plans = getattr(self, 'plan_' + op_type.__name__)(op_list)
-        for p in plans:
-            self._plandict[p] = deps
-        return plans
 
     def _prep_all_data(self):
         # -- replace the numpy-allocated RaggedArray with OpenCL one
@@ -402,7 +380,7 @@ class Simulator(sim_npy.Simulator):
             #    the probe buffers after each group of B
             while N:
                 B = min(N, self._max_steps_between_probes) if has_probes else N
-                self._dag.call_n_times(B)
+                self._plans.call_n_times(B)
                 if has_probes:
                     self.drain_probe_buffers()
                 N -= B

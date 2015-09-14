@@ -383,6 +383,11 @@ class Simulator(Simulator):
             # Build the network into the model
             self.model.build(network)
 
+        # --- set seed
+        seed = np.random.randint(npext.maxint) if seed is None else seed
+        self.seed = seed
+        self.rng = np.random.RandomState(self.seed)
+
         # -- map from Signal.base -> ndarray
         sigdict = SignalDict()
         self._step = Signal(np.array(0.0, dtype=np.float64), name='step')
@@ -435,16 +440,12 @@ class Simulator(Simulator):
 
         self._prep_all_data()
 
+        # --- create list of plans
         self._plan = []
         for op_type, op_list in op_groups:
             self._plan.extend(self.plan_op_group(op_type, op_list))
         self._plan.extend(self.plan_probes())
         self.all_bases = all_bases
-
-        # --- set seed
-        seed = np.random.randint(npext.maxint) if seed is None else seed
-        self.seed = seed
-        self.rng = np.random.RandomState(self.seed)
 
         self.n_steps = 0
 

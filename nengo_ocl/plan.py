@@ -108,6 +108,40 @@ class Marker(Plan):
         Plan.__init__(self, queue, dummy, gsize=(1,), lsize=None)
 
 
+class Plans(object):
+
+    def __init__(self, planlist, profiling):
+        assert not profiling, "Not yet implemented"
+        self.plans = planlist
+
+    def __call__(self):
+        return self.call_n_times(1)
+
+    def call_n_times(self, n):
+        last_ev, all_evs = self.enqueue_n_times(n)
+        last_ev.wait()
+
+
+    def call_n_times(self, n):
+        last_event = self.enqueue_n_times(n)
+        if last_event is not None:
+            last_event.wait()
+
+    def enqueue_n_times(self, n):
+        for _ in range(n):
+            last_event = None
+            for plan in self.plans:
+                if hasattr(plan, 'enqueue'):
+                    last_event = plan.enqueue()
+                else:
+                    # wait for last event and call
+                    if last_event is not None:
+                        last_event.wait()
+                    plan()
+
+        return last_event
+
+
 class DAG(object):
 
     def __init__(self, context, marker, plandict, profiling, overlap=False):
