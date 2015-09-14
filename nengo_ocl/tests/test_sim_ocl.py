@@ -73,6 +73,8 @@ xfail('test.nengo.tests.test_node.test_none',
 # processes
 xfail('test.nengo.tests.test_processes.test_brownnoise',
       "Filtered noise processes not yet implemented")
+xfail('test.nengo.tests.test_ensemble.test_noise_copies_ok',
+      "Filtered noise processes not yet implemented")
 xfail('test.nengo.tests.test_simulator.test_noise_copies_ok',
       "Filtered noise processes not yet implemented")
 
