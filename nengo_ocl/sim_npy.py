@@ -45,6 +45,7 @@ class MultiProdUpdate(Operator):
     """
 
     def __init__(self, Y, Y_in, beta, gamma, tag, as_update=False):
+        assert Y.ndim == 1
         self.Y = Y
         self.Y_in = Y_in
         if Y.shape != Y_in.shape:
@@ -97,6 +98,7 @@ class MultiProdUpdate(Operator):
         return rval
 
     def add_AX(self, A, X):
+        assert X.ndim == 1
         self.As.append(A)
         self.Xs.append(X)
 
