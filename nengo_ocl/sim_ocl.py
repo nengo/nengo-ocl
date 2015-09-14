@@ -16,7 +16,7 @@ from nengo.utils.stdlib import groupby
 
 from nengo_ocl import sim_npy
 from nengo_ocl.raggedarray import RaggedArray
-from nengo_ocl.clraggedarray import CLRaggedArray
+from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_lif, plan_lif_rate, plan_direct, plan_probes,
@@ -35,6 +35,9 @@ def get_closures(f):
 
 
 class Simulator(sim_npy.Simulator):
+
+    def Array(self, val, dtype=np.float32):
+        return to_device(self.queue, np.asarray(val, dtype=dtype))
 
     def RaggedArray(self, *args, **kwargs):
         val = RaggedArray(*args, **kwargs)
