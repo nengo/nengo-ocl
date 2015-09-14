@@ -51,6 +51,61 @@ def plan_timeupdate(queue, step, time, dt):
     return rval
 
 
+def plan_reset(queue, Y, values, tag=None):
+    N = len(Y)
+    assert len(Y) == len(values)
+
+    for i in range(N):
+        assert Y.stride0s[i] == Y.shape1s[i]
+        assert Y.stride1s[i] == 1
+
+    assert Y.cl_buf.ctype == values.ctype
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void reset(
+            __global const int *Yshape0s,
+            __global const int *Yshape1s,
+            __global const int *Ystarts,
+            __global ${Ytype} *Ydata,
+            __global const ${Ytype} *values
+        )
+        {
+            const int n = get_global_id(1);
+            int i = get_global_id(0);
+
+            const ${Ytype} value = values[n];
+            const int size = Yshape0s[n] * Yshape1s[n];
+            __global ${Ytype} *y = Ydata + Ystarts[n];
+
+            for (; i < size; i += get_global_size(0))
+                y[i] = value;
+        }
+        """
+
+    textconf = dict(Ytype=Y.cl_buf.ctype)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        Y.cl_shape0s,
+        Y.cl_shape1s,
+        Y.cl_starts,
+        Y.cl_buf,
+        values,
+    )
+    _fn = cl.Program(queue.context, text).build().reset
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    max_group = queue.device.max_work_group_size
+    sizes = [s0 * s1 for s0, s1 in zip(Y.shape0s, Y.shape1s)]
+    n = min(max(sizes), max_group)
+    gsize = (n, N)
+    lsize = (n, 1)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
+
+
 def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     N = len(A)
     assert len(A) == len(B) == len(Ainds) == len(Binds)

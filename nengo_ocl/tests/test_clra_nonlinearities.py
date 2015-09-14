@@ -5,13 +5,14 @@ import pytest
 
 from nengo.neurons import LIF, LIFRate
 from nengo.utils.compat import range
+from nengo.utils.testing import Timer
 
 from nengo_ocl import raggedarray as ra
 from nengo_ocl.raggedarray import RaggedArray as RA
-from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
+from nengo_ocl.clraggedarray import CLRaggedArray as CLRA, to_device
 
 from nengo_ocl.clra_nonlinearities import (
-    plan_lif, plan_lif_rate, plan_elementwise_inc, plan_slicedcopy)
+    plan_lif, plan_lif_rate, plan_elementwise_inc, plan_reset, plan_slicedcopy)
 
 
 ctx = cl.create_some_context()
@@ -183,6 +184,34 @@ def test_elementwise_inc(rng):
     # check result
     for y, yy in zip(Y, clY.to_host()):
         assert np.allclose(y, yy)
+
+
+def test_reset(rng):
+    # Yshapes = [(100,), (10, 17), (3, 3)]
+    Yshapes = [(1000000,), (1000, 1700), (3, 3)]
+    values = rng.uniform(size=len(Yshapes)).astype(np.float32)
+
+    queue = cl.CommandQueue(ctx)
+    clY = CLRA(queue, RA([np.zeros(shape) for shape in Yshapes]))
+    clvalues = to_device(queue, values)
+
+    plan = plan_reset(queue, clY, clvalues)
+    with Timer() as t:
+        plan()
+
+    print(t.duration)
+
+    # with Timer() as t:
+    #     for i in range(len(clY)):
+    #         cl.enqueue_fill_buffer(
+    #             queue, clY.cl_buf.data, values[i],
+    #             clY.starts[i], clY.shape0s[i] * clY.shape1s[i])
+    #     queue.finish()
+
+    # print(t.duration)
+
+    for y, v in zip(clY, values):
+        assert np.all(y == v)
 
 
 def test_slicedcopy(rng):

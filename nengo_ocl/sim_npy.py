@@ -75,18 +75,11 @@ class MultiProdUpdate(Operator):
 
     @classmethod
     def convert_to(cls, op):
-        if isinstance(op, Reset):
-            rval = cls(Y=op.dst, Y_in=op.dst, beta=0, gamma=op.value,
-                       tag=getattr(op, 'tag', ''))
-        elif isinstance(op, Copy):
+        if isinstance(op, Copy):
             rval = cls(op.dst, op.src, beta=1, gamma=0, tag=op.tag)
         elif isinstance(op, DotInc):
             rval = cls(op.Y, op.Y, beta=1, gamma=0, tag=op.tag)
             rval.add_AX(op.A, op.X)
-        # elif isinstance(op, StepUpdate):
-        #     # TODO: get rid of `op.one` and `add_AX` here; use `gamma`
-        #     rval = cls(op.Y, op.Y, beta=1, gamma=0, as_update=True, tag="")
-        #     rval.add_AX(op.one, op.one)
         else:
             return op
 
@@ -403,6 +396,8 @@ class Simulator(Simulator):
 
         # -- Plan the order of operations, combining where appropriate
         op_groups = planner(operators)
+        assert len([typ for typ, _ in op_groups if typ is Reset]) < 2, (
+            "All resets not planned together")
 
         # -- Add time operator after planning, to ensure it goes first
         time_op = TimeUpdate(self._step, self._time)

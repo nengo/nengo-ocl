@@ -19,8 +19,8 @@ from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import (
-    plan_timeupdate, plan_lif, plan_lif_rate, plan_direct, plan_probes,
-    plan_slicedcopy, plan_linear_synapse, plan_elementwise_inc,
+    plan_timeupdate, plan_reset, plan_slicedcopy, plan_lif, plan_lif_rate,
+    plan_direct, plan_probes, plan_linear_synapse, plan_elementwise_inc,
     init_rng, get_dist_enums_params, plan_whitenoise, plan_whitesignal)
 from nengo_ocl.plan import BasePlan, PythonPlan, DAG, Marker
 from nengo_ocl.ast_conversion import OCL_Function
@@ -108,6 +108,11 @@ class Simulator(sim_npy.Simulator):
         step = self.all_data[[self.sidx[op.step]]]
         time = self.all_data[[self.sidx[op.time]]]
         return [plan_timeupdate(self.queue, step, time, self.model.dt)]
+
+    def plan_Reset(self, ops):
+        targets = self.all_data[[self.sidx[op.dst] for op in ops]]
+        values = self.Array([op.value for op in ops])
+        return [plan_reset(self.queue, targets, values)]
 
     def plan_SlicedCopy(self, ops):
         A = self.all_data[[self.sidx[op.a] for op in ops]]
