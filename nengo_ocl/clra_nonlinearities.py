@@ -1387,3 +1387,97 @@ def plan_conv2(queue, X, Y, filters, biases, shapes, local, tag=None):
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     return rval
+
+
+def plan_pool2(queue, X, Y, shapes, sizes, strides, tag=None):
+    N = len(X)
+    assert all(len(ary) == N for ary in [X, Y, shapes, sizes, strides])
+
+    for i in range(N):
+        for arr in [X, Y, shapes]:
+            assert arr.stride0s[i] == arr.shape1s[i]
+            assert arr.stride1s[i] == 1
+
+        assert shapes.shape0s[i] == 5 and shapes.shape1s[i] == 1
+
+    assert sizes.shape == strides.shape == (N,)
+    assert shapes.cl_buf.ctype == sizes.ctype == strides.ctype == 'int'
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void pool2(
+            __global const int *Sstarts,
+            __global const int *Sdata,
+            __global const int *Xstarts,
+            __global ${Xtype} *Xdata,
+            __global const int *Ystarts,
+            __global ${Ytype} *Ydata,
+            __global const int *sizes,
+            __global const int *strides
+        )
+        {
+            int cij = get_global_id(0);
+            const int n = get_global_id(1);
+
+            __global const int *shapes = Sdata + Sstarts[n];
+            const int nc = shapes[0];
+            const int ni = shapes[1];
+            const int nj = shapes[2];
+            const int nxi = shapes[3];
+            const int nxj = shapes[4];
+            const int nij = ni * nj;
+            const int ncij = nc * nij;
+            const int nxij = nxi * nxj;
+
+            __global ${Xtype} *x = Xdata + Xstarts[n];
+            __global ${Ytype} *y = Ydata + Ystarts[n];
+
+            const int s = sizes[n];
+            const int st = strides[n];
+
+            // average pooling
+            for (; cij < ncij; cij += get_global_size(0)) {
+                const int c = cij / nij;
+                const int ij = cij - c * nij;
+                const int i = ij / nj;
+                const int j = ij - i * nj;
+                const int xi = i * st;
+                const int xj = j * st;
+
+                ${Ytype} out = 0;
+                int n = 0;
+
+                for (int ii = xi; ii < min(xi + s, nxi); ii++)
+                for (int jj = xj; jj < min(xj + s, nxj); jj++) {
+                    out += x[c*nxij + ii*nxj + jj];
+                    n++;
+                }
+
+                y[cij] = out / n;
+            }
+        }
+        """
+
+    textconf = dict(Xtype=X.cl_buf.ctype, Ytype=Y.cl_buf.ctype)
+
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        shapes.cl_starts,
+        shapes.cl_buf,
+        X.cl_starts,
+        X.cl_buf,
+        Y.cl_starts,
+        Y.cl_buf,
+        sizes,
+        strides,
+    )
+    _fn = cl.Program(queue.context, text).build().pool2
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    max_len = min(queue.device.max_work_group_size, 32)  # TODO: better max
+    gsize = (max_len, N)
+    lsize = (max_len, 1)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_pool2", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    return rval
