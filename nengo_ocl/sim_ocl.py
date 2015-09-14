@@ -233,6 +233,8 @@ class Simulator(sim_npy.Simulator):
         return plans
 
     def _plan_LIF(self, ops):
+        if not all(op.neurons.min_voltage == 0 for op in ops):
+            raise NotImplementedError("LIF min voltage")
         J = self.all_data[[self.sidx[op.J] for op in ops]]
         V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
         W = self.all_data[[self.sidx[op.states[1]] for op in ops]]
@@ -258,7 +260,11 @@ class Simulator(sim_npy.Simulator):
 
     def plan_SimSynapse(self, ops):
         for op in ops:
-            assert isinstance(op.synapse, LinearFilter)
+            if not isinstance(op.synapse, LinearFilter):
+                raise NotImplementedError(
+                    "%r synapses" % type(op.synapse).__name__)
+            if op.input.ndim != 1:
+                raise NotImplementedError("Can only filter vectors")
         steps = [op.synapse.make_step(self.model.dt, []) for op in ops]
         A = self.RaggedArray([f.den for f in steps])
         B = self.RaggedArray([f.num for f in steps])
@@ -281,8 +287,8 @@ class Simulator(sim_npy.Simulator):
             elif process_class is WhiteSignal:
                 plans.extend(self._plan_WhiteSignal(ops))
             else:
-                raise ValueError("Unsupported process type '%s'"
-                                 % process_class.__name__)
+                raise NotImplementedError("Unsupported process type '%s'"
+                                          % process_class.__name__)
 
         return plans
 
@@ -319,6 +325,12 @@ class Simulator(sim_npy.Simulator):
         signals = self.RaggedArray(signals)
         return [plan_whitesignal(self.queue, Y, t, signals, dt,
                                  tag="whitesignal")]
+
+    def plan_SimBCM(self, ops):
+        raise NotImplementedError("BCM learning rule")
+
+    def plan_SimOja(self, ops):
+        raise NotImplementedError("Oja's learning rule")
 
     def plan_probes(self):
         if len(self.model.probes) == 0:
