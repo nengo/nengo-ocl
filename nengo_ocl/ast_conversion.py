@@ -20,26 +20,17 @@ except ImportError:
     # Renamed in Python 3
     import builtins as __builtin__
 import ast
-import collections
 import inspect
 import math
 
 import numpy as np
 
-from nengo.utils.compat import range
+from nengo.utils.compat import is_iterable, OrderedDict, range
 
 
-def number(x):
-    return isinstance(x, (int, float))
-
-
-def iterable(x):
-    return isinstance(x, collections.Iterable)
-
-
-def symbolic(x):
+def is_symbolic(x):
     return isinstance(x, Expression) or (
-        iterable(x) and all(isinstance(xx, Expression) for xx in x))
+        is_iterable(x) and all(isinstance(xx, Expression) for xx in x))
 
 infix_binary_ops = {
     ast.Add: '+',
@@ -390,11 +381,11 @@ class FuncExp(Expression):
         elif all(map(is_num, self.args)):
             # simplify scalar function
             return NumExp(self.fn(*[a.value for a in self.args]))
-        elif all(is_num(a) or iterable(a) and all(map(is_num, a))
+        elif all(is_num(a) or is_iterable(a) and all(map(is_num, a))
                  for a in self.args):
             # simplify vector function
             return NumExp(self.fn(
-                [[aa.value for aa in a] if iterable(a) else a.value
+                [[aa.value for aa in a] if is_iterable(a) else a.value
                  for a in self.args]))
         else:
             return self  # cannot simplify
@@ -483,8 +474,8 @@ class OCL_Translator(ast.NodeVisitor):
         self.closures = closure_dict
 
         # self.init: key=local variable name, value=initialization statement
-        self.init = collections.OrderedDict()
-        self.temp_names = collections.OrderedDict()  # for comprehensions
+        self.init = OrderedDict()
+        self.temp_names = OrderedDict()  # for comprehensions
 
         # parse and make code
         a = ast.parse(source)
@@ -604,7 +595,7 @@ class OCL_Translator(ast.NodeVisitor):
 
     def _broadcast_args(self, func, args):
         """Apply 'func' element-wise to lists of args"""
-        as_list = lambda x: list(x) if iterable(x) else [x]
+        as_list = lambda x: list(x) if is_iterable(x) else [x]
         args = list(map(as_list, args))
         arg_lens = list(map(len, args))
         max_len = max(arg_lens)
@@ -662,7 +653,7 @@ class OCL_Translator(ast.NodeVisitor):
         assert expr.kwargs is None, "kwargs not implemented"
         handle = self._get_handle(expr.func)
         args = [self.visit(arg) for arg in expr.args]
-        if not any(symbolic(arg) for arg in args):
+        if not any(is_symbolic(arg) for arg in args):
             return handle(*args)
         elif handle in vector_funcs:
             return FuncExp(handle, *args)
@@ -764,7 +755,7 @@ class OCL_Translator(ast.NodeVisitor):
 
     def visit_Return(self, expr):
         value = self.visit(expr.value)
-        if iterable(value):
+        if is_iterable(value):
             self._check_vector_length(len(value))
             if not all(isinstance(v, Expression) for v in value):
                 raise ValueError(
@@ -821,7 +812,7 @@ def strip_leading_whitespace(source):
 class OCL_Function(object):
 
     def __init__(self, fn, in_dims=None, out_dim=None):
-        if in_dims is not None and not iterable(in_dims):
+        if in_dims is not None and not is_iterable(in_dims):
             in_dims = [in_dims]
 
         self.fn = fn

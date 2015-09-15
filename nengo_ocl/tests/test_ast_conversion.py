@@ -144,7 +144,6 @@ def test_lambda_double(Simulator):
         _test_node(Simulator, d, size_in=1)
 
 
-@pytest.mark.xfail  # see https://github.com/nengo/nengo_ocl/issues/54
 def test_direct_connection(Simulator):
     """Test a direct-mode connection"""
 
@@ -206,7 +205,6 @@ def test_sin_conn(Simulator):
     _test_conn(Simulator, np.sin, 1, n=10)
 
 
-@pytest.mark.xfail  # see https://github.com/nengo/nengo_ocl/issues/54
 def test_functions(Simulator, n_points=10):
     """Test the function maps in ast_converter.py"""
     # TODO: split this into one test per function using py.test utilities
@@ -282,7 +280,6 @@ def test_functions(Simulator, n_points=10):
                         "see logger warnings for details")
 
 
-@pytest.mark.xfail  # see https://github.com/nengo/nengo_ocl/issues/54
 def test_vector_functions(Simulator):
     d = 5
     boolean = [any, all, np.any, np.all]
