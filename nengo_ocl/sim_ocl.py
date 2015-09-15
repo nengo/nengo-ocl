@@ -1,4 +1,3 @@
-import collections
 import inspect
 import logging
 import os
@@ -30,7 +29,7 @@ PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 
 def get_closures(f):
-    return collections.OrderedDict(zip(
+    return OrderedDict(zip(
         f.__code__.co_freevars, (c.cell_contents for c in f.__closure__)))
 
 
@@ -114,7 +113,7 @@ class Simulator(sim_npy.Simulator):
         # TODO: test with a hybrid program (Python and OCL)
 
         # group nonlinearities
-        unique_ops = collections.OrderedDict()
+        unique_ops = OrderedDict()
         for op in ops:
             # assert op.n_args in (1, 2), op.n_args
             op_key = (op.fn, op.t_in, op.x is not None)

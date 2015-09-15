@@ -118,11 +118,6 @@ class Plans(object):
         return self.call_n_times(1)
 
     def call_n_times(self, n):
-        last_ev, all_evs = self.enqueue_n_times(n)
-        last_ev.wait()
-
-
-    def call_n_times(self, n):
         last_event = self.enqueue_n_times(n)
         if last_event is not None:
             last_event.wait()
