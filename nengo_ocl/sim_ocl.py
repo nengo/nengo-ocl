@@ -348,7 +348,7 @@ class Simulator(sim_npy.Simulator):
                 [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
                  for p in probes])
 
-            cl_plan = plan_probes(self.queue, periods, X, Y, tag="probes")
+            cl_plan = plan_probes(self.queue, periods, X, Y)
             self._max_steps_between_probes = n_prealloc * min(periods)
 
             cl_plan.Y = Y
@@ -409,7 +409,7 @@ class Simulator(sim_npy.Simulator):
         # make and sort table
         table = []
         unknowns = []
-        for p in self._dag.order:
+        for p in self._plans.plans:
             gflops_per_sec = 0
             gbytes_per_sec = 0
             if isinstance(p, BasePlan):

@@ -24,12 +24,15 @@ class BasePlan(object):
         # -- bandwidth requirement per call
         self.bw_per_call = bw_per_call
 
-    def __str__(self):
-        return '%s{%s %s}' % (
+    def __repr__(self):
+        return '%s{%s%s}' % (
             self.__class__.__name__,
             self.name,
-            self.tag,
+            ": %s" % self.tag if self.tag else "",
         )
+
+    def update_profiling(self):
+        pass
 
 
 class PythonPlan(BasePlan):
@@ -64,40 +67,39 @@ class Plan(BasePlan):
         self.kern = kern
         self.gsize = gsize
         self.lsize = lsize
-        self._evs = []
+        self._events_to_profile = []
 
-    def __call__(self, profiling=False):
+    def __call__(self):
         ev = self.enqueue()
         ev.wait()
 
-    def update_from_enqueued_events(self, profiling):
-        if profiling:
-            for ev in self._evs:
-                self.atimes.append(
-                    1e-9 * (ev.profile.submit - ev.profile.queued))
-                self.btimes.append(
-                    1e-9 * (ev.profile.start - ev.profile.submit))
-                self.ctimes.append(
-                    1e-9 * (ev.profile.end - ev.profile.start))
-                self.n_calls += 1
-        self._evs[:] = []
+    def update_profiling(self):
+        for ev in self._events_to_profile:
+            self.atimes.append(
+                1e-9 * (ev.profile.submit - ev.profile.queued))
+            self.btimes.append(
+                1e-9 * (ev.profile.start - ev.profile.submit))
+            self.ctimes.append(
+                1e-9 * (ev.profile.end - ev.profile.start))
+            self.n_calls += 1
+
+        self._events_to_profile[:] = []
 
     def enqueue(self, wait_for=None):
         ev = cl.enqueue_nd_range_kernel(
             self.queue, self.kern, self.gsize, self.lsize,
             wait_for=wait_for)
-        self._evs.append(ev)
+        self._events_to_profile.append(ev)
         return ev
 
-    def __str__(self):
-        return '%s{%s, %s, %s, %s, tag=%s, name=%s}' % (
+    def __repr__(self):
+        return '%s{%s%s %s %s}' % (
             self.__class__.__name__,
-            self.queue,
-            self.kern,
+            self.name,
+            ": %s" % self.tag if self.tag else "",
             self.gsize,
             self.lsize,
-            self.tag,
-            self.name)
+        )
 
 
 class Marker(Plan):
@@ -113,8 +115,8 @@ class Marker(Plan):
 class Plans(object):
 
     def __init__(self, planlist, profiling):
-        assert not profiling, "Not yet implemented"
         self.plans = planlist
+        self.profiling = profiling
 
     def __call__(self):
         return self.call_n_times(1)
@@ -123,6 +125,10 @@ class Plans(object):
         last_event = self.enqueue_n_times(n)
         if last_event is not None:
             last_event.wait()
+
+        if self.profiling:
+            for p in self.plans:
+                p.update_profiling()
 
     def enqueue_n_times(self, n):
         for _ in range(n):
@@ -170,7 +176,7 @@ class DAG(object):
             last_ev.wait()
             if self.profiling:
                 for p in self.order:
-                    p.update_from_enqueued_events(self.profiling)
+                    p.update_profiling()
         else:
             for ii in range(n):
                 for p in self.order:
