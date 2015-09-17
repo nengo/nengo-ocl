@@ -26,37 +26,31 @@ def as_ascii(string):
         return string
 
 
-def to_host(queue, data, dtype, start, shape, elemstrides):
-    """Copy memory off the device, into a Numpy array"""
+def to_host(queue, data, dtype, start, shape, elemstrides, is_blocking=True):
+    """Copy memory off the device, into a Numpy array.
 
-    m, n = shape
-    Sm, Sn = elemstrides
-    if m * n == 0:
-        return np.zeros(shape, dtype=dtype)
-
+    If the requested array is discontiguous, the whole block is copied off
+    the device, and a view is created to show the appropriate part.
+    """
     if min(elemstrides) < 0:
         raise NotImplementedError()
 
+    m, n = shape
+    sm, sn = elemstrides
+    if m * n == 0:
+        return np.zeros(shape, dtype=dtype)
+
     itemsize = dtype.itemsize
     bytestart = itemsize * start
-    # -- TODO: is there an extra element transferred here?
-    byteend = bytestart + itemsize * ((m - 1) * Sm + (n - 1) * Sn + 1)
+    bytelen = itemsize * ((m-1)*sm + (n-1)*sn + 1)
 
-    temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
+    temp_buf = np.zeros(bytelen, dtype=np.int8)
     cl.enqueue_copy(queue, temp_buf, data,
-                    device_offset=bytestart, is_blocking=True)
+                    device_offset=bytestart, is_blocking=is_blocking)
 
-    bytestrides = (itemsize * Sm, itemsize * Sn)
-    try:
-        view = np.ndarray(
-            shape=(m, n),
-            dtype=dtype,
-            buffer=temp_buf.data,
-            offset=0,
-            strides=bytestrides)
-    except:
-        raise
-    return view
+    bytestrides = (itemsize * sm, itemsize * sn)
+    return np.ndarray(shape=(m, n), dtype=dtype, buffer=temp_buf.data,
+                      offset=0, strides=bytestrides)
 
 
 class CLRaggedArray(object):
@@ -199,6 +193,18 @@ class CLRaggedArray(object):
         Getting multiple items returns a view into the device.
         """
         if is_iterable(item):
+            return self.getitem_device(item)
+        else:
+            buf = to_host(
+                self.queue, self.cl_buf.data, self.dtype, self.starts[item],
+                (self.shape0s[item], self.shape1s[item]),
+                (self.stride0s[item], self.stride1s[item]),
+            )
+            buf.setflags(write=False)
+            return buf
+
+    def getitem_device(self, item):
+        if is_iterable(item):
             rval = self.__class__.__new__(self.__class__)
             rval.queue = self.queue
             rval.starts = self.starts[item]
@@ -210,47 +216,43 @@ class CLRaggedArray(object):
             rval.names = [self.names[i] for i in item]
             return rval
         else:
-            buf = to_host(
-                self.queue, self.cl_buf.data, self.dtype, self.starts[item],
-                (self.shape0s[item], self.shape1s[item]),
-                (self.stride0s[item], self.stride1s[item]),
-            )
-            buf.setflags(write=False)
-            return buf
+            s = self.dtype.itemsize
+            return Array(
+                self.queue,
+                (self.shape0s[item], self.shape1s[item]), self.dtype,
+                strides=(self.stride0s[item] * s, self.stride1s[item] * s),
+                data=self.cl_buf.data, offset=self.starts[item] * s)
 
     def __setitem__(self, item, new_value):
         if is_iterable(item):
             raise NotImplementedError('TODO')
         else:
             m, n = self.shape0s[item], self.shape1s[item]
-            sM, sN = self.stride0s[item], self.stride1s[item]
+            sm, sn = self.stride0s[item], self.stride1s[item]
 
-            if sM < 0 or sN < 0:
-                raise NotImplementedError()
-            if not (sM, sN) in [(1, m), (n, 1)]:
-                raise NotImplementedError('discontiguous setitem')
+            if (sm, sn) in [(1, m), (n, 1)]:
+                # contiguous
+                clarray = self.getitem_device(item)
+                if isinstance(new_value, np.ndarray):
+                    array = new_value.astype(self.dtype)
+                else:
+                    array = np.zeros(clarray.shape, dtype=clarray.dtype)
+                    array[...] = new_value
 
-            itemsize = self.dtype.itemsize
-            bytestart = itemsize * self.starts[item]
-            # -- N.B. match to getitem
-            byteend = bytestart + itemsize * ((m - 1) * sM + (n - 1) * sN + 1)
+                clarray.set(array)
+            else:
+                # discontiguous
+                #   Copy a contiguous region off the device that surrounds the
+                #   discontiguous, set the appropriate values, and copy back
+                s = self.starts[item]
+                array = to_host(self.queue, self.cl_buf.data, self.dtype,
+                                s, (m, n), (sm, sn), is_blocking=True)
+                array[...] = new_value
 
-            temp_buf = np.zeros((byteend - bytestart), dtype=np.int8)
-            # -- TODO: if copying into a contiguous region, this
-            #          first copy from the device is unnecessary
-            cl.enqueue_copy(self.queue, temp_buf, self.cl_buf.data,
-                            device_offset=bytestart, is_blocking=True)
-
-            bytestrides = (itemsize * sM, itemsize * sN)
-            view = np.ndarray(
-                shape=(m, n),
-                dtype=self.dtype,
-                buffer=temp_buf.data,
-                offset=0,
-                strides=bytestrides)
-            view[...] = new_value
-            cl.enqueue_copy(self.queue, self.cl_buf.data, temp_buf,
-                            device_offset=bytestart, is_blocking=True)
+                buf = array.base if array.base is not None else array
+                bytestart = self.dtype.itemsize * s
+                cl.enqueue_copy(self.queue, self.cl_buf.data, buf,
+                                device_offset=bytestart, is_blocking=True)
 
     def to_host(self):
         """Copy the whole object to a host RaggedArray"""

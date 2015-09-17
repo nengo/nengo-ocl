@@ -79,11 +79,10 @@ class RaggedArray(object):
                 item.shape = ()  # avoid numpy DeprecationWarning
 
             itemsize = self.dtype.itemsize
+            shape = (self.shape0s[item], self.shape1s[item])
             byteoffset = itemsize * self.starts[item]
-            bytestrides = (
-                itemsize * self.stride0s[item],
-                itemsize * self.stride1s[item])
-            shape = self.shape0s[item], self.shape1s[item]
+            bytestrides = (itemsize * self.stride0s[item],
+                           itemsize * self.stride1s[item])
             return np.ndarray(
                 shape=shape, dtype=self.dtype, buffer=self.buf.data,
                 offset=byteoffset, strides=bytestrides)
@@ -97,12 +96,13 @@ class RaggedArray(object):
 
     def add_views(self, starts, shape0s, shape1s, stride0s, stride1s,
                   names=None):
-        # assert start >= 0
-        # assert start + length <= len(self.buf)
-        # -- creates copies, same semantics
-        #    as OCL version
+        assert all(s >= 0 for s in starts)
+        assert all(s + s0*s1 <= self.buf.size
+                   for s, s0, s1 in zip(starts, shape0s, shape1s))
         assert 0 not in shape0s
         assert 0 not in shape1s
+        assert all(s > 0 for s in stride0s)
+        assert all(s > 0 for s in stride1s)
         self.starts = self.starts + starts
         self.shape0s = self.shape0s + shape0s
         self.shape1s = self.shape1s + shape1s
