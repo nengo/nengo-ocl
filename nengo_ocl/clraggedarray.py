@@ -13,6 +13,21 @@ from nengo_ocl.raggedarray import RaggedArray
 
 # add 'ctype' property to Array (returned by 'to_device')
 Array.ctype = property(lambda self: cl.tools.dtype_to_ctype(self.dtype))
+Array.start = property(lambda self: self.offset / self.dtype.itemsize)
+
+
+def data_ptr(array):
+    """Given an Array, get a Buffer that starts at the right offset
+
+    This fails unless `array.offset` is a multiple of
+    `queue.device.mem_base_addr_align`, which is rare, so this isn't really
+    a good function.
+    """
+    if array.offset:
+        # ignore buffer size, since we don't use it
+        return array.base_data.get_sub_region(array.offset, 1)
+    else:
+        return array.base_data
 
 
 def to_host(queue, data, dtype, start, shape, elemstrides, is_blocking=True):

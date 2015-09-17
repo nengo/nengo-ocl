@@ -357,19 +357,23 @@ class Simulator(sim_npy.Simulator):
         return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
 
     def _plan_Conv2(self, ops):
-        ps = [op.process for op in ops]
-        X = self.all_data[[self.sidx[op.input] for op in ops]]
-        Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        filters = self.RaggedArray([
-            f.reshape(np.prod(f.shape[:3]), -1) if f.ndim == 6 else
-            f.reshape(f.shape[0], -1) for f in (p.filters for p in ps)])
-        biases = self.RaggedArray([
-            (np.zeros(p.shape_out) + p.biases).ravel() for p in ps])
-        shapes = self.RaggedArray([
-            np.array(list(p.shape_out) + list(p.filters.shape[-3:]),
-                     dtype=np.int32) for p in ps])
-        local = self.Array([p.filters.ndim == 6 for p in ps], dtype=np.int32)
-        return [plan_conv2(self.queue, X, Y, filters, biases, shapes, local)]
+        TRANSPOSED = True
+
+        plans = []
+        for op in ops:
+            p, f, b = op.process, op.process.filters, op.process.biases
+            X = self.all_data.getitem_device(self.sidx[op.input])
+            Y = self.all_data.getitem_device(self.sidx[op.output])
+            F = self.Array(np.rollaxis(f, 0, f.ndim).ravel()
+                           if TRANSPOSED else f.ravel())
+            B = self.Array((np.zeros(p.shape_out) + b).ravel())
+            shape = list(p.shape_out) + list(p.filters.shape[-3:])
+            conv = (p.filters.ndim == 4)
+            plans.append(plan_conv2(
+                self.queue, X, Y, F, B, shape, conv, transposed=TRANSPOSED,
+                tag="shape=%s, conv=%s" % (shape, conv)))
+
+        return plans
 
     def _plan_Pool2(self, ops):
         ps = [op.process for op in ops]
