@@ -24,6 +24,11 @@ def make_random_pair(n, d=1, low=20, high=40):
     return A, clA
 
 
+def test_shape_zeros():
+    A = RA([[]])
+    assert A[0].shape == (0, 1)
+
+
 def test_unit():
     val = np.random.randn()
     A = RA([val])

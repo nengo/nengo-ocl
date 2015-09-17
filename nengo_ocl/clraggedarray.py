@@ -6,7 +6,7 @@ from __future__ import print_function
 
 import numpy as np
 import pyopencl as cl
-from nengo.utils.compat import StringIO
+from nengo.utils.compat import is_iterable, StringIO
 from pyopencl.array import Array, to_device
 
 from nengo.utils.compat import PY2
@@ -60,17 +60,11 @@ def to_host(queue, data, dtype, start, shape, elemstrides):
 
 
 class CLRaggedArray(object):
-    # a linear buffer that is partitioned into
-    # sections of various lengths.
-    #
+    """A linear device buffer partitioned into sections of various lengths.
 
-    @property
-    def ctype(self):
-        return self.cl_buf.ctype
-
-    @property
-    def dtype(self):
-        return self.cl_buf.dtype
+    Can also be viewed as an efficient way of storing a list of arrays on
+    the device, in the same underlying buffer.
+    """
 
     def __init__(self, queue, np_raggedarray):
         self.queue = queue
@@ -108,14 +102,13 @@ class CLRaggedArray(object):
 
         return self
 
-    def __str__(self):
-        sio = StringIO()
-        namelen = max([0] + [len(n) for n in self.names])
-        fmt = '%%%is' % namelen
-        for ii, nn in enumerate(self.names):
-            print('->', self[ii])
-            print((fmt % nn), self[ii], file=sio)
-        return sio.getvalue()
+    @property
+    def ctype(self):
+        return self.cl_buf.ctype
+
+    @property
+    def dtype(self):
+        return self.cl_buf.dtype
 
     @property
     def starts(self):
@@ -188,6 +181,15 @@ class CLRaggedArray(object):
         self.cl_buf = to_device(self.queue, buf)
         self.queue.finish()
 
+    def __str__(self):
+        sio = StringIO()
+        namelen = max([0] + [len(n) for n in self.names])
+        fmt = '%%%is' % namelen
+        for ii, nn in enumerate(self.names):
+            print('->', self[ii])
+            print((fmt % nn), self[ii], file=sio)
+        return sio.getvalue()
+
     def __len__(self):
         return self.cl_starts.shape[0]
 
@@ -196,7 +198,7 @@ class CLRaggedArray(object):
         Getting one item returns a numpy array (on the host).
         Getting multiple items returns a view into the device.
         """
-        if isinstance(item, (list, tuple)):
+        if is_iterable(item):
             rval = self.__class__.__new__(self.__class__)
             rval.queue = self.queue
             rval.starts = self.starts[item]
@@ -217,7 +219,7 @@ class CLRaggedArray(object):
             return buf
 
     def __setitem__(self, item, new_value):
-        if isinstance(item, (list, tuple)):
+        if is_iterable(item):
             raise NotImplementedError('TODO')
         else:
             m, n = self.shape0s[item], self.shape1s[item]
@@ -247,7 +249,6 @@ class CLRaggedArray(object):
                 offset=0,
                 strides=bytestrides)
             view[...] = new_value
-            # print(temp_buf.view('float32'))
             cl.enqueue_copy(self.queue, self.cl_buf.data, temp_buf,
                             device_offset=bytestart, is_blocking=True)
 
