@@ -17,7 +17,7 @@ from nengo.builder.signal import Signal, SignalView, SignalDict
 from nengo.utils.compat import OrderedDict
 import nengo.utils.numpy as npext
 
-from nengo_ocl.raggedarray import RaggedArray as _RaggedArray
+from nengo_ocl.raggedarray import RaggedArray
 
 logger = logging.getLogger(__name__)
 
@@ -424,7 +424,7 @@ class Simulator(Simulator):
         # Provide a nicer interface to probe outputs
         self.data = ProbeDict(self._probe_outputs)
 
-        self.all_data = _RaggedArray(
+        self.all_data = RaggedArray(
             [sigdict[sb] for sb in all_bases],
             [getattr(sb, 'name', '') for sb in all_bases]
         )
@@ -554,9 +554,6 @@ class Simulator(Simulator):
         )
         return constant_b_gemvs + vector_b_gemvs
 
-    def RaggedArray(self, *args, **kwargs):
-        return _RaggedArray(*args, **kwargs)
-
     def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
                  Y_in_sig_fn=None,
                  gamma=None,
@@ -569,7 +566,7 @@ class Simulator(Simulator):
 
         if callable(beta):
             beta_sigs = list(map(beta, seq))
-            beta = self.RaggedArray(
+            beta = RaggedArray(
                 list(map(sidx.__getitem__, beta_sigs)))
 
         Y_sigs = [Y_sig_fn(item) for item in seq]
@@ -582,9 +579,9 @@ class Simulator(Simulator):
 
         # -- The following lines illustrate what we'd *like* to see...
         #
-        # A_js = self.RaggedArray(
+        # A_js = RaggedArray(
         #   [[sidx[ss] for ss in A_js_fn(item)] for item in seq])
-        # X_js = self.RaggedArray(
+        # X_js = RaggedArray(
         #   [[sidx[ss] for ss in X_js_fn(item)] for item in seq])
         #
         # -- ... but the simulator supports broadcasting. So in fact whenever
@@ -612,8 +609,8 @@ class Simulator(Simulator):
             print("print A", A_js)
             print("print X", X_js)
 
-        A_js = self.RaggedArray(A_js)
-        X_js = self.RaggedArray(X_js)
+        A_js = RaggedArray(A_js)
+        X_js = RaggedArray(X_js)
         Y = self.all_data[Y_idxs]
         Y_in = self.all_data[Y_in_idxs]
 
