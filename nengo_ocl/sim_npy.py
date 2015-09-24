@@ -14,7 +14,7 @@ from nengo.simulator import ProbeDict, Simulator
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalView, SignalDict
-from nengo.utils.compat import OrderedDict
+from nengo.utils.compat import OrderedDict, itervalues
 import nengo.utils.numpy as npext
 
 from nengo_ocl.raggedarray import RaggedArray
@@ -215,57 +215,58 @@ def greedy_planner(operators):
     for op in operators:
         ancestors_of[op] = set(filter(is_op, nx.ancestors(dg, op)))
 
-    cliques = {}
-    scheduled = set()
+    base_sets = {}
+    for op in operators:
+        base_sets[op] = list(set(
+            sig.base for sig in (op.incs + op.sets + op.updates)))
+
+    unscheduled = set(operators)
     rval = []
-    while len(scheduled) < len(operators):
-        candidates = [op
-                      for op, pre_ops in ancestors_of.items()
-                      if not pre_ops and op not in scheduled]
+    while len(unscheduled) > 0:
+        # --- candidates are unscheduled ops with no dependencies
+        candidates = [op for op in unscheduled if not ancestors_of[op]]
         if len(candidates) == 0:
             raise ValueError("Cycles in the op graph")
 
+        # --- pick the type with the highest number of ops
         type_counts = defaultdict(int)
         for op in candidates:
             type_counts[type(op)] += 1
         chosen_type = sorted(type_counts.items(), key=lambda x: x[1])[-1][0]
         candidates = [op for op in candidates if isinstance(op, chosen_type)]
 
-        cliques_by_base = defaultdict(dict)
+        # --- pick one op writing to each base
         by_base = defaultdict(list)
+        no_sets = []
         for op in candidates:
-            for sig in op.incs + op.sets + op.updates:
-                for cliq in cliques.get(sig.base, []):
-                    if sig.structure in cliq:
-                        cliques_by_base[sig.base].setdefault(id(cliq), [])
-                        cliques_by_base[sig.base][id(cliq)].append(op)
-                by_base[sig.base].append(op)
+            bases = base_sets[op]
+            if len(bases) == 0:
+                no_sets.append(op)
+            else:
+                for base in bases:
+                    by_base[base].append(op)
 
         chosen = []
-        for base, ops_writing_to_base in by_base.items():
-            if base in cliques_by_base:
-                most_ops = sorted(
-                    (len(base_ops), base_ops)
-                    for cliq_id, base_ops in cliques_by_base[base].items())
-                chosen.extend(most_ops[-1][1])
-            else:
-                chosen.append(ops_writing_to_base[0])
+        for ops_writing_to_base in itervalues(by_base):
+            chosen.append(ops_writing_to_base[0])
 
-        if not chosen:
-            # remaining candidates can be done in any order (no outputs)
-            chosen.extend(candidates)
+        # remaining candidates can be done in any order (no outputs)
+        chosen.extend(no_sets)
 
-        # -- ops that produced multiple outputs show up multiple times
+        # ops that produced multiple outputs show up multiple times
         chosen = stable_unique(chosen)
         assert chosen
 
-        assert not any(cc in scheduled for cc in chosen)
-        scheduled.update(chosen)
+        # --- schedule ops
+        unscheduled.difference_update(chosen)
         rval.append((chosen_type, chosen))
 
         # -- prepare for next iteration
-        for op in ancestors_of:
-            ancestors_of[op].difference_update(chosen)
+        for op in chosen:
+            del ancestors_of[op]
+
+        for ancestors in itervalues(ancestors_of):
+            ancestors.difference_update(chosen)
 
     assert len(operators) == sum(len(p[1]) for p in rval)
     # print('greedy_planner: Program len:', len(rval))
