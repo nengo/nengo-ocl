@@ -78,6 +78,32 @@ class CLRaggedArray(object):
         self.buf = np_raggedarray.buf
         self.names = np_raggedarray.names
 
+    @classmethod
+    def from_arrays(cls, queue, arrays, names=None, dtype=None):
+        arrays = [np.asarray(a) for a in arrays]
+        assert len(arrays) > 0
+        assert all(a.ndim <= 2 for a in arrays)
+        names = [''] * len(arrays) if names is None else list(names)
+        assert len(names) == len(arrays)
+
+        self = cls.__new__(cls)
+        self.queue = queue
+        sizesum = np.cumsum([0] + [a.size for a in arrays])
+        self.starts = sizesum[:-1]
+        self.shape0s = [a.shape[0] if a.ndim > 0 else 1 for a in arrays]
+        self.shape1s = [a.shape[1] if a.ndim > 1 else 1 for a in arrays]
+        self.stride0s = [a.shape[1] if a.ndim == 2 else 1 for a in arrays]
+        self.stride1s = [1 for a in arrays]
+
+        dtype = arrays[0].dtype if dtype is None else dtype
+        buf = np.zeros(sizesum[-1], dtype=dtype)
+        for a, s in zip(arrays, self.starts):
+            buf[s:s+a.size] = a.ravel()
+        self.buf = buf
+        self.names = names
+
+        return self
+
     def __str__(self):
         sio = StringIO()
         namelen = max([0] + [len(n) for n in self.names])

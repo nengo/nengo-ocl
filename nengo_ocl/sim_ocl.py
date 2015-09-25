@@ -14,7 +14,6 @@ from nengo.utils.progress import ProgressTracker
 from nengo.utils.stdlib import groupby
 
 from nengo_ocl import sim_npy
-from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import (
@@ -38,9 +37,8 @@ class Simulator(sim_npy.Simulator):
     def Array(self, val, dtype=np.float32):
         return to_device(self.queue, np.asarray(val, dtype=dtype))
 
-    def RaggedArray(self, *args, **kwargs):
-        val = RaggedArray(*args, **kwargs)
-        return CLRaggedArray(self.queue, val)
+    def RaggedArray(self, listofarrays, **kwargs):
+        return CLRaggedArray.from_arrays(self.queue, listofarrays, **kwargs)
 
     def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
                  n_prealloc_probes=1000, profiling=None, ocl_only=False):

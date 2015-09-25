@@ -8,22 +8,6 @@ from nengo.utils.compat import StringIO
 import numpy as np
 
 
-def shape0(obj):
-    try:
-        # assert obj.shape[0] -- empty lists are OK
-        return obj.shape[0]
-    except IndexError:
-        return 1
-
-
-def shape1(obj):
-    try:
-        assert obj.shape[1]  # -- sanity check, should never be 0
-        return obj.shape[1]
-    except IndexError:
-        return 1
-
-
 def allclose(a, b, atol=1e-3, rtol=1e-3):
     if not np.allclose(a.starts, b.starts):
         return False
@@ -49,44 +33,22 @@ class RaggedArray(object):
     def dtype(self):
         return self.buf.dtype
 
-    def __init__(self, listofarrays, names=None):
-        starts = []
-        shape0s = []
-        shape1s = []
-        stride0s = []
-        stride1s = []
-        buf = []
+    def __init__(self, arrays, names=None):
+        arrays = [np.asarray(a) for a in arrays]
+        assert len(arrays) > 0
+        assert all(a.ndim <= 2 for a in arrays)
 
-        for l in listofarrays:
-            obj = np.asarray(l)
-            starts.append(len(buf))
-            shape0s.append(shape0(obj))
-            shape1s.append(shape1(obj))
-            if obj.ndim == 0:
-                stride0s.append(1)
-                stride1s.append(1)
-            elif obj.ndim == 1:
-                stride0s.append(1)
-                stride1s.append(1)
-            elif obj.ndim == 2:
-                stride0s.append(obj.shape[1])
-                stride1s.append(1)
-            else:
-                raise NotImplementedError()
-            buf.extend(obj.ravel())
+        self.names = [''] * len(arrays) if names is None else list(names)
+        assert len(self.names) == len(arrays)
 
-        self.starts = starts
-        self.shape0s = shape0s
-        self.shape1s = shape1s
-        self.stride0s = stride0s
-        self.stride1s = stride1s
-        self.buf = np.asarray(buf)
-        if names is None:
-            self.names = [''] * len(self)
-        else:
-            assert len(names) == len(stride0s)
-            self.names = names
-        assert 0 not in shape1s
+        sizesum = np.cumsum([0] + [a.size for a in arrays])
+        self.starts = sizesum[:-1].tolist()
+        self.shape0s = [a.shape[0] if a.ndim > 0 else 1 for a in arrays]
+        self.shape1s = [a.shape[1] if a.ndim > 1 else 1 for a in arrays]
+        assert 0 not in self.shape1s
+        self.stride0s = [a.shape[1] if a.ndim == 2 else 1 for a in arrays]
+        self.stride1s = [1 for a in arrays]
+        self.buf = np.concatenate([a.ravel() for a in arrays])
 
     def __str__(self):
         sio = StringIO()
