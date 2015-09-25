@@ -9,10 +9,6 @@ from nengo_ocl.clraggedarray import CLRaggedArray, as_ascii, to_device
 from nengo_ocl.plan import Plan
 
 
-def all_equal(a, b):
-    return (np.asarray(a) == np.asarray(b)).all()
-
-
 def _indent(s, i):
     return '\n'.join([(' ' * i) + line for line in s.split('\n')])
 
@@ -55,10 +51,8 @@ def plan_reset(queue, Y, values, tag=None):
     N = len(Y)
     assert len(Y) == len(values)
 
-    for i in range(N):
-        assert Y.stride0s[i] == Y.shape1s[i]
-        assert Y.stride1s[i] == 1
-
+    assert np.all(Y.stride0s == Y.shape1s)
+    assert np.all(Y.stride1s == 1)
     assert Y.cl_buf.ctype == values.ctype
 
     text = """
@@ -110,18 +104,17 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     N = len(A)
     assert len(A) == len(B) == len(Ainds) == len(Binds)
 
-    for i in range(N):
-        for arr in [A, B, Ainds, Binds]:
-            assert arr.stride1s[i] == 1
-        assert A.stride0s[i] == 1
-        assert A.stride1s[i] == 1
-        assert B.stride0s[i] == 1
-        assert B.stride1s[i] == 1
-        assert Ainds.stride0s[i] == 1
-        assert Ainds.stride1s[i] == 1
-        assert Binds.stride0s[i] == 1
-        assert Binds.stride1s[i] == 1
-        assert Ainds.shape0s[i] == Binds.shape0s[i]
+    for arr in [A, B, Ainds, Binds]:
+        assert (arr.stride1s == 1).all()
+    assert (A.stride0s == 1).all()
+    assert (A.stride1s == 1).all()
+    assert (B.stride0s == 1).all()
+    assert (B.stride1s == 1).all()
+    assert (Ainds.stride0s == 1).all()
+    assert (Ainds.stride1s == 1).all()
+    assert (Binds.stride0s == 1).all()
+    assert (Binds.stride1s == 1).all()
+    assert (Ainds.shape0s == Binds.shape0s).all()
 
     assert A.cl_buf.ctype == B.cl_buf.ctype
     assert Ainds.cl_buf.ctype == Binds.cl_buf.ctype == 'int'
@@ -191,16 +184,15 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     N = len(X)
     assert len(Y) == N and len(A) == N
 
-    for i in range(N):
-        for arr in [A, X, Y]:
-            assert arr.stride1s[i] == 1
-        assert X.shape0s[i] in [1, Y.shape0s[i]]
-        assert X.shape1s[i] in [1, Y.shape1s[i]]
-        assert A.shape0s[i] in [1, Y.shape0s[i]]
-        assert A.shape1s[i] in [1, Y.shape1s[i]]
-        assert X.stride1s[i] == 1
-        assert Y.stride1s[i] == 1
-        assert A.stride1s[i] == 1
+    for arr in [A, X, Y]:
+        assert (arr.stride1s == 1).all()
+    assert ((X.shape0s == 1) | (X.shape0s == Y.shape0s)).all()
+    assert ((X.shape1s == 1) | (X.shape1s == Y.shape1s)).all()
+    assert ((A.shape0s == 1) | (A.shape0s == Y.shape0s)).all()
+    assert ((A.shape1s == 1) | (A.shape1s == Y.shape1s)).all()
+    assert (X.stride1s == 1).all()
+    assert (Y.stride1s == 1).all()
+    assert (A.stride1s == 1).all()
 
     assert X.cl_buf.ctype == Y.cl_buf.ctype
     assert A.cl_buf.ctype == Y.cl_buf.ctype
@@ -307,21 +299,18 @@ def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     N = len(X)
     assert len(Y) == N and len(A) == N and len(B) == N
 
-    for i in range(N):
-        for arr in [X, Y, A, B, Xbuf, Ybuf]:
-            assert arr.shape1s[i] == arr.stride0s[i]
-            assert arr.stride1s[i] == 1
-        for arr in [X, Y, A, B]:  # vectors
-            assert arr.shape1s[i] == 1
-        assert X.shape0s[i] == Y.shape0s[i]
+    for arr in [X, Y, A, B, Xbuf, Ybuf]:
+        assert (arr.shape1s == arr.stride0s).all()
+        assert (arr.stride1s == 1).all()
+    for arr in [X, Y, A, B]:  # vectors
+        assert (arr.shape1s == 1).all()
+    assert (X.shape0s == Y.shape0s).all()
 
-        assert B.shape0s[i] >= 1
-        if B.shape0s[i] > 1:
-            assert Xbuf.shape0s[i] == B.shape0s[i]
-        assert Xbuf.shape1s[i] == X.shape0s[i]
-        if A.shape0s[i] > 1:
-            assert Ybuf.shape0s[i] == A.shape0s[i]
-        assert Ybuf.shape1s[i] == Y.shape0s[i]
+    assert (B.shape0s >= 1).all()
+    assert ((B.shape0s == 1) | (Xbuf.shape0s == B.shape0s)).all()
+    assert (Xbuf.shape1s == X.shape0s).all()
+    assert ((A.shape0s == 1) | (Ybuf.shape0s == A.shape0s)).all()
+    assert (Ybuf.shape1s == Y.shape0s).all()
 
     assert X.cl_buf.ctype == Xbuf.cl_buf.ctype
     assert Y.cl_buf.ctype == Ybuf.cl_buf.ctype
@@ -437,7 +426,7 @@ def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     _fn = cl.Program(queue.context, text).build().linear_synapse
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_len = min(queue.device.max_work_group_size, max(X.shape0s))
+    max_len = min(max(X.shape0s), queue.device.max_work_group_size)
     gsize = (max_len, N)
     lsize = (max_len, 1)
     rval = Plan(
@@ -460,14 +449,13 @@ def plan_probes(queue, periods, X, Y, tag=None):
 
     # N.B.  X[i].shape = (M, N)
     #       Y[i].shape = (buf_len, M * N)
-    for i in range(N):
-        for arr in [X, Y]:
-            assert arr.stride1s[i] == 1
-        assert X.shape0s[i] * X.shape1s[i] == Y.shape1s[i]
-        assert X.stride0s[i] == X.shape1s[i]
-        assert X.stride1s[i] == 1
-        assert Y.stride0s[i] == Y.shape1s[i]
-        assert Y.stride1s[i] == 1
+    for arr in [X, Y]:
+        assert (arr.stride1s == 1).all()
+    assert (X.shape0s * X.shape1s == Y.shape1s).all()
+    assert (X.stride0s == X.shape1s).all()
+    assert (X.stride1s == 1).all()
+    assert (Y.stride0s == Y.shape1s).all()
+    assert (Y.stride1s == 1).all()
 
     periods = np.asarray(periods, dtype='float32')
     cl_periods = to_device(queue, periods)
@@ -745,10 +733,10 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     for vname, v in list(inputs.items()) + list(outputs.items()):
         assert vname not in avars, "Name clash"
         assert len(v) == N
-        assert all_equal(v.shape0s, base.shape0s)
+        assert (v.shape0s == base.shape0s).all()
 
         # N.B. - we should be able to ignore ldas as long as all vectors
-        assert all_equal(v.shape1s, 1)
+        assert (v.shape1s == 1).all()
 
         dtype = v.cl_buf.ctype
         offset = '%(name)s_starts[n]' % {'name': vname}
@@ -757,11 +745,8 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     for vname, v in params.items():
         assert vname not in avars, "Name clash"
         assert len(v) == N
-        for i in range(N):
-            assert v.shape0s[i] == base.shape0s[i] or v.shape0s[i] == 1, \
-                "%s.shape0s[%d] must be 1 or %d (not %d)" % \
-                (vname, i, base.shape0s[i], v.shape0s[i])
-            assert v.shape1s[i] == 1
+        assert ((v.shape0s == base.shape0s) | (v.shape0s == 1)).all()
+        assert (v.shape1s == 1).all()
 
         dtype = v.cl_buf.ctype
         offset = '%(name)s_starts[n]' % {'name': vname}

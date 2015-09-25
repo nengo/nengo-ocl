@@ -89,51 +89,56 @@ class CLRaggedArray(object):
 
     @property
     def starts(self):
-        return self._starts.tolist()
+        return self._starts
 
     @starts.setter
     def starts(self, starts):
         self._starts = np.array(starts, dtype='int32')
+        self._starts.setflags(write=False)
         self.cl_starts = to_device(self.queue, self._starts)
         self.queue.finish()
 
     @property
     def shape0s(self):
-        return self._shape0s.tolist()
+        return self._shape0s
 
     @shape0s.setter
     def shape0s(self, shape0s):
         self._shape0s = np.array(shape0s, dtype='int32')
+        self._shape0s.setflags(write=False)
         self.cl_shape0s = to_device(self.queue, self._shape0s)
         self.queue.finish()
 
     @property
     def shape1s(self):
-        return self._shape1s.tolist()
+        return self._shape1s
 
     @shape1s.setter
     def shape1s(self, shape1s):
         self._shape1s = np.array(shape1s, dtype='int32')
+        self._shape1s.setflags(write=False)
         self.cl_shape1s = to_device(self.queue, self._shape1s)
         self.queue.finish()
 
     @property
     def stride0s(self):
-        return self._stride0s.tolist()
+        return self._stride0s
 
     @stride0s.setter
     def stride0s(self, stride0s):
         self._stride0s = np.array(stride0s, dtype='int32')
+        self._stride0s.setflags(write=False)
         self.cl_stride0s = to_device(self.queue, self._stride0s)
         self.queue.finish()
 
     @property
     def stride1s(self):
-        return self._stride1s.tolist()
+        return self._stride1s
 
     @stride1s.setter
     def stride1s(self, stride1s):
         self._stride1s = np.array(stride1s, dtype='int32')
+        self._stride1s.setflags(write=False)
         self.cl_stride1s = to_device(self.queue, self._stride1s)
         self.queue.finish()
 
@@ -153,14 +158,6 @@ class CLRaggedArray(object):
         self.cl_buf = to_device(self.queue, buf)
         self.queue.finish()
 
-    # def shallow_copy(self):
-    #     rval = self.__class__.__new__(self.__class__)
-    #     rval.cl_starts = self.cl_starts
-    #     rval.cl_lens = self.cl_lens
-    #     rval.cl_buf = self.cl_buf
-    #     rval.queue = self.queue
-    #     return rval
-
     def __len__(self):
         return self.cl_starts.shape[0]
 
@@ -169,22 +166,14 @@ class CLRaggedArray(object):
         Getting one item returns a numpy array (on the host).
         Getting multiple items returns a view into the device.
         """
-
-        # -- these are each OCL fetch operations (could be sped up)
-        starts = self.starts
-        shape0s = self.shape0s
-        shape1s = self.shape1s
-        stride0s = self.stride0s
-        stride1s = self.stride1s
-
         if isinstance(item, (list, tuple)):
             rval = self.__class__.__new__(self.__class__)
             rval.queue = self.queue
-            rval.starts = [starts[i] for i in item]
-            rval.shape0s = [shape0s[i] for i in item]
-            rval.shape1s = [shape1s[i] for i in item]
-            rval.stride0s = [stride0s[i] for i in item]
-            rval.stride1s = [stride1s[i] for i in item]
+            rval.starts = self.starts[item]
+            rval.shape0s = self.shape0s[item]
+            rval.shape1s = self.shape1s[item]
+            rval.stride0s = self.stride0s[item]
+            rval.stride1s = self.stride1s[item]
             rval.cl_buf = self.cl_buf
             rval.names = [self.names[i] for i in item]
             return rval
@@ -198,16 +187,11 @@ class CLRaggedArray(object):
             return buf
 
     def __setitem__(self, item, new_value):
-        starts = self.starts
-        shape0s = self.shape0s
-        shape1s = self.shape1s
-        stride0s = self.stride0s
-        stride1s = self.stride1s
         if isinstance(item, (list, tuple)):
             raise NotImplementedError('TODO')
         else:
-            m, n = shape0s[item], shape1s[item]
-            sM, sN = stride0s[item], stride1s[item]
+            m, n = self.shape0s[item], self.shape1s[item]
+            sM, sN = self.stride0s[item], self.stride1s[item]
 
             if sM < 0 or sN < 0:
                 raise NotImplementedError()
@@ -215,7 +199,7 @@ class CLRaggedArray(object):
                 raise NotImplementedError('discontiguous setitem')
 
             itemsize = self.dtype.itemsize
-            bytestart = itemsize * starts[item]
+            bytestart = itemsize * self.starts[item]
             # -- N.B. match to getitem
             byteend = bytestart + itemsize * ((m - 1) * sM + (n - 1) * sN + 1)
 
@@ -240,11 +224,11 @@ class CLRaggedArray(object):
     def to_host(self):
         """Copy the whole object to a host RaggedArray"""
         rval = RaggedArray.__new__(RaggedArray)
-        rval.starts = self.starts
-        rval.shape0s = self.shape0s
-        rval.shape1s = self.shape1s
-        rval.stride0s = self.stride0s
-        rval.stride1s = self.stride1s
+        rval.starts = self.starts.tolist()
+        rval.shape0s = self.shape0s.tolist()
+        rval.shape1s = self.shape1s.tolist()
+        rval.stride0s = self.stride0s.tolist()
+        rval.stride1s = self.stride1s.tolist()
         rval.buf = self.buf
         rval.names = self.names[:]
         return rval
