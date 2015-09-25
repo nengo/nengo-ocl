@@ -273,18 +273,6 @@ def greedy_planner(operators):
     return rval
 
 
-# def sequential_planner(operators):
-#     dg = exact_dependency_graph(operators, share_memory)
-
-#     # list of pairs: (type, [ops_of_type], set_of_ancestors,
-#     # set_of_descendants)
-#     topo_order = [op
-#                   for op in nx.topological_sort(dg)
-#                   if is_op(op)]
-
-#     return [(type(op), [op]) for op in topo_order]
-
-
 def isview(obj):
     return obj.base is not None and obj.base is not obj
 
@@ -302,9 +290,8 @@ def stable_unique(seq):
 class ViewBuilder(object):
 
     def __init__(self, bases, rarray):
-        self.bases = bases
         self.sidx = dict((bb, ii) for ii, bb in enumerate(bases))
-        assert len(self.bases) == len(self.sidx)
+        assert len(bases) == len(self.sidx)
         self.rarray = rarray
 
         self.starts = []
@@ -315,35 +302,20 @@ class ViewBuilder(object):
         self.names = []
 
     def append_view(self, obj):
-        assert obj.size
-
         if obj in self.sidx:
-            return
-            # raise KeyError('sidx already contains object', obj)
-
-        if obj in self.bases:
-            # -- it is not a view, but OK
-            return
+            return  # we already have this view
 
         if not isview(obj):
             # -- it is not a view, and not OK
             raise ValueError('can only append views of known signals', obj)
 
+        assert obj.size and obj.ndim <= 2
         idx = self.sidx[obj.base]
         self.starts.append(self.rarray.starts[idx] + obj.offset)
         self.shape0s.append(obj.shape[0] if obj.ndim > 0 else 1)
         self.shape1s.append(obj.shape[1] if obj.ndim > 1 else 1)
-        if obj.ndim == 0:
-            self.stride0s.append(1)
-            self.stride1s.append(1)
-        elif obj.ndim == 1:
-            self.stride0s.append(obj.elemstrides[0])
-            self.stride1s.append(1)
-        elif obj.ndim == 2:
-            self.stride0s.append(obj.elemstrides[0])
-            self.stride1s.append(obj.elemstrides[1])
-        else:
-            raise NotImplementedError()
+        self.stride0s.append(obj.elemstrides[0] if obj.ndim > 0 else 1)
+        self.stride1s.append(obj.elemstrides[1] if obj.ndim > 1 else 1)
         self.names.append(getattr(obj, 'name', ''))
         self.sidx[obj] = len(self.sidx)
 
@@ -432,6 +404,7 @@ class Simulator(Simulator):
 
         builder = ViewBuilder(all_bases, self.all_data)
         self._AX_views = {}
+        self._YYB_views = {}
         for op_type, op_list in op_groups:
             self.setup_views(builder, op_type, op_list)
         for probe in self.model.probes:
@@ -476,9 +449,6 @@ class Simulator(Simulator):
                 raise ValueError(
                     "No support for tensors with %d dimensions" % view.ndim)
 
-        if not hasattr(self, '_YYB_views'):
-            self._YYB_views = {}
-
         for op in ops:
             Y_view = as2d(op.Y)
             Y_in_view = as2d(op.Y_in)
@@ -486,6 +456,7 @@ class Simulator(Simulator):
                 YYB_views = [Y_view, Y_in_view, as2d(op._signal_beta)]
             else:
                 YYB_views = [Y_view, Y_in_view]
+
             AX_views = []
             for A, X in zip(op.As, op.Xs):
                 X_view = as2d(X)
