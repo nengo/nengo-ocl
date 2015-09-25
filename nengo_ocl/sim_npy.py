@@ -14,7 +14,7 @@ from nengo.simulator import ProbeDict, Simulator
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalView, SignalDict
-from nengo.utils.compat import OrderedDict, itervalues
+from nengo.utils.compat import OrderedDict, iteritems, itervalues
 import nengo.utils.numpy as npext
 
 from nengo_ocl.raggedarray import RaggedArray
@@ -210,32 +210,35 @@ def greedy_planner(operators):
     """
     dg = exact_dependency_graph(operators)
 
-    # -- TODO: linear time algo
-    ancestors_of = {}
+    # map unscheduled ops to their direct predecessors and successors
+    predecessors_of = {}
+    successors_of = {}
     for op in operators:
-        ancestors_of[op] = set(filter(is_op, nx.ancestors(dg, op)))
+        predecessors_of[op] = set(filter(is_op, dg.predecessors(op)))
+        successors_of[op] = set(filter(is_op, dg.successors(op)))
 
     base_sets = {}
     for op in operators:
         base_sets[op] = list(set(
             sig.base for sig in (op.incs + op.sets + op.updates)))
 
-    unscheduled = set(operators)
+    # available ops are ready to be scheduled (all predecessors scheduled)
+    available = defaultdict(set)
+    for op in (op for op, dep in iteritems(predecessors_of) if not dep):
+        available[type(op)].add(op)
+
     rval = []
-    while len(unscheduled) > 0:
-        # --- candidates are unscheduled ops with no dependencies
-        candidates = [op for op in unscheduled if not ancestors_of[op]]
-        if len(candidates) == 0:
+    while len(predecessors_of) > 0:
+        if len(available) == 0:
             raise ValueError("Cycles in the op graph")
 
-        # --- pick the type with the highest number of ops
-        type_counts = defaultdict(int)
-        for op in candidates:
-            type_counts[type(op)] += 1
-        chosen_type = sorted(type_counts.items(), key=lambda x: x[1])[-1][0]
-        candidates = [op for op in candidates if isinstance(op, chosen_type)]
+        chosen_type = sorted(available.items(), key=lambda x: len(x[1]))[-1][0]
+        candidates = available[chosen_type]
 
         # --- pick one op writing to each base
+        # TODO: is this dangerous if ops write to multiple bases? For example
+        # A and B might write to both X and Y, and we might choose A for
+        # writing to X and B for writing to Y at the same time.
         by_base = defaultdict(list)
         no_sets = []
         for op in candidates:
@@ -258,15 +261,21 @@ def greedy_planner(operators):
         assert chosen
 
         # --- schedule ops
-        unscheduled.difference_update(chosen)
         rval.append((chosen_type, chosen))
 
-        # -- prepare for next iteration
-        for op in chosen:
-            del ancestors_of[op]
+        # --- update predecessors and successors of unsheduled ops
+        available[chosen_type].difference_update(chosen)
+        if not available[chosen_type]:
+            del available[chosen_type]
 
-        for ancestors in itervalues(ancestors_of):
-            ancestors.difference_update(chosen)
+        for op in chosen:
+            for op2 in successors_of[op]:
+                preds = predecessors_of[op2]
+                preds.remove(op)
+                if len(preds) == 0:
+                    available[type(op2)].add(op2)
+            del predecessors_of[op]
+            del successors_of[op]
 
     assert len(operators) == sum(len(p[1]) for p in rval)
     # print('greedy_planner: Program len:', len(rval))
