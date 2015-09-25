@@ -66,7 +66,7 @@ class CLRaggedArray(object):
 
     @property
     def dtype(self):
-        return self.buf.dtype
+        return self.cl_buf.dtype
 
     def __init__(self, queue, np_raggedarray):
         self.queue = queue
