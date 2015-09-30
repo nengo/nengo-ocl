@@ -107,8 +107,9 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
 
     for arr in [A, B, Ainds, Binds]:
         assert (arr.shape1s == 1).all()
-        assert (arr.stride0s == 1).all()
         assert (arr.stride1s == 1).all()
+    for arr in [Ainds, Binds]:
+        assert (arr.stride0s == 1).all()
     assert (Ainds.shape0s == Binds.shape0s).all()
 
     assert A.ctype == B.ctype
@@ -118,8 +119,10 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void slicedcopy(
+            __global const int *Astride0s,
             __global const int *Astarts,
             __global const ${Atype} *Adata,
+            __global const int *Bstride0s,
             __global const int *Bstarts,
             __global ${Btype} *Bdata,
             __global const int *Ishape0s,
@@ -136,14 +139,15 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
             __global const int *aind = AIdata + AIstarts[n];
             __global const int *bind = BIdata + BIstarts[n];
             const int inc = incdata[n];
+            const int Astride0 = Astride0s[n], Bstride0 = Bstride0s[n];
 
             int i = get_global_id(0);
             if (inc)
                 for (; i < Ishape0s[n]; i += get_global_size(0))
-                    b[bind[i]] += a[aind[i]];
+                    b[bind[i]*Bstride0] += a[aind[i]*Astride0];
             else
                 for (; i < Ishape0s[n]; i += get_global_size(0))
-                    b[bind[i]] = a[aind[i]];
+                    b[bind[i]*Bstride0] = a[aind[i]*Astride0];
         }
         """
 
@@ -151,8 +155,10 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
+        A.cl_stride0s,
         A.cl_starts,
         A.cl_buf,
+        B.cl_stride0s,
         B.cl_starts,
         B.cl_buf,
         Ainds.cl_shape0s,

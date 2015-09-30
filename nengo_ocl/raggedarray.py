@@ -108,8 +108,6 @@ class RaggedArray(object):
                    for s, s0, s1 in zip(starts, shape0s, shape1s))
         assert 0 not in shape0s
         assert 0 not in shape1s
-        assert all(s > 0 for s in stride0s)
-        assert all(s > 0 for s in stride1s)
         self.starts = self.starts + starts
         self.shape0s = self.shape0s + shape0s
         self.shape1s = self.shape1s + shape1s

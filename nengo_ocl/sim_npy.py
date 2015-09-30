@@ -6,15 +6,14 @@ from __future__ import print_function
 import logging
 from collections import defaultdict
 
-import networkx as nx
 import numpy as np
 
 from nengo.cache import get_default_decoder_cache
 from nengo.simulator import ProbeDict, Simulator
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
-from nengo.builder.signal import Signal, SignalView, SignalDict
-from nengo.utils.compat import OrderedDict, iteritems, itervalues
+from nengo.builder.signal import Signal, SignalDict
+from nengo.utils.compat import OrderedDict, iteritems
 import nengo.utils.numpy as npext
 from nengo.utils.stdlib import Timer
 
@@ -58,7 +57,7 @@ class MultiProdUpdate(Operator):
                 self._float_beta = float(beta)
             self._signal_beta = None
         except:
-            assert isinstance(beta, SignalView)
+            assert isinstance(beta, Signal)
             self._float_beta = None
             self._signal_beta = beta
             if beta.shape != Y.shape:
@@ -171,7 +170,7 @@ class MultiProdUpdate(Operator):
             else:
                 rval.append(op)
         done = set()
-        for view, set_ops in sets.items():
+        for view, set_ops in iteritems(sets):
             set_op, = set_ops
             done.add(set_op)
             for inc_op in incs.get(view, []):
@@ -179,7 +178,7 @@ class MultiProdUpdate(Operator):
                 set_op.Xs.extend(inc_op.Xs)
                 done.add(inc_op)
             rval.append(set_op)
-        for view, inc_ops in incs.items():
+        for view, inc_ops in iteritems(incs):
             for inc_op in inc_ops:
                 if inc_op not in done:
                     rval.append(inc_op)
@@ -190,38 +189,22 @@ def is_op(op):
     return isinstance(op, Operator)
 
 
-def exact_dependency_graph(operators):
+def greedy_planner(operators):
     from nengo.utils.simulator import operator_depencency_graph
     edges = operator_depencency_graph(operators)
-
-    dg = nx.DiGraph()
-    dg.add_nodes_from(operators)  # add all operators
-    for source, dests in edges.items():
-        dg.add_edges_from((source, dest) for dest in dests)
-
-    return dg
-
-
-def greedy_planner(operators):
-    """
-    I feel like there might e a dynamic programming solution here, but I can't
-    work it out, and I'm not sure. Even if a DP solution existed, we would
-    need a function to estimate the goodness (e.g. neg wall time) of kernel
-    calls, and  that function would need to be pretty fast.
-    """
-    dg = exact_dependency_graph(operators)
+    for op, dests in iteritems(edges):
+        assert is_op(op) and all(is_op(op2) for op2 in dests)
 
     # map unscheduled ops to their direct predecessors and successors
     predecessors_of = {}
     successors_of = {}
     for op in operators:
-        predecessors_of[op] = set(filter(is_op, dg.predecessors(op)))
-        successors_of[op] = set(filter(is_op, dg.successors(op)))
-
-    base_sets = {}
-    for op in operators:
-        base_sets[op] = list(set(
-            sig.base for sig in (op.incs + op.sets + op.updates)))
+        predecessors_of[op] = set()
+        successors_of[op] = set()
+    for op, dests in iteritems(edges):
+        for op2 in dests:
+            predecessors_of[op2].add(op)
+        successors_of[op].update(dests)
 
     # available ops are ready to be scheduled (all predecessors scheduled)
     available = defaultdict(set)
@@ -236,32 +219,37 @@ def greedy_planner(operators):
         chosen_type = sorted(available.items(), key=lambda x: len(x[1]))[-1][0]
         candidates = available[chosen_type]
 
-        # --- pick one op writing to each base
-        # TODO: is this dangerous if ops write to multiple bases? For example
-        # A and B might write to both X and Y, and we might choose A for
-        # writing to X and B for writing to Y at the same time.
-        by_base = defaultdict(list)
-        no_sets = []
-        for op in candidates:
-            bases = base_sets[op]
-            if len(bases) == 0:
-                no_sets.append(op)
-            else:
-                for base in bases:
-                    by_base[base].append(op)
-
+        # --- greedily pick non-overlapping ops
         chosen = []
-        for ops_writing_to_base in itervalues(by_base):
-            chosen.append(ops_writing_to_base[0])
+        base_sets = defaultdict(set)
+        base_incs = defaultdict(set)
+        base_updates = defaultdict(set)
 
-        # remaining candidates can be done in any order (no outputs)
-        chosen.extend(no_sets)
+        def overlaps(op):
+            for s in op.sets:
+                if any(s.may_share_memory(s2) for s2 in base_sets[s.base]):
+                    return True
+            for s in op.incs:
+                if any(s.may_share_memory(s2) for s2 in base_incs[s.base]):
+                    return True
+            for s in op.updates:
+                if any(s.may_share_memory(s2) for s2 in base_updates[s.base]):
+                    return True
+            return False
 
-        # ops that produced multiple outputs show up multiple times
-        chosen = stable_unique(chosen)
-        assert chosen
+        for op in candidates:
+            if not overlaps(op):
+                # add op
+                chosen.append(op)
+                for s in op.sets:
+                    base_sets[s.base].add(s)
+                for s in op.incs:
+                    base_incs[s.base].add(s)
+                for s in op.updates:
+                    base_updates[s.base].add(s)
 
         # --- schedule ops
+        assert chosen
         rval.append((chosen_type, chosen))
 
         # --- update predecessors and successors of unsheduled ops
@@ -281,10 +269,6 @@ def greedy_planner(operators):
     assert len(operators) == sum(len(p[1]) for p in rval)
     # print('greedy_planner: Program len:', len(rval))
     return rval
-
-
-def isview(obj):
-    return obj.base is not None and obj.base is not obj
 
 
 def stable_unique(seq):
@@ -315,7 +299,7 @@ class ViewBuilder(object):
         if obj in self.sidx:
             return  # we already have this view
 
-        if not isview(obj):
+        if not obj.is_view:
             # -- it is not a view, and not OK
             raise ValueError('can only append views of known signals', obj)
 
