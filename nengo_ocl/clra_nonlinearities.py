@@ -824,6 +824,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     if n_elements > 0:
         # Allocate the exact number of required kernels in a vector
         gsize = (int(np.ceil(np.sum(input0.shape0s) / float(n_elements))),)
+        lsize = None
         text = """
         ////////// MAIN FUNCTION //////////
         __kernel void ${fn_name}(
@@ -923,6 +924,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         """
     else:
         # Allocate more than enough kernels in a matrix
+        lsize = None
         gsize = (int(np.max(input0.shape0s)), int(N))
         text = """
         ////////// MAIN FUNCTION //////////
@@ -993,7 +995,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     _fn = getattr(fns, fn_name)
     _fn.set_args(*[arr.data for arr in full_args])
 
-    rval = Plan(queue, _fn, gsize, lsize=None, name=name, tag=tag)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name=name, tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     rval.bw_per_call = bw_per_call
     rval.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
