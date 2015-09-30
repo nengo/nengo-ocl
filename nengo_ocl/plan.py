@@ -9,7 +9,7 @@ PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 class BasePlan(object):
 
-    def __init__(self, name="", tag="",
+    def __init__(self, name="", tag=None,
                  flops_per_call=None,
                  bw_per_call=None
                  ):
@@ -23,6 +23,9 @@ class BasePlan(object):
         self.flops_per_call = flops_per_call
         # -- bandwidth requirement per call
         self.bw_per_call = bw_per_call
+
+    def __str__(self):
+        return '<%s%s>' % (self.name, ": %s" % self.tag if self.tag else "")
 
     def __repr__(self):
         return '%s{%s%s}' % (

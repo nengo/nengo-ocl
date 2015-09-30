@@ -65,6 +65,10 @@ class CLRaggedArray(object):
     #
 
     @property
+    def ctype(self):
+        return self.cl_buf.ctype
+
+    @property
     def dtype(self):
         return self.cl_buf.dtype
 

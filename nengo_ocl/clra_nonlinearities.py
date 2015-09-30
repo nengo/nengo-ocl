@@ -15,7 +15,7 @@ def _indent(s, i):
 
 def plan_timeupdate(queue, step, time, dt):
     assert len(step) == len(time) == 1
-    assert step.cl_buf.ctype == time.cl_buf.ctype == 'float'
+    assert step.ctype == time.ctype == 'float'
     assert step.shape0s[0] == step.shape1s[0] == 1
     assert time.shape0s[0] == time.shape1s[0] == 1
 
@@ -53,7 +53,7 @@ def plan_reset(queue, Y, values, tag=None):
 
     assert np.all(Y.stride0s == Y.shape1s)
     assert np.all(Y.stride1s == 1)
-    assert Y.cl_buf.ctype == values.ctype
+    assert Y.ctype == values.ctype
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -77,7 +77,7 @@ def plan_reset(queue, Y, values, tag=None):
         }
         """
 
-    textconf = dict(Ytype=Y.cl_buf.ctype)
+    textconf = dict(Ytype=Y.ctype)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
@@ -91,12 +91,13 @@ def plan_reset(queue, Y, values, tag=None):
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_group = queue.device.max_work_group_size
-    sizes = [s0 * s1 for s0, s1 in zip(Y.shape0s, Y.shape1s)]
-    n = min(max(sizes), max_group)
+    sizes = Y.shape0s * Y.shape1s
+    n = min(sizes.max(), max_group)
     gsize = (n, N)
     lsize = (n, 1)
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
+    rval.bw_per_call = sizes.sum() * Y.dtype.itemsize
     return rval
 
 
@@ -105,20 +106,14 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     assert len(A) == len(B) == len(Ainds) == len(Binds)
 
     for arr in [A, B, Ainds, Binds]:
+        assert (arr.shape1s == 1).all()
+        assert (arr.stride0s == 1).all()
         assert (arr.stride1s == 1).all()
-    assert (A.stride0s == 1).all()
-    assert (A.stride1s == 1).all()
-    assert (B.stride0s == 1).all()
-    assert (B.stride1s == 1).all()
-    assert (Ainds.stride0s == 1).all()
-    assert (Ainds.stride1s == 1).all()
-    assert (Binds.stride0s == 1).all()
-    assert (Binds.stride1s == 1).all()
     assert (Ainds.shape0s == Binds.shape0s).all()
 
-    assert A.cl_buf.ctype == B.cl_buf.ctype
-    assert Ainds.cl_buf.ctype == Binds.cl_buf.ctype == 'int'
-    assert incs.cl_buf.ctype == 'int'
+    assert A.ctype == B.ctype
+    assert Ainds.ctype == Binds.ctype == 'int'
+    assert incs.ctype == 'int'
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -152,7 +147,7 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
         }
         """
 
-    textconf = dict(Atype=A.cl_buf.ctype, Btype=B.cl_buf.ctype)
+    textconf = dict(Atype=A.ctype, Btype=B.ctype)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
@@ -176,6 +171,7 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     lsize = (n, 1)
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
+    rval.bw_per_call = 2 * Ainds.shape0s.sum() * A.dtype.itemsize
     return rval
 
 
@@ -194,8 +190,12 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     assert (Y.stride1s == 1).all()
     assert (A.stride1s == 1).all()
 
-    assert X.cl_buf.ctype == Y.cl_buf.ctype
-    assert A.cl_buf.ctype == Y.cl_buf.ctype
+    assert X.ctype == Y.ctype
+    assert A.ctype == Y.ctype
+
+    bw_per_call = ((Y.shape0s * Y.shape1s).sum() * Y.dtype.itemsize
+                   + (A.shape0s * A.shape1s).sum() * A.dtype.itemsize
+                   + (X.shape0s * X.shape1s).sum() * X.dtype.itemsize)
 
     text = """
         inline ${Ytype} get_element(
@@ -256,8 +256,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
         }
         """
 
-    textconf = dict(Atype=A.cl_buf.ctype, Xtype=X.cl_buf.ctype,
-                    Ytype=Y.cl_buf.ctype)
+    textconf = dict(Atype=A.ctype, Xtype=X.ctype, Ytype=Y.ctype)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
@@ -287,6 +286,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     rval = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_elementwise_inc", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
+    rval.bw_per_call = bw_per_call
     return rval
 
 
@@ -312,8 +312,8 @@ def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     assert ((A.shape0s == 1) | (Ybuf.shape0s == A.shape0s)).all()
     assert (Ybuf.shape1s == Y.shape0s).all()
 
-    assert X.cl_buf.ctype == Xbuf.cl_buf.ctype
-    assert Y.cl_buf.ctype == Ybuf.cl_buf.ctype
+    assert X.ctype == Xbuf.ctype
+    assert Y.ctype == Ybuf.ctype
 
     Xbufpos = to_device(queue, np.zeros(N, dtype='int32'))
     Ybufpos = to_device(queue, np.zeros(N, dtype='int32'))
@@ -399,8 +399,8 @@ def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
         """
 
     textconf = dict(
-        Xtype=X.cl_buf.ctype, Ytype=Y.cl_buf.ctype,
-        Atype=A.cl_buf.ctype, Btype=B.cl_buf.ctype
+        Xtype=X.ctype, Ytype=Y.ctype,
+        Atype=A.ctype, Btype=B.ctype
     )
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
@@ -444,7 +444,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
     """
     assert len(X) == len(Y)
     assert len(X) == len(periods)
-    assert X.cl_buf.ctype == Y.cl_buf.ctype
+    assert X.ctype == Y.ctype
     N = len(X)
 
     # N.B.  X[i].shape = (M, N)
@@ -514,8 +514,8 @@ def plan_probes(queue, periods, X, Y, tag=None):
         """
 
     textconf = dict(N=N,
-                    Xtype=X.cl_buf.ctype,
-                    Ytype=Y.cl_buf.ctype,
+                    Xtype=X.ctype,
+                    Ytype=Y.ctype,
                     Ctype=cl_countdowns.ctype,
                     Ptype=cl_periods.ctype)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
@@ -551,8 +551,8 @@ def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
     for x in inputs:
         assert len(x) == len(output)
     N = len(inputs[0])
-    input_types = [x.cl_buf.ctype for x in inputs]
-    output_type = output.cl_buf.ctype
+    input_types = [x.ctype for x in inputs]
+    output_type = output.ctype
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -607,14 +607,14 @@ ${code}
 def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
              tag=None, n_elements=0, upsample=1):
     for array in [V, W, outV, outW, outS]:
-        assert V.cl_buf.ctype == J.cl_buf.ctype
+        assert V.ctype == J.ctype
 
     inputs = dict(j=J, v=V, w=W)
     outputs = dict(ov=outV, ow=outW, os=outS)
     parameters = dict(tau=tau, ref=ref)
 
     dt = float(dt)
-    textconf = dict(Vtype=V.cl_buf.ctype,
+    textconf = dict(Vtype=V.ctype,
                     upsample=upsample,
                     dtu=dt / upsample,
                     dtu_inv=upsample / dt,
@@ -664,12 +664,12 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
 
 
 def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
-    assert R.cl_buf.ctype == J.cl_buf.ctype
+    assert R.ctype == J.ctype
 
     inputs = dict(j=J)
     outputs = dict(r=R)
     parameters = dict(tau=tau, ref=ref)
-    textconf = dict(Rtype=R.cl_buf.ctype)
+    textconf = dict(Rtype=R.ctype)
     declares = """
         const ${Rtype} c0 = 0, c1 = 1;
         """
@@ -730,6 +730,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                 raise
 
     avars = {}
+    bw_per_call = 0
     for vname, v in list(inputs.items()) + list(outputs.items()):
         assert vname not in avars, "Name clash"
         assert len(v) == N
@@ -738,9 +739,9 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         # N.B. - we should be able to ignore ldas as long as all vectors
         assert (v.shape1s == 1).all()
 
-        dtype = v.cl_buf.ctype
         offset = '%(name)s_starts[n]' % {'name': vname}
-        avars[vname] = (dtype, offset)
+        avars[vname] = (v.ctype, offset)
+        bw_per_call += v.shape0s.sum() * v.dtype.itemsize
 
     for vname, v in params.items():
         assert vname not in avars, "Name clash"
@@ -748,9 +749,9 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         assert ((v.shape0s == base.shape0s) | (v.shape0s == 1)).all()
         assert (v.shape1s == 1).all()
 
-        dtype = v.cl_buf.ctype
         offset = '%(name)s_starts[n]' % {'name': vname}
-        avars[vname] = (dtype, offset)
+        avars[vname] = (v.ctype, offset)
+        bw_per_call += v.shape0s.sum() * v.cl_buf.dtype.itemsize
 
     ivars = dict((k, avars[k]) for k in inputs.keys())
     ovars = dict((k, avars[k]) for k in outputs.keys())
@@ -1014,8 +1015,8 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
     N = len(Y)
     assert len(Y) == len(dist_enums) == len(dist_params) == len(scale)
 
-    assert dist_enums.cl_buf.ctype == 'int'
-    assert scale.cl_buf.ctype == 'int'
+    assert dist_enums.ctype == 'int'
+    assert scale.ctype == 'int'
 
     for i in range(N):
         for arr in [Y, dist_enums, dist_params, scale]:
@@ -1082,7 +1083,7 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
         }
         """
 
-    textconf = dict(Ytype=Y.cl_buf.ctype, Ptype=dist_params.cl_buf.ctype,
+    textconf = dict(Ytype=Y.ctype, Ptype=dist_params.ctype,
                     sqrt_dt_inv=1. / np.sqrt(dt), dist_header=dist_header)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
@@ -1155,8 +1156,8 @@ def plan_whitesignal(queue, Y, t, signals, dt, tag=None):
         }
         """
 
-    textconf = dict(Ytype=Y.cl_buf.ctype, Ttype=t.cl_buf.ctype,
-                    Stype=signals.cl_buf.ctype, dt=dt)
+    textconf = dict(Ytype=Y.ctype, Ttype=t.ctype,
+                    Stype=signals.ctype, dt=dt)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
