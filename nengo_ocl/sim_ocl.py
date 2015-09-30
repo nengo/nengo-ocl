@@ -98,8 +98,7 @@ class Simulator(sim_npy.Simulator):
             np.arange(op.b.size, dtype=np.int32)[op.b_slice] for op in ops])
         incs = self.RaggedArray([
             np.array(op.inc, dtype=np.int32) for op in ops])
-        return [plan_slicedcopy(self.queue, A, B, Ainds, Binds, incs,
-                                tag='slicedcopy')]
+        return [plan_slicedcopy(self.queue, A, B, Ainds, Binds, incs)]
 
     def plan_ElementwiseInc(self, ops):
         A = self.all_data[[self.sidx[op.A] for op in ops]]
@@ -242,7 +241,7 @@ class Simulator(sim_npy.Simulator):
             [np.array(op.neurons.tau_rc, dtype=J.dtype) for op in ops])
         dt = self.model.dt
         return [plan_lif(self.queue, J, V, W, V, W, S, ref, tau, dt,
-                         tag="lif", n_elements=2)]
+                         n_elements=2)]
 
     def _plan_LIFRate(self, ops):
         J = self.all_data[[self.sidx[op.J] for op in ops]]
@@ -253,7 +252,7 @@ class Simulator(sim_npy.Simulator):
             [np.array(op.neurons.tau_rc, dtype=J.dtype) for op in ops])
         dt = self.model.dt
         return [plan_lif_rate(self.queue, J, R, ref, tau, dt,
-                              tag="lif_rate", n_elements=2)]
+                              n_elements=2)]
 
     def plan_SimSynapse(self, ops):
         for op in ops:
@@ -301,7 +300,7 @@ class Simulator(sim_npy.Simulator):
         params = CLRaggedArray(self.queue, params)
         dt = self.model.dt
         return [plan_whitenoise(self.queue, Y, enums, params, scale, dt,
-                                self.cl_rng_state, tag="whitenoise")]
+                                self.cl_rng_state)]
 
     def _plan_FilteredNoise(self, ops):
         raise NotImplementedError()
@@ -320,8 +319,7 @@ class Simulator(sim_npy.Simulator):
             signals.append(closures['signal'])
 
         signals = self.RaggedArray(signals)
-        return [plan_whitesignal(self.queue, Y, t, signals, dt,
-                                 tag="whitesignal")]
+        return [plan_whitesignal(self.queue, Y, t, signals, dt)]
 
     def plan_SimBCM(self, ops):
         raise NotImplementedError("BCM learning rule")
@@ -410,22 +408,15 @@ class Simulator(sim_npy.Simulator):
         table = []
         unknowns = []
         for p in self._plans.plans:
-            gflops_per_sec = 0
-            gbytes_per_sec = 0
             if isinstance(p, BasePlan):
+                t = sum(p.ctimes)
+                gfps = 0  # gigaflops / sec
+                gbps = 0  # gigabytes / sec
                 if p.flops_per_call is not None:
-                    gflops_per_sec = (p.n_calls * p.flops_per_call
-                                      / (sum(p.ctimes) * 1.0e9))
+                    gfps = 1e-9 * p.n_calls * p.flops_per_call / t
                 if p.bw_per_call is not None:
-                    gbytes_per_sec = (p.n_calls * p.bw_per_call
-                                      / (sum(p.ctimes) * 1.0e9))
-                table.append((
-                    p.n_calls,
-                    sum(p.ctimes),
-                    gflops_per_sec,
-                    gbytes_per_sec,
-                    p.name,
-                    p.tag))
+                    gbps = 1e-9 * p.n_calls * p.bw_per_call / t
+                table.append((p.n_calls, t, gfps, gbps, str(p)))
             else:
                 unknowns.append((str(p), getattr(p, 'cumtime', '<unknown>')))
 
@@ -438,7 +429,7 @@ class Simulator(sim_npy.Simulator):
         print('%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
 
         for r in table:
-            print('%i\t%2.3f\t%2.3f\t%2.3f\t<%s, tag=%s>' % r)
+            print('%i\t%2.3f\t%2.3f\t%2.3f\t%s' % r)
 
         print('-' * 80)
         col_sum = lambda c: sum(map(lambda x: x[c], table))
