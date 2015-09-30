@@ -1,5 +1,4 @@
 numpy
 nengo
-networkx
 mako
 pyopencl
