@@ -51,8 +51,7 @@ class Simulator(sim_npy.Simulator):
         self.context = context
         self.profiling = profiling
         if self.profiling:
-            self.queue = cl.CommandQueue(
-                context, properties=PROFILING_ENABLE)
+            self.queue = cl.CommandQueue(context, properties=PROFILING_ENABLE)
         else:
             self.queue = cl.CommandQueue(context)
 
@@ -404,18 +403,23 @@ class Simulator(sim_npy.Simulator):
         sort : column to sort by (negative number sorts ascending)
             (0 = n_calls, 1 = runtime, 2 = q-time, 3 = subtime)
         """
+        if not self.profiling:
+            print("Profiling not enabled!")
+            return
+
         # make and sort table
         table = []
         unknowns = []
         for p in self._plans.plans:
             if isinstance(p, BasePlan):
                 t = sum(p.ctimes)
-                gfps = 0  # gigaflops / sec
-                gbps = 0  # gigabytes / sec
+                calls_per_sec = p.n_calls / t if t > 0 else np.nan
+                gfps = np.nan  # gigaflops / sec
+                gbps = np.nan  # gigabytes / sec
                 if p.flops_per_call is not None:
-                    gfps = 1e-9 * p.n_calls * p.flops_per_call / t
+                    gfps = 1e-9 * p.flops_per_call * calls_per_sec
                 if p.bw_per_call is not None:
-                    gbps = 1e-9 * p.n_calls * p.bw_per_call / t
+                    gbps = 1e-9 * p.bw_per_call * calls_per_sec
                 table.append((p.n_calls, t, gfps, gbps, str(p)))
             else:
                 unknowns.append((str(p), getattr(p, 'cumtime', '<unknown>')))
@@ -424,18 +428,27 @@ class Simulator(sim_npy.Simulator):
             reverse = sort >= 0
             table.sort(key=lambda x: x[abs(sort)], reverse=reverse)
 
-        # printing
+        # print table
         print('-' * 80)
         print('%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
 
         for r in table:
             print('%i\t%2.3f\t%2.3f\t%2.3f\t%s' % r)
 
+        # totals totals
         print('-' * 80)
-        col_sum = lambda c: sum(map(lambda x: x[c], table))
-        print('totals:\t%2.3f\t%2.3f\t%2.3f' % (
-            col_sum(1), col_sum(2), col_sum(3)))
+        col = lambda c: np.asarray(map(lambda x: x[c], table))
+        times = col(1)
 
+        def wmean(x):
+            m = ~np.isnan(x)
+            tm = times[m]
+            return (x[m] * tm).sum() / tm.sum() if tm.size > 0 else np.nan
+
+        print('totals:\t%2.3f\t%2.3f\t%2.3f' % (
+            times.sum(), wmean(col(2)), wmean(col(3))))
+
+        # print unknowns
         if len(unknowns) > 0:
             print('\n')
             for r in unknowns:
