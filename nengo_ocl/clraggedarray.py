@@ -239,6 +239,7 @@ class CLRaggedArray(object):
                     array = np.zeros(clarray.shape, dtype=clarray.dtype)
                     array[...] = new_value
 
+                array.shape = clarray.shape  # reshape to avoid warning
                 clarray.set(array)
             else:
                 # discontiguous
