@@ -116,14 +116,15 @@ def test_lif_speed(rng, heterogeneous):
     clW = CLRA(queue, W)
     clOS = CLRA(queue, OS)
 
-    n_elements = [0, 1, 2, 5, 10, 50]
+    # n_elements = [0, 1, 2, 5, 10, 50]
+    n_elements = [0, 1, 2, 5]
     for i, nel in enumerate(n_elements):
         plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, tau, dt,
                         n_elements=nel)
 
         with Timer() as timer:
             for j in range(1000):
-                plan(profiling=True)
+                plan()
 
         print("plan %d: n_elements = %d, dur = %0.3f"
               % (i, nel, timer.duration))

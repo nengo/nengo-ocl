@@ -54,7 +54,7 @@ def test_basic():
 
     # -- run cl computation
     prog = plan_ragged_gather_gemv(
-        queue, alpha, clA, clA_js, clX, clX_js, beta, clY)
+        queue, alpha, clA, A_js, clX, X_js, beta, clY)
     plans = prog.choose_plans()
     assert len(plans) == 1
     plans[0]()
@@ -98,17 +98,13 @@ def _test_random(k=4, p=1, m=10, n=10):
     clA = CLRA(queue, A)
     clX = CLRA(queue, X)
     clY = CLRA(queue, Y)
-    clA_js = CLRA(queue, A_js)
-    clX_js = CLRA(queue, X_js)
     assert allclose(A, clA)
     assert allclose(X, clX)
     assert allclose(Y, clY)
-    assert allclose(A_js, clA_js)
-    assert allclose(X_js, clX_js)
 
     # -- run cl computation
     prog = plan_ragged_gather_gemv(
-        queue, alpha, clA, clA_js, clX, clX_js, beta, clY)
+        queue, alpha, clA, A_js, clX, X_js, beta, clY)
     plans = prog.choose_plans()
 
     print('-' * 5 + ' Plans ' + '-' * 45)
@@ -119,7 +115,7 @@ def _test_random(k=4, p=1, m=10, n=10):
     # -- ensure they match
     for i in range(k):
         ref = beta * Y[i]
-        for aj, xj in zip(A_js[i], X_js[i]):
+        for aj, xj in zip(A_js[i].ravel(), X_js[i].ravel()):
             ref += alpha * np.dot(A[aj], X[xj])
         sim = clY[i]
         assert np.allclose(ref, sim, atol=1e-3, rtol=1e-3)
@@ -174,22 +170,16 @@ def check_from_shapes(
     # -- run cl computation
     prog = planner(
         queue, alpha, clA, clA_js, clX, clX_js, beta, clY, gamma=gamma)
+
     plans = prog.choose_plans()
     assert len(plans) == 1
     plans[0]()
 
     # -- ensure they match
     for i in range(len(A_js)):
-        # print('gamma', gamma)
-        # print('Y[i] * beta + gamma', Y[i] * beta + gamma)
-        # print(A[0])
-        # print(X[0])
-        # print('AX', sum(
-        #     [np.dot(A[aj], X[xj])
-        #     for aj, xj in zip(A_js[i], X_js[i])]))
         ref = gamma + beta * Y[i] + alpha * sum(
             [np.dot(A[aj], X[xj])
-             for aj, xj in zip(A_js[i], X_js[i])])
+             for aj, xj in zip(A_js[i].ravel(), X_js[i].ravel())])
         sim = clY[i]
         if not np.allclose(ref, sim, atol=1e-3, rtol=1e-3):
             print('A_shapes',  A_shapes)
