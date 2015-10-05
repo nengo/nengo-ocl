@@ -16,6 +16,7 @@ from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalView, SignalDict
 from nengo.utils.compat import OrderedDict, iteritems, itervalues
 import nengo.utils.numpy as npext
+from nengo.utils.testing import Timer
 
 from nengo_ocl.raggedarray import RaggedArray
 
@@ -352,83 +353,96 @@ class Simulator(Simulator):
 
     def __init__(self, network, dt=0.001, seed=None, model=None,
                  planner=greedy_planner):
-        dt = float(dt)
 
-        if model is None:
-            self.model = Model(dt=dt,
-                               label="%s, dt=%f" % (network, dt),
-                               decoder_cache=get_default_decoder_cache())
-        else:
-            self.model = model
+        with Timer() as nengo_timer:
+            if model is None:
+                self.model = Model(dt=float(dt),
+                                   label="%s, dt=%f" % (network, dt),
+                                   decoder_cache=get_default_decoder_cache())
+            else:
+                self.model = model
 
-        if network is not None:
-            # Build the network into the model
-            self.model.build(network)
+            if network is not None:
+                # Build the network into the model
+                self.model.build(network)
+
+        logger.info("Nengo build in %0.3f s" % nengo_timer.duration)
 
         # --- set seed
         seed = np.random.randint(npext.maxint) if seed is None else seed
         self.seed = seed
         self.rng = np.random.RandomState(self.seed)
 
-        # -- map from Signal.base -> ndarray
-        sigdict = SignalDict()
         self._step = Signal(np.array(0.0, dtype=np.float64), name='step')
         self._time = Signal(np.array(0.0, dtype=np.float64), name='time')
 
-        operators = list(self.model.operators)
+        # --- operators
+        with Timer() as planner_timer:
+            operators = list(self.model.operators)
 
-        # -- convert DotInc, Reset, Copy, and ProdUpdate to MultiProdUpdate
-        operators = list(map(MultiProdUpdate.convert_to, operators))
-        operators = MultiProdUpdate.compress(operators)
+            # convert DotInc, Reset, Copy, and ProdUpdate to MultiProdUpdate
+            operators = list(map(MultiProdUpdate.convert_to, operators))
+            operators = MultiProdUpdate.compress(operators)
 
-        # -- Plan the order of operations, combining where appropriate
-        op_groups = planner(operators)
-        assert len([typ for typ, _ in op_groups if typ is Reset]) < 2, (
-            "All resets not planned together")
+            # plan the order of operations, combining where appropriate
+            op_groups = planner(operators)
+            assert len([typ for typ, _ in op_groups if typ is Reset]) < 2, (
+                "All resets not planned together")
 
-        # -- Add time operator after planning, to ensure it goes first
-        time_op = TimeUpdate(self._step, self._time)
-        operators.insert(0, time_op)
-        op_groups.insert(0, (type(time_op), [time_op]))
+            # add time operator after planning, to ensure it goes first
+            time_op = TimeUpdate(self._step, self._time)
+            operators.insert(0, time_op)
+            op_groups.insert(0, (type(time_op), [time_op]))
 
-        # -- Initialize signals
-        self.operators = operators
-        self.op_groups = op_groups
-        all_signals = signals_from_operators(operators)
-        all_bases = stable_unique([sig.base for sig in all_signals])
+            self.operators = operators
+            self.op_groups = op_groups
 
-        for op in operators:
-            op.init_signals(sigdict)
+        logger.info("Planning in %0.3f s" % planner_timer.duration)
 
-        # Add built states to the probe dictionary
-        self._probe_outputs = self.model.params
+        with Timer() as signals_timer:
+            # Initialize signals
+            all_signals = signals_from_operators(operators)
+            all_bases = stable_unique([sig.base for sig in all_signals])
 
-        # Provide a nicer interface to probe outputs
-        self.data = ProbeDict(self._probe_outputs)
+            sigdict = SignalDict()  # map from Signal.base -> ndarray
+            for op in operators:
+                op.init_signals(sigdict)
 
-        self.all_data = RaggedArray(
-            [sigdict[sb] for sb in all_bases],
-            [getattr(sb, 'name', '') for sb in all_bases]
-        )
+            # Add built states to the probe dictionary
+            self._probe_outputs = self.model.params
 
-        builder = ViewBuilder(all_bases, self.all_data)
-        self._AX_views = {}
-        self._YYB_views = {}
-        for op_type, op_list in op_groups:
-            self.setup_views(builder, op_type, op_list)
-        for probe in self.model.probes:
-            builder.append_view(self.model.sig[probe]['in'])
-        builder.add_views_to(self.all_data)
-        self.sidx = builder.sidx
+            # Provide a nicer interface to probe outputs
+            self.data = ProbeDict(self._probe_outputs)
 
-        self._prep_all_data()
+            self.all_data = RaggedArray(
+                [sigdict[sb] for sb in all_bases],
+                [getattr(sb, 'name', '') for sb in all_bases]
+            )
+
+            builder = ViewBuilder(all_bases, self.all_data)
+            self._AX_views = {}
+            self._YYB_views = {}
+            for op_type, op_list in op_groups:
+                self.setup_views(builder, op_type, op_list)
+            for probe in self.model.probes:
+                builder.append_view(self.model.sig[probe]['in'])
+            builder.add_views_to(self.all_data)
+
+            self.all_bases = all_bases
+            self.sidx = builder.sidx
+
+            self._prep_all_data()
+
+        logger.info("Signals in %0.3f s" % signals_timer.duration)
 
         # --- create list of plans
-        self._plan = []
-        for op_type, op_list in op_groups:
-            self._plan.extend(self.plan_op_group(op_type, op_list))
-        self._plan.extend(self.plan_probes())
-        self.all_bases = all_bases
+        with Timer() as plans_timer:
+            self._plan = []
+            for op_type, op_list in op_groups:
+                self._plan.extend(self.plan_op_group(op_type, op_list))
+            self._plan.extend(self.plan_probes())
+
+        logger.info("Plans in %0.3f s" % plans_timer.duration)
 
         self.n_steps = 0
 
