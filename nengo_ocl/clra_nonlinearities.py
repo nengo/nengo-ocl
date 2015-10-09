@@ -52,8 +52,34 @@ def plan_timeupdate(queue, step, time, dt):
     return rval
 
 
+def blockify_vector(max_size, ra):
+    assert isinstance(ra, (RaggedArray, CLRaggedArray))
+    N = len(ra)
+
+    # make sure that arrays are contiguous
+    assert np.all(ra.stride0s == ra.shape1s)
+    assert np.all(ra.stride1s == 1)
+    ra_sizes = ra.shape0s * ra.shape1s
+
+    sizes = []
+    starts = []
+    inds = []
+    for i in range(N):
+        size = ra_sizes[i]
+        start = ra.starts[i]
+        while size > 0:
+            sizes.append(min(size, max_size))
+            starts.append(start)
+            inds.append(i)
+            size -= max_size
+            start += max_size
+
+    return (np.array(sizes, dtype=np.int32),
+            np.array(starts, dtype=np.int32),
+            np.array(inds, dtype=np.int32))
+
+
 def plan_reset(queue, Y, values, tag=None):
-    N = len(Y)
     assert len(Y) == len(values)
 
     assert np.all(Y.stride0s == Y.shape1s)
@@ -63,46 +89,55 @@ def plan_reset(queue, Y, values, tag=None):
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void reset(
-            __global const int *Yshape0s,
-            __global const int *Yshape1s,
+            __global const ${Ytype} *values,
+            __global const int *Ysizes,
             __global const int *Ystarts,
-            __global ${Ytype} *Ydata,
-            __global const ${Ytype} *values
+            __global ${Ytype} *Ydata
         )
         {
-            const int n = get_global_id(1);
-            int i = get_global_id(0);
+            const int i = get_global_id(0);
+            int n = get_global_id(1);
 
-            const ${Ytype} value = values[n];
-            const int size = Yshape0s[n] * Yshape1s[n];
-            __global ${Ytype} *y = Ydata + Ystarts[n];
-
-            for (; i < size; i += get_global_size(0))
-                y[i] = value;
+    % for k in range(n_per_item):
+            if (n < ${N} && i < Ysizes[n])
+                (Ydata + Ystarts[n])[i] = values[n];
+            n += get_global_size(1);
+    % endfor
         }
         """
 
-    textconf = dict(Ytype=Y.ctype)
+    max_group = min(queue.device.max_work_group_size, 256)
+    n_per_item = 1
+    local_i = 16
+    local_j = max_group / local_i
+
+    Ysizes, Ystarts, Yinds = blockify_vector(local_i, Y)
+    clYsizes = to_device(queue, Ysizes)
+    clYstarts = to_device(queue, Ystarts)
+    values = values.get()
+    clvalues = to_device(queue, values[Yinds])
+
+    N = len(Ysizes)
+    lsize = (local_i, local_j)
+    NN = -(-N / n_per_item)  # ceiling division
+    gsize = (local_i, round_up(NN, local_j))
+
+    textconf = dict(Ytype=Y.ctype, N=N, n_per_item=n_per_item)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
-        Y.cl_shape0s,
-        Y.cl_shape1s,
-        Y.cl_starts,
+        clvalues,
+        clYsizes,
+        clYstarts,
         Y.cl_buf,
-        values,
     )
     _fn = cl.Program(queue.context, text).build().reset
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_group = queue.device.max_work_group_size
-    sizes = Y.shape0s * Y.shape1s
-    n = min(sizes.max(), max_group)
-    gsize = (n, N)
-    lsize = (n, 1)
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = Y.nbytes + values.nbytes
+    rval.bw_per_call = (
+        Y.nbytes + values.nbytes + clYsizes.nbytes + clYstarts.nbytes)
     rval.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
