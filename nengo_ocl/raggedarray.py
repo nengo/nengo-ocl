@@ -68,6 +68,9 @@ class RaggedArray(object):
         return len(self.starts)
 
     def __getitem__(self, item):
+        if isinstance(item, slice):
+            item = np.arange(len(self))[item]
+
         if is_iterable(item):
             rval = self.__class__.__new__(self.__class__)
             rval.starts = [self.starts[i] for i in item]

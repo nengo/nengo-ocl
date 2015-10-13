@@ -197,6 +197,9 @@ class CLRaggedArray(object):
             return buf
 
     def getitem_device(self, item):
+        if isinstance(item, slice):
+            item = np.arange(len(self))[item]
+
         if is_iterable(item):
             rval = self.__class__.__new__(self.__class__)
             rval.queue = self.queue
@@ -217,7 +220,7 @@ class CLRaggedArray(object):
                 data=self.cl_buf.data, offset=self.starts[item] * s)
 
     def __setitem__(self, item, new_value):
-        if is_iterable(item):
+        if isinstance(item, slice) or is_iterable(item):
             raise NotImplementedError('TODO')
         else:
             m, n = self.shape0s[item], self.shape1s[item]
