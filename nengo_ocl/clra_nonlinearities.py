@@ -732,9 +732,9 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         assert vname not in avars, "Name clash"
         assert len(v) == N
         assert (v.shape0s == base.shape0s).all()
-
-        # N.B. - we should be able to ignore ldas as long as all vectors
-        assert (v.shape1s == 1).all()
+        assert (v.stride0s == v.shape1s).all()  # rows contiguous
+        assert (v.stride1s == 1).all()  # columns contiguous
+        assert (v.shape1s == 1).all()  # vectors only
 
         offset = '%(name)s_starts[n]' % {'name': vname}
         avars[vname] = (v.ctype, offset)
@@ -744,7 +744,9 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         assert vname not in avars, "Name clash"
         assert len(v) == N
         assert ((v.shape0s == base.shape0s) | (v.shape0s == 1)).all()
-        assert (v.shape1s == 1).all()
+        assert (v.stride0s == v.shape1s).all()  # rows contiguous
+        assert (v.stride1s == 1).all()  # columns contiguous
+        assert (v.shape1s == 1).all()  # vectors only
 
         offset = '%(name)s_starts[n]' % {'name': vname}
         avars[vname] = (v.ctype, offset)
