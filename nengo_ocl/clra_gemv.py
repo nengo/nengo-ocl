@@ -4,8 +4,9 @@ import numpy as np
 import pyopencl as cl
 from mako.template import Template
 
-from nengo_ocl.clraggedarray import CLRaggedArray, as_ascii, to_device
+from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
+from nengo_ocl.utils import as_ascii
 
 
 def dhist(seq):

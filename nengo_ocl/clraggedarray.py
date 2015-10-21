@@ -9,21 +9,10 @@ import pyopencl as cl
 from nengo.utils.compat import is_iterable, StringIO
 from pyopencl.array import Array, to_device
 
-from nengo.utils.compat import PY2
-
 from nengo_ocl.raggedarray import RaggedArray
 
 # add 'ctype' property to Array (returned by 'to_device')
 Array.ctype = property(lambda self: cl.tools.dtype_to_ctype(self.dtype))
-
-
-def as_ascii(string):
-    if not PY2 and isinstance(string, bytes):  # Python 3
-        return string.decode('ascii')
-    elif not isinstance(string, str):
-        return str(string)
-    else:
-        return string
 
 
 def to_host(queue, data, dtype, start, shape, elemstrides, is_blocking=True):

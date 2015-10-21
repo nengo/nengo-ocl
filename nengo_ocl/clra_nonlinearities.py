@@ -5,12 +5,9 @@ import nengo.dists as nengod
 from nengo.utils.compat import range
 
 from nengo_ocl.raggedarray import RaggedArray
-from nengo_ocl.clraggedarray import CLRaggedArray, as_ascii, to_device
+from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
-
-
-def _indent(s, i):
-    return '\n'.join([(' ' * i) + line for line in s.split('\n')])
+from nengo_ocl.utils import as_ascii, indent
 
 
 def plan_timeupdate(queue, step, time, dt):
@@ -584,8 +581,8 @@ ${code}
         }
         """
 
-    textconf = dict(init=_indent(init, 12),
-                    code=_indent(code, 12),
+    textconf = dict(init=indent(init, 12),
+                    code=indent(code, 12),
                     N=N, input_names=input_names, input_types=input_types,
                     oname=ast_conversion.OUTPUT_NAME, otype=output_type,
                     )
