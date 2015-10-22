@@ -16,9 +16,9 @@ from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalView, SignalDict
 from nengo.utils.compat import OrderedDict, iteritems, itervalues
 import nengo.utils.numpy as npext
-from nengo.utils.testing import Timer
 
 from nengo_ocl.raggedarray import RaggedArray
+from nengo_ocl.utils import Timer
 
 logger = logging.getLogger(__name__)
 
