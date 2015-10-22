@@ -131,6 +131,22 @@ class gemv_prog(object):
         self.geometry = self._geometry()
         self.plans = self.choose_plans()
 
+    def geometry_summary(self, items=None):
+        if items is None:
+            gg = self.geometry
+        else:
+            gg = map(self.geometry.__getitem__, items)
+
+        outputs = len(gg)
+        dots = np.array([len(g['dots']) for g in gg])
+        shape0s = np.array([g['y_len'] for g in gg])
+        shape1s = np.hstack([[d['a_shape1'] for d in g['dots']] for g in gg])
+        return ("outputs: %d, dots: %0.1f [%d, %d], "
+                "shape: %0.1f [%d, %d] x %0.1f [%d, %d]"
+                % (outputs, dots.mean(), dots.min(), dots.max(),
+                   shape0s.mean(), shape0s.min(), shape0s.max(),
+                   shape1s.mean(), shape1s.min(), shape1s.max()))
+
     def print_geometry_summary(self, items=None, full=False):
         print('geometry_summary: tag=%s' % self.tag)
         if items is None:
@@ -636,6 +652,7 @@ def reduce_impl(p, items,
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     rval.full_args = full_args  # prevent GC the args
+    rval.description = p.geometry_summary()
     return rval
 
 
@@ -820,6 +837,7 @@ def many_dots_impl(p, items):
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     rval.full_args = full_args  # prevent GC the args
+    rval.description = p.geometry_summary()
     return rval
 
 

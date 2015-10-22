@@ -22,6 +22,7 @@ from nengo_ocl.clra_nonlinearities import (
     init_rng, get_dist_enums_params, plan_whitenoise, plan_whitesignal)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.ast_conversion import OCL_Function
+from nengo_ocl.utils import indent
 
 logger = logging.getLogger(__name__)
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
@@ -396,6 +397,13 @@ class Simulator(sim_npy.Simulator):
         if self.profiling > 1:
             self.print_profiling()
 
+    def print_plans(self):
+        print(" Plans ".center(80, '-'))
+        for plan in self._plans.plans:
+            print("%s" % plan)
+            if hasattr(plan, 'description'):
+                print(indent(plan.description, 4))
+
     def print_profiling(self, sort=None):
         """
         Parameters
@@ -429,7 +437,7 @@ class Simulator(sim_npy.Simulator):
             table.sort(key=lambda x: x[abs(sort)], reverse=reverse)
 
         # print table
-        print('-' * 80)
+        print(" Profiling ".center(80, '-'))
         print('%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
 
         for r in table:
