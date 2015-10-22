@@ -94,6 +94,10 @@ class CLRaggedArray(object):
         return self.cl_buf.dtype
 
     @property
+    def nbytes(self):
+        return (self.shape0s * self.shape1s).sum() * self.dtype.itemsize
+
+    @property
     def starts(self):
         return self._starts
 

@@ -52,6 +52,10 @@ class RaggedArray(object):
     def dtype(self):
         return self.buf.dtype
 
+    @property
+    def nbytes(self):
+        return (self.shape0s * self.shape1s).sum() * self.dtype.itemsize
+
     def __str__(self):
         sio = StringIO()
         namelen = max(len(n) for n in self.names)

@@ -94,7 +94,7 @@ def plan_reset(queue, Y, values, tag=None):
     lsize = (n, 1)
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = sizes.sum() * Y.dtype.itemsize
+    rval.bw_per_call = Y.nbytes + values.nbytes
     return rval
 
 
@@ -190,10 +190,6 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     assert X.ctype == Y.ctype
     assert A.ctype == Y.ctype
 
-    bw_per_call = ((Y.shape0s * Y.shape1s).sum() * Y.dtype.itemsize
-                   + (A.shape0s * A.shape1s).sum() * A.dtype.itemsize
-                   + (X.shape0s * X.shape1s).sum() * X.dtype.itemsize)
-
     text = """
         inline ${Ytype} get_element(
             __global const ${Ytype} *data,
@@ -283,7 +279,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     rval = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_elementwise_inc", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = bw_per_call
+    rval.bw_per_call = A.nbytes + X.nbytes + Y.nbytes
     return rval
 
 
@@ -429,6 +425,8 @@ def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     rval = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_linear_synapse", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
+    rval.bw_per_call = (
+        X.nbytes + Y.nbytes + A.nbytes + B.nbytes + Xbuf.nbytes + Ybuf.nbytes)
     return rval
 
 
@@ -538,6 +536,8 @@ def plan_probes(queue, periods, X, Y, tag=None):
     rval.full_args = full_args     # prevent garbage-collection
     rval.cl_bufpositions = cl_bufpositions
     rval.Y = Y
+    rval.bw_per_call = (X.nbytes + Y.nbytes + cl_periods.nbytes +
+                        cl_countdowns.nbytes + cl_bufpositions.nbytes)
     return rval
 
 
@@ -738,7 +738,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
 
         offset = '%(name)s_starts[n]' % {'name': vname}
         avars[vname] = (v.ctype, offset)
-        bw_per_call += v.shape0s.sum() * v.dtype.itemsize
+        bw_per_call += v.nbytes
 
     for vname, v in params.items():
         assert vname not in avars, "Name clash"
@@ -748,7 +748,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
 
         offset = '%(name)s_starts[n]' % {'name': vname}
         avars[vname] = (v.ctype, offset)
-        bw_per_call += v.shape0s.sum() * v.cl_buf.dtype.itemsize
+        bw_per_call += v.nbytes
 
     ivars = dict((k, avars[k]) for k in inputs.keys())
     ovars = dict((k, avars[k]) for k in outputs.keys())

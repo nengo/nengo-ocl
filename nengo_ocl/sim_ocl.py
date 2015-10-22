@@ -348,8 +348,6 @@ class Simulator(sim_npy.Simulator):
 
             cl_plan = plan_probes(self.queue, periods, X, Y)
             self._max_steps_between_probes = n_prealloc * min(periods)
-
-            cl_plan.Y = Y
             self._cl_probe_plan = cl_plan
             return [cl_plan]
 
