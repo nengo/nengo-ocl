@@ -95,7 +95,7 @@ class CLRaggedArray(object):
 
     @property
     def nbytes(self):
-        return (self.shape0s * self.shape1s).sum() * self.dtype.itemsize
+        return self.sizes.sum() * self.dtype.itemsize
 
     @property
     def starts(self):
@@ -118,6 +118,7 @@ class CLRaggedArray(object):
         self._shape0s.setflags(write=False)
         self.cl_shape0s = to_device(self.queue, self._shape0s)
         self.queue.finish()
+        self._sizes = None
 
     @property
     def shape1s(self):
@@ -129,6 +130,13 @@ class CLRaggedArray(object):
         self._shape1s.setflags(write=False)
         self.cl_shape1s = to_device(self.queue, self._shape1s)
         self.queue.finish()
+        self._sizes = None
+
+    @property
+    def sizes(self):
+        if self._sizes is None:
+            self._sizes = self.shape0s * self.shape1s
+        return self._sizes
 
     @property
     def stride0s(self):

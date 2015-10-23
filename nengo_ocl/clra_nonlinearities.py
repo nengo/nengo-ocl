@@ -95,6 +95,9 @@ def plan_reset(queue, Y, values, tag=None):
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     rval.bw_per_call = Y.nbytes + values.nbytes
+    rval.description = (
+        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+        (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
     return rval
 
 
@@ -169,6 +172,10 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     rval.bw_per_call = 2 * Ainds.shape0s.sum() * A.dtype.itemsize
+    rval.description = (
+        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+        (len(Ainds), Ainds.sizes.sum(),
+         Ainds.sizes.mean(), Ainds.sizes.min(), Ainds.sizes.max()))
     return rval
 
 
@@ -280,6 +287,9 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
         queue, _fn, gsize, lsize=lsize, name="cl_elementwise_inc", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     rval.bw_per_call = A.nbytes + X.nbytes + Y.nbytes
+    rval.description = (
+        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+        (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
     return rval
 
 
@@ -427,6 +437,9 @@ def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     rval.full_args = full_args     # prevent garbage-collection
     rval.bw_per_call = (
         X.nbytes + Y.nbytes + A.nbytes + B.nbytes + Xbuf.nbytes + Ybuf.nbytes)
+    rval.description = (
+        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+        (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
     return rval
 
 
@@ -538,6 +551,9 @@ def plan_probes(queue, periods, X, Y, tag=None):
     rval.Y = Y
     rval.bw_per_call = (X.nbytes + Y.nbytes + cl_periods.nbytes +
                         cl_countdowns.nbytes + cl_bufpositions.nbytes)
+    rval.description = (
+        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+        (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
     return rval
 
 
@@ -545,9 +561,14 @@ def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
     from . import ast_conversion
 
     assert len(input_names) == len(inputs)
+
+    N = len(inputs[0])
     for x in inputs:
         assert len(x) == len(output)
-    N = len(inputs[0])
+    for x in inputs + [output]:
+        assert (x.shape1s == 1).all() and (x.stride1s == 1).all()
+        assert (x.stride0s == 1).all()
+
     input_types = [x.ctype for x in inputs]
     output_type = output.ctype
 
@@ -598,6 +619,10 @@ ${code}
     gsize = (N,)
     rval = Plan(queue, _fn, gsize, lsize=None, name="cl_direct", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
+    rval.description = (
+        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+        (len(output), output.sizes.sum(),
+         output.sizes.mean(), output.sizes.min(), output.sizes.max()))
     return rval
 
 
@@ -711,8 +736,8 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         constant.
 
     """
-    base = list(inputs.values())[0]   # input to use as reference (for lengths)
-    N = len(base)
+    input0 = list(inputs.values())[0]   # input to use as reference (for lengths)
+    N = len(input0)
 
     # split parameters into static and updated params
     static_params = {}  # static params (hard-coded)
@@ -731,7 +756,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     for vname, v in list(inputs.items()) + list(outputs.items()):
         assert vname not in avars, "Name clash"
         assert len(v) == N
-        assert (v.shape0s == base.shape0s).all()
+        assert (v.shape0s == input0.shape0s).all()
         assert (v.stride0s == v.shape1s).all()  # rows contiguous
         assert (v.stride1s == 1).all()  # columns contiguous
         assert (v.shape1s == 1).all()  # vectors only
@@ -743,7 +768,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     for vname, v in params.items():
         assert vname not in avars, "Name clash"
         assert len(v) == N
-        assert ((v.shape0s == base.shape0s) | (v.shape0s == 1)).all()
+        assert ((v.shape0s == input0.shape0s) | (v.shape0s == 1)).all()
         assert (v.stride0s == v.shape1s).all()  # rows contiguous
         assert (v.stride1s == 1).all()  # columns contiguous
         assert (v.shape1s == 1).all()  # vectors only
@@ -764,7 +789,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
 
     if n_elements > 0:
         # Allocate the exact number of required kernels in a vector
-        gsize = (int(np.ceil(np.sum(base.shape0s) / float(n_elements))),)
+        gsize = (int(np.ceil(np.sum(input0.shape0s) / float(n_elements))),)
         text = """
         ////////// MAIN FUNCTION //////////
         __kernel void ${fn_name}(
@@ -863,7 +888,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         """
     else:
         # Allocate more than enough kernels in a matrix
-        gsize = (int(np.max(base.shape0s)), int(N))
+        gsize = (int(np.max(input0.shape0s)), int(N))
         text = """
         ////////// MAIN FUNCTION //////////
         __kernel void ${fn_name}(
@@ -927,7 +952,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         full_args.extend([v.cl_starts, v.cl_buf])
     for vname, v in params.items():
         full_args.extend([v.cl_starts, v.cl_shape0s, v.cl_buf])
-    full_args.append(base.cl_shape0s)
+    full_args.append(input0.cl_shape0s)
     full_args = tuple(full_args)
 
     fns = cl.Program(queue.context, text).build()
@@ -937,6 +962,9 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     rval = Plan(queue, _fn, gsize, lsize=None, name=name, tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     rval.bw_per_call = bw_per_call
+    rval.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+                        (N, input0.sizes.sum(), input0.sizes.mean(),
+                         input0.sizes.min(), input0.sizes.max()))
     return rval
 
 

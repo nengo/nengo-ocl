@@ -141,7 +141,7 @@ class gemv_prog(object):
         dots = np.array([len(g['dots']) for g in gg])
         shape0s = np.array([g['y_len'] for g in gg])
         shape1s = np.hstack([[d['a_shape1'] for d in g['dots']] for g in gg])
-        return ("outputs: %d, dots: %0.1f [%d, %d], "
+        return ("outputs: %d; dots: %0.1f [%d, %d]; "
                 "shape: %0.1f [%d, %d] x %0.1f [%d, %d]"
                 % (outputs, dots.mean(), dots.min(), dots.max(),
                    shape0s.mean(), shape0s.min(), shape0s.max(),
