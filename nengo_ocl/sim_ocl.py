@@ -15,14 +15,14 @@ from nengo_ocl import sim_npy
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import (
-    plan_timeupdate, plan_reset, plan_slicedcopy,
+    plan_timeupdate, plan_reset, plan_copy, plan_slicedcopy,
     plan_direct, plan_lif, plan_lif_rate,
     plan_probes, plan_linear_synapse, plan_elementwise_inc,
     init_rng, get_dist_enums_params, plan_whitenoise, plan_presentinput,
     plan_conv2, plan_pool2)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.ast_conversion import OCL_Function
-from nengo_ocl.utils import indent
+from nengo_ocl.utils import indent, split
 
 logger = logging.getLogger(__name__)
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
@@ -90,15 +90,26 @@ class Simulator(sim_npy.Simulator):
         return [plan_reset(self.queue, targets, values)]
 
     def plan_SlicedCopy(self, ops):
-        A = self.all_data[[self.sidx[op.a] for op in ops]]
-        B = self.all_data[[self.sidx[op.b] for op in ops]]
-        Ainds = self.RaggedArray([
-            np.arange(op.a.size, dtype=np.int32)[op.a_slice] for op in ops])
-        Binds = self.RaggedArray([
-            np.arange(op.b.size, dtype=np.int32)[op.b_slice] for op in ops])
-        incs = self.RaggedArray([
-            np.array(op.inc, dtype=np.int32) for op in ops])
-        return [plan_slicedcopy(self.queue, A, B, Ainds, Binds, incs)]
+        copies, ops = split(
+            ops, lambda op: op.a_slice is Ellipsis and op.b_slice is Ellipsis)
+
+        plans = []
+        if copies:
+            A = self.all_data[[self.sidx[op.a] for op in copies]]
+            B = self.all_data[[self.sidx[op.b] for op in copies]]
+            incs = np.array([op.inc for op in copies], dtype=np.int32)
+            plans.append(plan_copy(self.queue, A, B, incs))
+
+        if ops:
+            A = self.all_data[[self.sidx[op.a] for op in ops]]
+            B = self.all_data[[self.sidx[op.b] for op in ops]]
+            inds = lambda ary, i: np.arange(ary.size, dtype=np.int32)[i]
+            Ainds = self.RaggedArray([inds(op.a, op.a_slice) for op in ops])
+            Binds = self.RaggedArray([inds(op.b, op.b_slice) for op in ops])
+            incs = np.array([op.inc for op in ops], dtype=np.int32)
+            plans.append(plan_slicedcopy(self.queue, A, B, Ainds, Binds, incs))
+
+        return plans
 
     def plan_ElementwiseInc(self, ops):
         A = self.all_data[[self.sidx[op.A] for op in ops]]

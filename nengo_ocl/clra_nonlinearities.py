@@ -180,6 +180,88 @@ def plan_reset(queue, Y, values, tag=None):
     return rval
 
 
+def plan_copy(queue, A, B, incs, tag=None):
+    N = len(A)
+    assert len(A) == len(B)
+
+    for arr in [A, B]:
+        assert (arr.shape1s == 1).all()
+    assert (A.shape0s == B.shape0s).all()
+
+    assert A.ctype == B.ctype
+
+    text = """
+        ////////// MAIN FUNCTION //////////
+        __kernel void copy(
+            __global const int *Astrides,
+            __global const int *Astarts,
+            __global const ${Atype} *Adata,
+            __global const int *Bstrides,
+            __global const int *Bstarts,
+            __global ${Btype} *Bdata,
+            __global const int *sizes,
+            __global const int *incdata
+        )
+        {
+            const int i = get_global_id(0);
+            const int n = get_global_id(1);
+            if (n >= ${N} || i >= sizes[n])
+                return;
+
+            __global const ${Atype} *a = Adata + Astarts[n];
+            __global ${Btype} *b = Bdata + Bstarts[n];
+
+            if (incdata[n])  b[i*Bstrides[n]] += a[i*Astrides[n]];
+            else             b[i*Bstrides[n]] = a[i*Astrides[n]];
+        }
+        """
+
+    max_group = min(queue.device.max_work_group_size, 256)
+    # n_per_item = 1
+    local_i = 16
+    local_j = max_group / local_i
+    # local_i = min(256, A.sizes.max())
+
+    sizes, inds, [Astarts, Bstarts] = blockify_vectors(local_i, [A, B])
+    clsizes = to_device(queue, sizes)
+    clAstrides = to_device(queue, A.stride0s[inds])
+    clBstrides = to_device(queue, B.stride0s[inds])
+    clAstarts = to_device(queue, Astarts)
+    clBstarts = to_device(queue, Bstarts)
+    clincs = to_device(queue, incs[inds].astype(np.int32))
+
+    N = len(sizes)
+    # NN = -(-N / n_per_item)  # ceiling division
+    lsize = (local_i, local_j)
+    gsize = (local_i, round_up(N, local_j))
+    # lsize = None
+    # gsize = (local_i, N)
+
+    textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        clAstrides,
+        clAstarts,
+        A.cl_buf,
+        clBstrides,
+        clBstarts,
+        B.cl_buf,
+        clsizes,
+        clincs,
+    )
+    _fn = cl.Program(queue.context, text).build().copy
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_copy", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    rval.bw_per_call = A.nbytes + B.nbytes
+    rval.description = (
+        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+        (len(A), A.sizes.sum(), A.sizes.mean(), A.sizes.min(), A.sizes.max()))
+    return rval
+
+
 def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     N = len(A)
     assert len(A) == len(B) == len(Ainds) == len(Binds)
