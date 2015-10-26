@@ -563,7 +563,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
     rval.full_args = full_args     # prevent garbage-collection
     rval.cl_bufpositions = cl_bufpositions
     rval.Y = Y
-    rval.bw_per_call = (X.nbytes + Y.nbytes + cl_periods.nbytes +
+    rval.bw_per_call = (2*X.nbytes + cl_periods.nbytes +
                         cl_countdowns.nbytes + cl_bufpositions.nbytes)
     rval.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
