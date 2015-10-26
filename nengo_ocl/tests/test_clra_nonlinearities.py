@@ -94,10 +94,11 @@ def test_lif_speed(rng, heterogeneous):
     ref = 2e-3
     tau = 20e-3
 
+    n_iters = 10
     if heterogeneous:
-        n_neurons = [1.0e5] * 5 + [1e3] * 50
+        n_neurons = [1.0e5] * 50 + [1e3] * 5000
     else:
-        n_neurons = [1.1e5] * 5
+        n_neurons = [1.1e5] * 50
     n_neurons = list(map(int, n_neurons))
 
     J = RA([rng.randn(n) for n in n_neurons])
@@ -114,18 +115,16 @@ def test_lif_speed(rng, heterogeneous):
     clW = CLRA(queue, W)
     clOS = CLRA(queue, OS)
 
-    # n_elements = [0, 1, 2, 5, 10, 50]
-    n_elements = [0, 1, 2, 5]
-    for i, nel in enumerate(n_elements):
+    for i, blockify in enumerate([False, True]):
         plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, tau, dt,
-                        n_elements=nel)
+                        blockify=blockify)
 
         with Timer() as timer:
-            for j in range(1000):
+            for j in range(n_iters):
                 plan()
 
-        print("plan %d: n_elements = %d, dur = %0.3f"
-              % (i, nel, timer.duration))
+        print("plan %d: blockify = %s, dur = %0.3f"
+              % (i, blockify, timer.duration))
 
 
 @pytest.mark.parametrize("n_elements", [0, 1, 10])

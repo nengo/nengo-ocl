@@ -2,7 +2,7 @@ import numpy as np
 import pyopencl as cl
 from mako.template import Template
 import nengo.dists as nengod
-from nengo.utils.compat import range
+from nengo.utils.compat import itervalues, range
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
@@ -826,7 +826,7 @@ ${code}
 
 
 def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
-             inc_n=None, tag=None, n_elements=0, upsample=1):
+             inc_n=None, upsample=1, **kwargs):
     adaptive = N is not None
     assert J.ctype == 'float'
     for array in [V, W, outS]:
@@ -889,12 +889,11 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
     cl_name = "cl_alif" if adaptive else "cl_lif"
     return _plan_template(
         queue, cl_name, text, declares=decs,
-        tag=tag, n_elements=n_elements,
-        inputs=inputs, outputs=outputs, parameters=parameters)
+        inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
 
 
 def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
-                  tag=None, n_elements=0):
+                  **kwargs):
     assert J.ctype == 'float'
     assert R.ctype == J.ctype
     adaptive = N is not None
@@ -930,25 +929,19 @@ def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
     cl_name = "cl_alif_rate" if adaptive else "cl_lif_rate"
     return _plan_template(
         queue, cl_name, text, declares=decs,
-        tag=tag, n_elements=n_elements,
-        inputs=inputs, outputs=outputs, parameters=parameters)
+        inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
 
 
-def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
-                   inputs={}, outputs={}, parameters={}):
+def _plan_template(queue, name, core_text, declares="", tag=None,
+                   blockify=True, inputs={}, outputs={}, parameters={}):
     """Template for making a plan for vector nonlinearities.
 
     This template assumes that all inputs and outputs are vectors.
 
     Parameters
     ----------
-    n_elements: int
-        If n_elements == 0, then the kernels are allocated as a block. This is
-        simple, but can be slow for large computations where input vector sizes
-        are not uniform (e.g. one large population and many small ones).
-        If n_elements >= 1, then all the vectors in the RaggedArray are
-        flattened so that the exact number of required kernels is allocated.
-        Each kernel performs computations for `n_elements` elements.
+    blockify : bool
+        If true, divide the inputs up into blocks with a maximum size.
 
     inputs: dictionary of CLRaggedArrays
         Inputs to the function. RaggedArrays must be a list of vectors.
@@ -964,7 +957,6 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
 
     """
     input0 = list(inputs.values())[0]   # input to use as reference for lengths
-    N = len(input0)
 
     # split parameters into static and updated params
     static_params = {}  # static params (hard-coded)
@@ -980,22 +972,11 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
 
     avars = {}
     bw_per_call = 0
-    for vname, v in list(inputs.items()) + list(outputs.items()):
+    for vname, v in (list(inputs.items()) + list(outputs.items()) +
+                     list(params.items())):
         assert vname not in avars, "Name clash"
-        assert len(v) == N
+        assert len(v) == len(input0)
         assert (v.shape0s == input0.shape0s).all()
-        assert (v.stride0s == v.shape1s).all()  # rows contiguous
-        assert (v.stride1s == 1).all()  # columns contiguous
-        assert (v.shape1s == 1).all()  # vectors only
-
-        offset = '%(name)s_starts[gind1]' % {'name': vname}
-        avars[vname] = (v.ctype, offset)
-        bw_per_call += v.nbytes
-
-    for vname, v in params.items():
-        assert vname not in avars, "Name clash"
-        assert len(v) == N
-        assert ((v.shape0s == input0.shape0s) | (v.shape0s == 1)).all()
         assert (v.stride0s == v.shape1s).all()  # rows contiguous
         assert (v.stride1s == 1).all()  # columns contiguous
         assert (v.shape1s == 1).all()  # vectors only
@@ -1008,182 +989,112 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     ovars = dict((k, avars[k]) for k in outputs.keys())
     pvars = dict((k, avars[k]) for k in params.keys())
 
-    fn_name = "%s_%d" % (name, n_elements)
-    textconf = dict(fn_name=fn_name, N=N, n_elements=n_elements,
-                    declares=declares, core_text=core_text,
+    fn_name = str(name)
+    textconf = dict(fn_name=fn_name, declares=declares, core_text=core_text,
                     ivars=ivars, ovars=ovars, pvars=pvars,
                     static_params=static_params)
 
-    if n_elements > 0:
-        # Allocate the exact number of required kernels in a vector
-        gsize = (int(np.ceil(np.sum(input0.shape0s) / float(n_elements))),)
-        lsize = None
-        text = """
-        ////////// MAIN FUNCTION //////////
-        __kernel void ${fn_name}(
+    text = """
+    ////////// MAIN FUNCTION //////////
+    __kernel void ${fn_name}(
 % for name, [type, offset] in ivars.items():
-            __global const int *${name}_starts,
-            __global const ${type} *in_${name},
+        __global const int *${name}_starts,
+        __global const ${type} *in_${name},
 % endfor
 % for name, [type, offset] in ovars.items():
-            __global const int *${name}_starts,
-            __global ${type} *in_${name},
+        __global const int *${name}_starts,
+        __global ${type} *in_${name},
 % endfor
 % for name, [type, offset] in pvars.items():
-            __global const int *${name}_starts,
-            __global const int *${name}_shape0s,
-            __global const ${type} *in_${name},
+        __global const int *${name}_starts,
+        __global const int *${name}_shape0s,
+        __global const ${type} *in_${name},
 % endfor
-            __global const int *lengths
-        )
-        {
-            int gind0 = get_global_id(0) * ${n_elements};
-            int gind1 = 0;
-            while (gind0 >= lengths[gind1]) {
-                gind0 -= lengths[gind1];
-                gind1++;
-            }
-            if (gind1 >= ${N}) return;
+        __global const int *sizes
+    )
+    {
+        const int gind0 = get_global_id(0);
+        const int gind1 = get_global_id(1);
+        if (gind1 >= ${N} || gind0 >= sizes[gind1])
+            return;
 
 % for name, [type, offset] in ivars.items():
-            __global const ${type} *cur_${name} =
-                in_${name} + ${offset} + gind0;
+        ${type} ${name} = in_${name}[${offset} + gind0];
 % endfor
 % for name, [type, offset] in ovars.items():
-            __global ${type} *cur_${name} = in_${name} + ${offset} + gind0;
+        ${type} ${name};
 % endfor
 % for name, [type, offset] in pvars.items():
-            __global const ${type} *cur_${name} = in_${name} + ${offset};
-            int ${name}_isvector = ${name}_shape0s[gind1] > 1;
-            if (${name}_isvector) cur_${name} += gind0;
-% endfor
-% for name, [type, offset] in \
-        list(ivars.items()) + list(ovars.items()) + list(pvars.items()):
-            ${type} ${name};
+        const ${type} ${name} = in_${name}[${offset} + gind0];
 % endfor
 % for name, [type, value] in static_params.items():
-            const ${type} ${name} = ${value};
+        const ${type} ${name} = ${value};
 % endfor
-            //////////////////////////////////////////////////
-            //vvvvv USER DECLARATIONS BELOW vvvvv
-            ${declares}
-            //^^^^^ USER DECLARATIONS ABOVE ^^^^^
-            //////////////////////////////////////////////////
+        //////////////////////////////////////////////////
+        //vvvvv USER DECLARATIONS BELOW vvvvv
+        ${declares}
+        //^^^^^ USER DECLARATIONS ABOVE ^^^^^
+        //////////////////////////////////////////////////
 
-% for ii in range(n_elements):
-            //////////////////////////////////////////////////
-            ////////// LOOP ITERATION ${ii}
-  % for name, [type, offset] in ivars.items():
-            ${name} = *cur_${name};
-  % endfor
-  % for name, [type, offset] in pvars.items():
-            if ((${ii} == 0) || ${name}_isvector) ${name} = *cur_${name};
-  % endfor
+        /////vvvvv USER COMPUTATIONS BELOW vvvvv
+        ${core_text}
+        /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
 
-            /////vvvvv USER COMPUTATIONS BELOW vvvvv
-            ${core_text}
-            /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
-
-  % for name, [type, offset] in ovars.items():
-            *cur_${name} = ${name};
-  % endfor
-
-  % if ii + 1 < n_elements:
-            gind0++;
-            if (gind0 >= lengths[gind1]) {
-                gind1++;
-                gind0 = 0;
-                if (gind1 >= ${N}) return;
-
-    % for name, [_, offset] in \
-        list(ivars.items()) + list(ovars.items()) + list(pvars.items()):
-                cur_${name} = in_${name} + ${offset};
-    % endfor
-    % for name, _ in pvars.items():
-                ${name}_isvector = ${name}_shape0s[gind1] > 1;
-                if (!${name}_isvector) ${name} = *cur_${name};
-    % endfor
-            } else {
-    % for name, _ in list(ivars.items()) + list(ovars.items()):
-                cur_${name}++;
-    % endfor
-    % for name, _ in pvars.items():
-                if (${name}_isvector) cur_${name}++;
-    % endfor
-            }
-  % endif
+% for name, [type, offset] in ovars.items():
+        in_${name}[${offset} + gind0] = ${name};
 % endfor
-        }
-        """
+    }
+    """
+
+    if blockify:
+        # blockify to help with heterogeneous sizes
+
+        # find best block size
+        block_sizes = [32, 64, 128, 256, 512, 1024]
+        N = np.inf
+        for block_size_i in block_sizes:
+            sizes_i, inds_i, _ = blockify_vector(block_size_i, input0)
+            if len(sizes_i) < N:
+                block_size = block_size_i
+                sizes = sizes_i
+                inds = inds_i
+
+        clsizes = to_device(queue, sizes)
+        get_starts = lambda ras: [to_device(queue, starts) for starts in
+                                  blockify_vectors(block_size, ras)[2]]
+        Istarts = get_starts(itervalues(inputs))
+        Ostarts = get_starts(itervalues(outputs))
+        Pstarts = get_starts(itervalues(params))
+        Pshape0s = [
+            to_device(queue, x.shape0s[inds]) for x in itervalues(params)]
+
+        lsize = None
+        gsize = (block_size, len(sizes))
+
+        full_args = []
+        for vstarts, v in zip(Istarts, itervalues(inputs)):
+            full_args.extend([vstarts, v.cl_buf])
+        for vstarts, v in zip(Ostarts, itervalues(outputs)):
+            full_args.extend([vstarts, v.cl_buf])
+        for vstarts, vshape0s, v in zip(Pstarts, Pshape0s, itervalues(params)):
+            full_args.extend([vstarts, vshape0s, v.cl_buf])
+        full_args.append(clsizes)
     else:
         # Allocate more than enough kernels in a matrix
         lsize = None
-        gsize = (int(np.max(input0.shape0s)), int(N))
-        text = """
-        ////////// MAIN FUNCTION //////////
-        __kernel void ${fn_name}(
-% for name, [type, offset] in ivars.items():
-            __global const int *${name}_starts,
-            __global const ${type} *in_${name},
-% endfor
-% for name, [type, offset] in ovars.items():
-            __global const int *${name}_starts,
-            __global ${type} *in_${name},
-% endfor
-% for name, [type, offset] in pvars.items():
-            __global const int *${name}_starts,
-            __global const int *${name}_shape0s,
-            __global const ${type} *in_${name},
-% endfor
-            __global const int *lengths
-        )
-        {
-            const int gind0 = get_global_id(0);
-            const int gind1 = get_global_id(1);
-            if (gind0 >= lengths[gind1]) return;
+        gsize = (input0.shape0s.max(), len(input0))
 
-% for name, [type, offset] in ivars.items():
-            ${type} ${name} = in_${name}[${offset} + gind0];
-% endfor
-% for name, [type, offset] in ovars.items():
-            ${type} ${name};
-% endfor
-% for name, [type, offset] in pvars.items():
-            const ${type} ${name} = (${name}_shape0s[gind1] > 1) ?
-                in_${name}[${offset} + gind0] : in_${name}[${offset}];
-% endfor
-% for name, [type, value] in static_params.items():
-            const ${type} ${name} = ${value};
-% endfor
-            //////////////////////////////////////////////////
-            //vvvvv USER DECLARATIONS BELOW vvvvv
-            ${declares}
-            //^^^^^ USER DECLARATIONS ABOVE ^^^^^
-            //////////////////////////////////////////////////
+        full_args = []
+        for v in itervalues(inputs):
+            full_args.extend([v.cl_starts, v.cl_buf])
+        for v in itervalues(outputs):
+            full_args.extend([v.cl_starts, v.cl_buf])
+        for vname, v in params.items():
+            full_args.extend([v.cl_starts, v.cl_shape0s, v.cl_buf])
+        full_args.append(input0.cl_shape0s)
 
-            /////vvvvv USER COMPUTATIONS BELOW vvvvv
-            ${core_text}
-            /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
-
-% for name, [type, offset] in ovars.items():
-            in_${name}[${offset} + gind0] = ${name};
-% endfor
-        }
-        """
-
+    textconf['N'] = gsize[1]
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
-    if 0:
-        for i, line in enumerate(text.split('\n')):
-            print("%3d %s" % (i + 1, line))
-
-    full_args = []
-    for vname, v in list(inputs.items()) + list(outputs.items()):
-        full_args.extend([v.cl_starts, v.cl_buf])
-    for vname, v in params.items():
-        full_args.extend([v.cl_starts, v.cl_shape0s, v.cl_buf])
-    full_args.append(input0.cl_shape0s)
-    full_args = tuple(full_args)
-
     fns = cl.Program(queue.context, text).build()
     _fn = getattr(fns, fn_name)
     _fn.set_args(*[arr.data for arr in full_args])
@@ -1192,7 +1103,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     rval.full_args = tuple(full_args)  # prevent garbage-collection
     rval.bw_per_call = bw_per_call
     rval.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-                        (N, input0.sizes.sum(), input0.sizes.mean(),
+                        (gsize[1], input0.sizes.sum(), input0.sizes.mean(),
                          input0.sizes.min(), input0.sizes.max()))
     return rval
 
