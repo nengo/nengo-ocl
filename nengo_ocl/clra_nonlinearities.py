@@ -736,7 +736,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         constant.
 
     """
-    input0 = list(inputs.values())[0]   # input to use as reference (for lengths)
+    input0 = list(inputs.values())[0]   # input to use as reference for lengths
     N = len(input0)
 
     # split parameters into static and updated params
