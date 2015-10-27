@@ -567,7 +567,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
                         cl_countdowns.nbytes + cl_bufpositions.nbytes)
     rval.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
+        (len(X), X.sizes.sum(), X.sizes.mean(), X.sizes.min(), X.sizes.max()))
     return rval
 
 

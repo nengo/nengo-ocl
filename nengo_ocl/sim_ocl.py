@@ -212,7 +212,7 @@ class Simulator(sim_npy.Simulator):
                         y = y[:, None]
                     self.all_data[iy] = y
 
-        return PythonPlan(step, name=fn_name, tag=fn_name)
+        return PythonPlan(step, name='py_function', tag=fn_name)
 
     def plan_SimNeurons(self, all_ops):
         groups = groupby(all_ops, lambda op: op.neurons.__class__)

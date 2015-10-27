@@ -652,7 +652,7 @@ def reduce_impl(p, items,
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     rval.full_args = full_args  # prevent GC the args
-    rval.description = p.geometry_summary()
+    rval.description = p.geometry_summary(items)
     return rval
 
 
@@ -837,7 +837,7 @@ def many_dots_impl(p, items):
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     rval.full_args = full_args  # prevent GC the args
-    rval.description = p.geometry_summary()
+    rval.description = p.geometry_summary(items)
     return rval
 
 
