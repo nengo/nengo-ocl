@@ -437,20 +437,26 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             __global const ${Xtype} *x = Xdata + Xstarts[n];
             __global ${Ytype} *y = Ydata + Ystarts[n];
 
-            const int Ysize = Yshape0s[n] * Yshape1s[n];
+            const int Ashape0 = Ashape0s[n];
+            const int Ashape1 = Ashape1s[n];
+            const int Astride0 = Astride0s[n];
+            const int Xshape0 = Xshape0s[n];
+            const int Xshape1 = Xshape1s[n];
+            const int Xstride0 = Xstride0s[n];
+            const int Yshape1 = Yshape1s[n];
+            const int Ystride0 = Ystride0s[n];
+            const int Ysize = Yshape0s[n] * Yshape1;
+
             for (int ij = get_global_id(0);
                  ij < Ysize;
                  ij += get_global_size(0))
             {
-                int i = ij / Yshape1s[n];
-                int j = ij - i * Yshape1s[n];
+                int i = ij / Yshape1;
+                int j = ij % Yshape1;
 
-                ${Atype} aa = get_element(
-                    a, Ashape0s[n], Ashape1s[n], Astride0s[n], i, j);
-                ${Xtype} xx = get_element(
-                    x, Xshape0s[n], Xshape1s[n], Xstride0s[n], i, j);
-
-                y[i * Ystride0s[n] + j] += aa * xx;
+                ${Atype} aa = get_element(a, Ashape0, Ashape1, Astride0, i, j);
+                ${Xtype} xx = get_element(x, Xshape0, Xshape1, Xstride0, i, j);
+                y[i * Ystride0 + j] += aa * xx;
             }
         }
         """
@@ -479,9 +485,10 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_group = queue.device.max_work_group_size
-    mn = min(max(max(Y.shape0s), max(Y.shape1s)), max_group)
+    mn = min(Y.sizes.max(), max_group)
     gsize = (mn, N)
-    lsize = (mn, 1)
+    # lsize = (mn, 1)
+    lsize = None
     rval = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_elementwise_inc", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
