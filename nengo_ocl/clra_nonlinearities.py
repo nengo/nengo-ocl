@@ -7,15 +7,75 @@ from nengo.utils.compat import range
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
-from nengo_ocl.utils import as_ascii, indent
+from nengo_ocl.utils import as_ascii, indent, round_up
 
 
-def all_equal(a, b):
-    return (np.asarray(a) == np.asarray(b)).all()
+def blockify_matrices(max_size, ras):
+    # NOTE: must be contiguous
+    ras = list(ras)
+    ra0 = ras[0]
+    N = len(ra0)
+    for ra in ras:
+        assert len(ra) == N
+        assert np.all(ra.shape1s == ra0.shape1s)
+        assert np.all(ra.shape0s == ra0.shape0s)
+        assert np.all(ra.shape1s == ra.stride0s), "not contiguous"
+
+    sizes = []
+    inds = []
+    starts = [[] for _ in ras]
+    for i in range(N):
+        size = ra0.sizes[i]
+        startsi = [ra.starts[i] for ra in ras]
+        while size > 0:
+            sizes.append(min(size, max_size))
+            size -= max_size
+            inds.append(i)
+            for k, ra in enumerate(ras):
+                starts[k].append(startsi[k])
+                startsi[k] += max_size
+
+    return (np.array(sizes, dtype=np.int32),
+            np.array(inds, dtype=np.int32),
+            np.array(starts, dtype=np.int32))
 
 
-def round_up(x, n):
-    return int(np.ceil(float(x) / n)) * n
+def blockify_matrix(max_size, ra):
+    sizes, inds, starts = blockify_matrices(max_size, [ra])
+    return sizes, inds, starts[0]
+
+
+def blockify_vectors(max_size, ras):
+    ras = list(ras)
+    ra0 = ras[0]
+    N = len(ra0)
+    for ra in ras:
+        assert len(ra) == N
+        assert np.all(ra.shape1s == 1)
+        assert np.all(ra.shape0s == ra0.shape0s)
+
+    sizes = []
+    inds = []
+    starts = [[] for _ in ras]
+    for i in range(N):
+        size = ra0.shape0s[i]
+        startsi = [ra.starts[i] for ra in ras]
+        while size > 0:
+            sizes.append(min(size, max_size))
+            size -= max_size
+            inds.append(i)
+            for k, ra in enumerate(ras):
+                starts[k].append(startsi[k])
+                startsi[k] += max_size * ra.stride0s[i]
+
+    return (np.array(sizes, dtype=np.int32),
+            np.array(inds, dtype=np.int32),
+            np.array(starts, dtype=np.int32))
+
+
+def blockify_vector(max_size, ra):
+    sizes, inds, starts = blockify_vectors(max_size, [ra])
+    return sizes, inds, starts[0]
 
 
 def plan_timeupdate(queue, step, time, dt):
@@ -52,33 +112,6 @@ def plan_timeupdate(queue, step, time, dt):
     return rval
 
 
-def blockify_vector(max_size, ra):
-    assert isinstance(ra, (RaggedArray, CLRaggedArray))
-    N = len(ra)
-
-    # make sure that arrays are contiguous
-    assert np.all(ra.stride0s == ra.shape1s)
-    assert np.all(ra.stride1s == 1)
-    ra_sizes = ra.shape0s * ra.shape1s
-
-    sizes = []
-    starts = []
-    inds = []
-    for i in range(N):
-        size = ra_sizes[i]
-        start = ra.starts[i]
-        while size > 0:
-            sizes.append(min(size, max_size))
-            starts.append(start)
-            inds.append(i)
-            size -= max_size
-            start += max_size
-
-    return (np.array(sizes, dtype=np.int32),
-            np.array(starts, dtype=np.int32),
-            np.array(inds, dtype=np.int32))
-
-
 def plan_reset(queue, Y, values, tag=None):
     assert len(Y) == len(values)
 
@@ -110,17 +143,20 @@ def plan_reset(queue, Y, values, tag=None):
     n_per_item = 1
     local_i = 16
     local_j = max_group / local_i
+    # local_i = min(256, Y.sizes.max())
 
-    Ysizes, Ystarts, Yinds = blockify_vector(local_i, Y)
+    Ysizes, Yinds, Ystarts = blockify_matrix(local_i, Y)
     clYsizes = to_device(queue, Ysizes)
     clYstarts = to_device(queue, Ystarts)
     values = values.get()
     clvalues = to_device(queue, values[Yinds])
 
     N = len(Ysizes)
-    lsize = (local_i, local_j)
     NN = -(-N / n_per_item)  # ceiling division
+    lsize = (local_i, local_j)
     gsize = (local_i, round_up(NN, local_j))
+    # lsize = None
+    # gsize = (local_i, NN)
 
     textconf = dict(Ytype=Y.ctype, N=N, n_per_item=n_per_item)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
@@ -157,7 +193,6 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
 
     assert A.ctype == B.ctype
     assert Ainds.ctype == Binds.ctype == 'int'
-    assert incs.ctype == 'int'
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -168,7 +203,7 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
             __global const int *Bstride0s,
             __global const int *Bstarts,
             __global ${Btype} *Bdata,
-            __global const int *Ishape0s,
+            __global const int *Isizes,
             __global const int *AIstarts,
             __global const int *AIdata,
             __global const int *BIstarts,
@@ -176,7 +211,11 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
             __global const int *incdata
         )
         {
+            const int i = get_global_id(0);
             const int n = get_global_id(1);
+            if (n >= ${N})
+                return;
+
             __global const ${Atype} *a = Adata + Astarts[n];
             __global ${Btype} *b = Bdata + Bstarts[n];
             __global const int *aind = AIdata + AIstarts[n];
@@ -184,40 +223,55 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
             const int inc = incdata[n];
             const int Astride0 = Astride0s[n], Bstride0 = Bstride0s[n];
 
-            int i = get_global_id(0);
-            if (inc)
-                for (; i < Ishape0s[n]; i += get_global_size(0))
+            if (i < Isizes[n])
+                if (inc)
                     b[bind[i]*Bstride0] += a[aind[i]*Astride0];
-            else
-                for (; i < Ishape0s[n]; i += get_global_size(0))
+                else
                     b[bind[i]*Bstride0] = a[aind[i]*Astride0];
         }
         """
 
-    textconf = dict(Atype=A.ctype, Btype=B.ctype)
+    max_group = min(queue.device.max_work_group_size, 256)
+    # n_per_item = 1
+    local_i = 16
+    local_j = max_group / local_i
+
+    sizes, inds, [AIstarts, BIstarts] = blockify_vectors(
+        local_i, [Ainds, Binds])
+    clsizes = to_device(queue, sizes)
+    clAstride0s = to_device(queue, A.stride0s[inds])
+    clAstarts = to_device(queue, A.starts[inds])
+    clBstride0s = to_device(queue, B.stride0s[inds])
+    clBstarts = to_device(queue, B.starts[inds])
+    clAIstarts = to_device(queue, AIstarts)
+    clBIstarts = to_device(queue, BIstarts)
+    clincs = to_device(queue, incs[inds].astype(np.int32))
+
+    N = len(sizes)
+    # NN = -(-N / n_per_item)  # ceiling division
+    lsize = (local_i, local_j)
+    gsize = (local_i, round_up(N, local_j))
+
+    textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
-        A.cl_stride0s,
-        A.cl_starts,
+        clAstride0s,
+        clAstarts,
         A.cl_buf,
-        B.cl_stride0s,
-        B.cl_starts,
+        clBstride0s,
+        clBstarts,
         B.cl_buf,
-        Ainds.cl_shape0s,
-        Ainds.cl_starts,
+        clsizes,
+        clAIstarts,
         Ainds.cl_buf,
-        Binds.cl_starts,
+        clBIstarts,
         Binds.cl_buf,
-        incs.cl_buf,
+        clincs,
     )
     _fn = cl.Program(queue.context, text).build().slicedcopy
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_group = queue.device.max_work_group_size
-    n = min(max(Ainds.shape0s), max_group)
-    gsize = (n, N)
-    lsize = (n, 1)
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     rval.bw_per_call = 2 * Ainds.shape0s.sum() * A.dtype.itemsize

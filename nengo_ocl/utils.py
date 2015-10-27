@@ -1,3 +1,5 @@
+import numpy as np
+
 from nengo.utils.compat import PY2
 
 
@@ -12,3 +14,21 @@ def as_ascii(string):
 
 def indent(s, i):
     return '\n'.join([(' ' * i) + line for line in s.split('\n')])
+
+
+def round_up(x, n):
+    return int(np.ceil(float(x) / n)) * n
+
+
+def split(iterator, criterion):
+    """Returns a list of objects that match criterion and those that do not.
+    """
+    a = []
+    b = []
+    for x in iterator:
+        if criterion(x):
+            a.append(x)
+        else:
+            b.append(x)
+
+    return a, b
