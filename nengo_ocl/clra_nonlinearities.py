@@ -193,14 +193,16 @@ def plan_copy(queue, A, B, incs, tag=None):
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void copy(
+    % if inc is None:
+            __global const int *incdata,
+    % endif
             __global const int *Astrides,
             __global const int *Astarts,
             __global const ${Atype} *Adata,
             __global const int *Bstrides,
             __global const int *Bstarts,
             __global ${Btype} *Bdata,
-            __global const int *sizes,
-            __global const int *incdata
+            __global const int *sizes
         )
         {
             const int i = get_global_id(0);
@@ -211,8 +213,14 @@ def plan_copy(queue, A, B, incs, tag=None):
             __global const ${Atype} *a = Adata + Astarts[n];
             __global ${Btype} *b = Bdata + Bstarts[n];
 
+    % if inc is True:
+            b[i*Bstrides[n]] += a[i*Astrides[n]];
+    % elif inc is False:
+            b[i*Bstrides[n]] = a[i*Astrides[n]];
+    % else:
             if (incdata[n])  b[i*Bstrides[n]] += a[i*Astrides[n]];
             else             b[i*Bstrides[n]] = a[i*Astrides[n]];
+    % endif
         }
         """
 
@@ -223,12 +231,6 @@ def plan_copy(queue, A, B, incs, tag=None):
     # local_i = min(256, A.sizes.max())
 
     sizes, inds, [Astarts, Bstarts] = blockify_vectors(local_i, [A, B])
-    clsizes = to_device(queue, sizes)
-    clAstrides = to_device(queue, A.stride0s[inds])
-    clBstrides = to_device(queue, B.stride0s[inds])
-    clAstarts = to_device(queue, Astarts)
-    clBstarts = to_device(queue, Bstarts)
-    clincs = to_device(queue, incs[inds].astype(np.int32))
 
     N = len(sizes)
     # NN = -(-N / n_per_item)  # ceiling division
@@ -237,24 +239,30 @@ def plan_copy(queue, A, B, incs, tag=None):
     # lsize = None
     # gsize = (local_i, N)
 
-    textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N, inc=None)
 
-    full_args = (
-        clAstrides,
-        clAstarts,
+    full_args = [
+        to_device(queue, A.stride0s[inds]),
+        to_device(queue, Astarts),
         A.cl_buf,
-        clBstrides,
-        clBstarts,
+        to_device(queue, B.stride0s[inds]),
+        to_device(queue, Bstarts),
         B.cl_buf,
-        clsizes,
-        clincs,
-    )
+        to_device(queue, sizes),
+    ]
+    if (incs == 0).all():
+        textconf['inc'] = False
+    elif (incs == 1).all():
+        textconf['inc'] = True
+    else:
+        full_args.insert(0, to_device(queue, incs[inds].astype(np.int32)))
+
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
     _fn = cl.Program(queue.context, text).build().copy
     _fn.set_args(*[arr.data for arr in full_args])
 
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_copy", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
+    rval.full_args = tuple(full_args)  # prevent garbage-collection
     rval.bw_per_call = A.nbytes + B.nbytes
     rval.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
@@ -279,6 +287,9 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void slicedcopy(
+    % if inc is None:
+            __global const int *incdata,
+    % endif
             __global const int *Astride0s,
             __global const int *Astarts,
             __global const ${Atype} *Adata,
@@ -289,8 +300,7 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
             __global const int *AIstarts,
             __global const int *AIdata,
             __global const int *BIstarts,
-            __global const int *BIdata,
-            __global const int *incdata
+            __global const int *BIdata
         )
         {
             const int i = get_global_id(0);
@@ -302,14 +312,20 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
             __global ${Btype} *b = Bdata + Bstarts[n];
             __global const int *aind = AIdata + AIstarts[n];
             __global const int *bind = BIdata + BIstarts[n];
-            const int inc = incdata[n];
             const int Astride0 = Astride0s[n], Bstride0 = Bstride0s[n];
 
-            if (i < Isizes[n])
-                if (inc)
+            if (i < Isizes[n]) {
+    % if inc is True:
+                b[bind[i]*Bstride0] += a[aind[i]*Astride0];
+    % elif inc is False:
+                b[bind[i]*Bstride0] = a[aind[i]*Astride0];
+    % else:
+                if (incdata[n])
                     b[bind[i]*Bstride0] += a[aind[i]*Astride0];
                 else
                     b[bind[i]*Bstride0] = a[aind[i]*Astride0];
+    % endif
+            }
         }
         """
 
@@ -320,43 +336,41 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
 
     sizes, inds, [AIstarts, BIstarts] = blockify_vectors(
         local_i, [Ainds, Binds])
-    clsizes = to_device(queue, sizes)
-    clAstride0s = to_device(queue, A.stride0s[inds])
-    clAstarts = to_device(queue, A.starts[inds])
-    clBstride0s = to_device(queue, B.stride0s[inds])
-    clBstarts = to_device(queue, B.starts[inds])
-    clAIstarts = to_device(queue, AIstarts)
-    clBIstarts = to_device(queue, BIstarts)
-    clincs = to_device(queue, incs[inds].astype(np.int32))
 
     N = len(sizes)
     # NN = -(-N / n_per_item)  # ceiling division
     lsize = (local_i, local_j)
     gsize = (local_i, round_up(N, local_j))
 
-    textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N, inc=None)
 
-    full_args = (
-        clAstride0s,
-        clAstarts,
+    full_args = [
+        to_device(queue, A.stride0s[inds]),
+        to_device(queue, A.starts[inds]),
         A.cl_buf,
-        clBstride0s,
-        clBstarts,
+        to_device(queue, B.stride0s[inds]),
+        to_device(queue, B.starts[inds]),
         B.cl_buf,
-        clsizes,
-        clAIstarts,
+        to_device(queue, sizes),
+        to_device(queue, AIstarts),
         Ainds.cl_buf,
-        clBIstarts,
+        to_device(queue, BIstarts),
         Binds.cl_buf,
-        clincs,
-    )
+    ]
+    if (incs == 0).all():
+        textconf['inc'] = False
+    elif (incs == 1).all():
+        textconf['inc'] = True
+    else:
+        full_args.insert(0, to_device(queue, incs[inds].astype(np.int32)))
+
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
     _fn = cl.Program(queue.context, text).build().slicedcopy
     _fn.set_args(*[arr.data for arr in full_args])
 
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = 2 * Ainds.shape0s.sum() * A.dtype.itemsize
+    rval.full_args = tuple(full_args)  # prevent garbage-collection
+    rval.bw_per_call = 2 * (Ainds.nbytes + Ainds.sizes.sum()*A.dtype.itemsize)
     rval.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Ainds), Ainds.sizes.sum(),
@@ -803,7 +817,7 @@ ${code}
 
     gsize = (N,)
     rval = Plan(queue, _fn, gsize, lsize=None, name="cl_direct", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
+    rval.full_args = tuple(full_args)  # prevent garbage-collection
     rval.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(output), output.sizes.sum(),
@@ -1175,7 +1189,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
     _fn.set_args(*[arr.data for arr in full_args])
 
     rval = Plan(queue, _fn, gsize, lsize=lsize, name=name, tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
+    rval.full_args = tuple(full_args)  # prevent garbage-collection
     rval.bw_per_call = bw_per_call
     rval.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
                         (N, input0.sizes.sum(), input0.sizes.mean(),
