@@ -42,7 +42,7 @@ class Simulator(sim_npy.Simulator):
         return CLRaggedArray.from_arrays(self.queue, listofarrays, **kwargs)
 
     def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
-                 n_prealloc_probes=1000, profiling=None, ocl_only=False):
+                 n_prealloc_probes=32, profiling=None, ocl_only=False):
         if context is None:
             print('No context argument was provided to sim_ocl.Simulator')
             print("Calling pyopencl.create_some_context() for you now:")
@@ -406,7 +406,7 @@ class Simulator(sim_npy.Simulator):
 
     def plan_probes(self):
         if len(self.model.probes) == 0:
-            self._max_steps_between_probes = None
+            self._max_steps_between_probes = self.n_prealloc_probes
             self._cl_probe_plan = None
             return []
         else:
@@ -424,7 +424,7 @@ class Simulator(sim_npy.Simulator):
                  for p in probes], dtype=np.float32)
 
             cl_plan = plan_probes(self.queue, periods, X, Y)
-            self._max_steps_between_probes = n_prealloc * min(periods)
+            self._max_steps_between_probes = n_prealloc * int(min(periods))
             self._cl_probe_plan = cl_plan
             return [cl_plan]
 
@@ -461,7 +461,7 @@ class Simulator(sim_npy.Simulator):
             #    in groups of up to B at a time, draining
             #    the probe buffers after each group of B
             while N:
-                B = min(N, self._max_steps_between_probes) if has_probes else N
+                B = min(N, self._max_steps_between_probes)
                 self._plans.call_n_times(B)
                 if has_probes:
                     self.drain_probe_buffers()
