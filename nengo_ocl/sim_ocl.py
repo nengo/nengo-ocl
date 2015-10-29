@@ -303,14 +303,14 @@ class Simulator(sim_npy.Simulator):
             if op.input.ndim != 1:
                 raise NotImplementedError("Can only filter vectors")
         steps = [op.synapse.make_step(self.model.dt, []) for op in ops]
-        A = self.RaggedArray([f.den for f in steps])
-        B = self.RaggedArray([f.num for f in steps])
+        A = self.RaggedArray([f.den for f in steps], dtype=np.float32)
+        B = self.RaggedArray([f.num for f in steps], dtype=np.float32)
         X = self.all_data[[self.sidx[op.input] for op in ops]]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        Xbuf = self.RaggedArray(
-            [np.zeros((b.size, x.size)) for b, x in zip(B, X)])
-        Ybuf = self.RaggedArray(
-            [np.zeros((a.size, y.size)) for a, y in zip(A, Y)])
+        Xbuf = self.RaggedArray([np.zeros((b.size, x.size))
+                                 for b, x in zip(B, X)], dtype=np.float32)
+        Ybuf = self.RaggedArray([np.zeros((a.size, y.size))
+                                 for a, y in zip(A, Y)], dtype=np.float32)
         return [plan_linear_synapse(self.queue, X, Y, A, B, Xbuf, Ybuf)]
 
     def plan_SimProcess(self, all_ops):
@@ -327,12 +327,12 @@ class Simulator(sim_npy.Simulator):
         return plans
 
     def _plan_WhiteNoise(self, ops):
-        self._init_cl_rng()
-        for op in ops:
-            assert op.input is None
+        assert all(op.input is None for op in ops)
 
+        self._init_cl_rng()
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        scale = self.RaggedArray([np.int32(op.process.scale) for op in ops])
+        scale = self.RaggedArray([op.process.scale for op in ops],
+                                 dtype=np.int32)
         enums, params = get_dist_enums_params([op.process.dist for op in ops])
         enums = CLRaggedArray(self.queue, enums)
         params = CLRaggedArray(self.queue, params)
@@ -354,15 +354,15 @@ class Simulator(sim_npy.Simulator):
             f = op.process.make_step(0, op.output.size, dt, self.rng)
             signals.append(get_closures(f)['signal'])
 
-        signals = self.RaggedArray(signals)
+        signals = self.RaggedArray(signals, dtype=np.float32)
         return [plan_presentinput(self.queue, Y, t, signals, dt)]
 
     def _plan_PresentInput(self, ops):
         ps = [op.process for op in ops]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
         t = self.all_data[[self.sidx[self._step] for _ in ops]]
-        inputs = self.RaggedArray([
-            p.inputs.reshape(p.inputs.shape[0], -1) for p in ps])
+        inputs = self.RaggedArray([p.inputs.reshape(p.inputs.shape[0], -1)
+                                   for p in ps], dtype=np.float32)
         pres_t = self.Array([p.presentation_time for p in ps])
         dt = self.model.dt
         return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
@@ -421,7 +421,7 @@ class Simulator(sim_npy.Simulator):
                 [self.sidx[self.model.sig[p]['in']] for p in probes]]
             Y = self.RaggedArray(
                 [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
-                 for p in probes])
+                 for p in probes], dtype=np.float32)
 
             cl_plan = plan_probes(self.queue, periods, X, Y)
             self._max_steps_between_probes = n_prealloc * min(periods)

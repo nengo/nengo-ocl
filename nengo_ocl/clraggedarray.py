@@ -92,6 +92,8 @@ class CLRaggedArray(object):
         self.stride1s = [1 for a in arrays]
 
         dtype = arrays[0].dtype if dtype is None else dtype
+        assert dtype in [np.float32, np.int32]
+
         buf = np.zeros(sizesum[-1], dtype=dtype)
         for a, s in zip(arrays, self.starts):
             buf[s:s+a.size] = a.ravel()
