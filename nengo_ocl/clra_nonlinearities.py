@@ -1180,9 +1180,10 @@ inline float getfloat4(float4 a, int i) {
 
 
 def get_dist_enums_params(dists):
-    enums = [np.array(_dist_enums[d.__class__], dtype=int) for d in dists]
+    enums = [_dist_enums[d.__class__] for d in dists]
     params = [_dist_params[d.__class__](d) for d in dists]
-    return RaggedArray(enums), RaggedArray(params)
+    return (RaggedArray(enums, dtype=np.int32),
+            RaggedArray(params, dtype=np.float32))
 
 
 def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,

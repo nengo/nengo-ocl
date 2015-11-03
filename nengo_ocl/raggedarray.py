@@ -7,6 +7,8 @@ from __future__ import print_function
 from nengo.utils.compat import is_iterable, StringIO
 import numpy as np
 
+from nengo_ocl.utils import round_up
+
 
 def allclose(a, b, atol=1e-3, rtol=1e-3):
     if not np.allclose(a.starts, b.starts):
@@ -31,7 +33,7 @@ class RaggedArray(object):
     in the same underlying buffer.
     """
 
-    def __init__(self, arrays, names=None):
+    def __init__(self, arrays, names=None, dtype=None, align=False):
         arrays = [np.asarray(a) for a in arrays]
         assert len(arrays) > 0
         assert all(a.ndim <= 2 for a in arrays)
@@ -39,14 +41,32 @@ class RaggedArray(object):
         self.names = [''] * len(arrays) if names is None else list(names)
         assert len(self.names) == len(arrays)
 
-        sizesum = np.cumsum([0] + [a.size for a in arrays])
-        self.starts = sizesum[:-1].tolist()
         self.shape0s = [a.shape[0] if a.ndim > 0 else 1 for a in arrays]
         self.shape1s = [a.shape[1] if a.ndim > 1 else 1 for a in arrays]
         assert 0 not in self.shape1s
         self.stride0s = [a.shape[1] if a.ndim == 2 else 1 for a in arrays]
         self.stride1s = [1 for a in arrays]
-        self.buf = np.concatenate([a.ravel() for a in arrays])
+
+        dtype = arrays[0].dtype if dtype is None else dtype
+        assert dtype in [np.float32, np.int32]
+
+        if not align:
+            starts = np.cumsum([0] + [a.size for a in arrays[:-1]]).tolist()
+        else:
+            starts = [0]
+            sizes = [arrays[0].size]
+            for a in arrays[1:]:
+                size = a.size
+                power = 16 if size >= 16 else 4 if size >= 8 else 1
+                starts.append(round_up(starts[-1] + sizes[-1], power))
+                sizes.append(size)
+
+        buf = np.zeros(starts[-1] + arrays[-1].size, dtype=dtype)
+        for a, s in zip(arrays, starts):
+            buf[s:s+a.size] = a.ravel()
+
+        self.starts = starts
+        self.buf = buf
 
     @property
     def dtype(self):

@@ -400,8 +400,8 @@ class Simulator(Simulator):
 
             self.all_data = RaggedArray(
                 [sigdict[sb] for sb in all_bases],
-                [getattr(sb, 'name', '') for sb in all_bases]
-            )
+                [getattr(sb, 'name', '') for sb in all_bases],
+                dtype=np.float32)
 
             builder = ViewBuilder(all_bases, self.all_data)
             self._AX_views = {}
@@ -546,7 +546,7 @@ class Simulator(Simulator):
         if callable(beta):
             beta_sigs = list(map(beta, seq))
             beta = RaggedArray(
-                list(map(sidx.__getitem__, beta_sigs)))
+                list(map(sidx.__getitem__, beta_sigs)), dtype=np.float32)
 
         Y_sigs = [Y_sig_fn(item) for item in seq]
         if Y_in_sig_fn is None:
@@ -588,8 +588,8 @@ class Simulator(Simulator):
             print("print A", A_js)
             print("print X", X_js)
 
-        A_js = RaggedArray(A_js)
-        X_js = RaggedArray(X_js)
+        A_js = RaggedArray(A_js, dtype=np.int32)
+        X_js = RaggedArray(X_js, dtype=np.int32)
         Y = self.all_data[Y_idxs]
         Y_in = self.all_data[Y_in_idxs]
 
