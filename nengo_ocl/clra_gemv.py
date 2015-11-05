@@ -106,7 +106,6 @@ class gemv_prog(object):
                  beta, Y, Y_in=None, tag=None, seq=None, gamma=0.0):
         """
         """
-
         self.float_alpha, self.cl_alpha, self.clra_alpha = \
             float_cl_clra(queue, alpha, Y.dtype, len(Y))
         self.float_beta, self.cl_beta, self.clra_beta = \
@@ -195,6 +194,7 @@ class gemv_prog(object):
                         'a_shape1': A_shape1s[aj],
                     })
             rval.append(dbb)
+            assert len(dbb['dots']) == 1
         return rval
 
     def cl_geometry_and_textconf(self, items, padding=4):
@@ -841,6 +841,296 @@ def many_dots_impl(p, items):
     return rval
 
 
+def block_impl(p, items):
+
+    assert p.float_alpha == 1.0
+    assert p.float_beta == 1.0
+    assert p.float_gamma == 0.0
+
+    if p.clra_alpha is not None:
+        raise NotImplementedError()
+    if p.clra_gamma is not None:
+        raise NotImplementedError()
+    if p.clra_beta is not None:
+        raise NotImplementedError()
+    if p.cl_alpha is not None:
+        raise NotImplementedError()
+    if p.cl_gamma is not None:
+        raise NotImplementedError()
+    if not all(s == 1 for s in p.A.stride1s):
+        raise NotImplementedError()
+
+    if p.A_js is None:
+        # -- easy probably, but not done
+        raise NotImplementedError()
+
+    # --- blocking
+    # We want to group the dot products into blocks, so that each workgroup
+    # is computing a (block_y, block_x) region of a dot product. To do this,
+    # we create a temporary output buffer, compute each block to a separate
+    # region of this buffer, then reduce across the buffer in a separate kernel
+
+    # block_y = 8
+    block_y = 32
+    # block_x = 32
+    block_x = 128
+
+    shape0s = []
+    shape1s = []
+    Astride0s = []
+    Astride1s = []
+    Astarts = []
+    Xstride0s = []
+    Xstarts = []
+    Ybufstarts = []
+    Ybufstart = 0
+
+    Yshape0s_reduce = []
+    Yinstride0s_reduce = []
+    Yinstarts_reduce = []
+    Ystride0s_reduce = []
+    Ystarts_reduce = []
+    Ybufinds_reduce = []
+    bw_reduce = 0
+
+    for n in items:
+        assert p.Y_in.shape0s[n] == p.Y.shape0s[n]
+        shape0n = p.Y.shape0s[n]
+
+        for i in range(0, shape0n, block_y):
+            shape0i = min(shape0n - i, block_y)
+
+            Ybufind_reduce = []
+
+            # loop over dot products outputting to same Y
+            n_dots = len(p.A_js[n])
+            assert len(p.A_js[n]) == len(p.X_js[n])
+            for aj, xj in zip(p.A_js[n], p.X_js[n]):
+                assert aj.size == 1 and xj.size == 1
+                aj, xj = aj[0], xj[0]  # to ignore numpy DeprecationWarning
+
+                assert p.A.shape0s[aj] == shape0n
+                assert p.A.shape1s[aj] == p.X.shape0s[xj]
+                assert p.X.shape1s[xj] == 1
+                shape1n = p.A.shape1s[aj]
+
+                for j in range(0, shape1n, block_x):
+                    shape0s.append(shape0i)
+                    shape1s.append(min(shape1n - j, block_x))
+                    Astride0s.append(p.A.stride0s[aj])
+                    Astride1s.append(p.A.stride1s[aj])
+                    Astarts.append(p.A.starts[aj] + i*p.A.stride0s[aj] + j*p.A.stride1s[aj])
+                    Xstride0s.append(p.X.stride0s[xj])
+                    Xstarts.append(p.X.starts[xj] + j*p.X.stride0s[xj])
+
+                    Ybufstarts.append(Ybufstart)
+                    Ybufind_reduce.append(Ybufstart)
+                    # Ybufstart += shape0s[-1]
+                    Ybufstart += block_y  # keep good offset
+
+            # --- Y-blocking for reduce
+            Yshape0s_reduce.append(shape0i)
+            Yinstride0s_reduce.append(p.Y_in.stride0s[n])
+            Yinstarts_reduce.append(p.Y_in.starts[n] + i*p.Y_in.stride0s[n])
+            Ystride0s_reduce.append(p.Y.stride0s[n])
+            Ystarts_reduce.append(p.Y.starts[n] + i*p.Y.stride0s[n])
+            Ybufinds_reduce.append(Ybufind_reduce)
+            bw_reduce += shape0i*(len(Ybufind_reduce) + 1) * p.Y.dtype.itemsize
+
+    # --- create structure
+    gstructure = np.column_stack([shape0s, shape1s, Astride0s, Astride1s,
+                                  Astarts, Xstride0s, Xstarts, Ybufstarts])
+    cl_gstructure = to_device(p.queue, gstructure.astype(np.int32))
+
+    # --- create Y buffer
+    clYbuf = to_device(p.queue, np.zeros(Ybufstart, dtype=p.Y.dtype))
+
+    lsize0 = 4
+    # lsize0 = 8
+    lsize0_log2 = int(np.log2(lsize0))
+    assert 2**lsize0_log2 == lsize0
+
+    lsize = (lsize0, block_y, 1)
+    gsize = (lsize[0], lsize[1], gstructure.shape[0])
+    assert np.prod(lsize) >= block_x
+
+    textconf = dict(
+        A=p.A,
+        X=p.X,
+        Ybuf=clYbuf,
+        n_structure_vars=gstructure.shape[1],
+        shape0='lstructure[0]',
+        shape1='lstructure[1]',
+        Astride0='lstructure[2]',
+        Astride1='lstructure[3]',
+        Astart='lstructure[4]',
+        Xstride0='lstructure[5]',
+        Xstart='lstructure[6]',
+        Ybufstart='lstructure[7]',
+        block_y=block_y,
+        block_x=block_x,
+        lsize0=lsize0,
+        lsize0_log2=lsize0_log2,
+    )
+
+    full_args = (
+        cl_gstructure,
+        p.A.cl_buf,
+        p.X.cl_buf,
+        clYbuf,
+    )
+
+    source = """
+    __kernel void fn(
+        __global const int *gstructure,
+        __global const ${A.ctype} *Adata,
+        __global const ${X.ctype} *Xdata,
+        __global ${Ybuf.ctype} *Ybufdata
+        )
+    {
+        const int j = get_global_id(0);
+        const int i = get_global_id(1);
+        const int n = get_global_id(2);
+
+        // load structure
+        __local int lstructure[${n_structure_vars}];
+        const int local_idx = get_local_id(0) + get_local_id(1)*get_local_size(0);
+        if (local_idx < ${n_structure_vars})
+            lstructure[local_idx] = gstructure[
+                n * ${n_structure_vars} + local_idx];
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+        __global const ${X.ctype} *x = Xdata + ${Xstart};
+        __global ${Ybuf.ctype} *ybuf = Ybufdata + ${Ybufstart};
+
+        // load x into local memory
+        __local ${X.ctype} xlocal[${block_x}];
+        if (local_idx < ${shape1})
+            xlocal[local_idx] = x[local_idx*${Xstride0}];
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+        __local ${Ybuf.ctype} sums[${block_y}][${lsize0}];
+        sums[i][j] = 0;
+
+        if (i < ${shape0}) {
+            __global const ${A.ctype} *Ai = Adata + ${Astart} + i*${Astride0};
+            for(int jj = j; jj < ${shape1}; jj += get_global_size(0)) {
+                sums[i][j] += Ai[jj*${Astride1}] * xlocal[jj];
+            }
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+    % for k in range(lsize0_log2 - 1, 0, -1):
+        if (j < ${2**k})
+            sums[i][j] += sums[i][${2**k} + j];
+        barrier(CLK_LOCAL_MEM_FENCE);
+    % endfor
+        if (i < ${shape0} && j == 0)
+            ybuf[i] = sums[i][0] + sums[i][1];
+    }
+    """
+
+    source = Template(source, output_encoding='ascii').render(**textconf)
+    kernel = cl.Program(p.queue.context, source).build().fn
+    kernel.set_args(*[arr.data for arr in full_args])
+
+    plan = Plan(p.queue, kernel, gsize, lsize,
+                name='clra_gemv.block_impl',
+                tag=p.tag,
+                bw_per_call=bw_from_geometry(p.geometry, items),
+                flops_per_call=flops_from_geometry(p.geometry, items),
+                )
+    plan.full_args = full_args  # prevent GC the args
+    plan.description = p.geometry_summary(items)
+    plan.Ybuf = clYbuf
+
+    # --- Reduce kernel
+    align = False
+
+    Nreduce = len(Yshape0s_reduce)
+    clYshape0s_reduce = to_device(p.queue, np.array(Yshape0s_reduce, dtype=np.int32))
+    clYinstride0s_reduce = to_device(p.queue, np.array(Yinstride0s_reduce, dtype=np.int32))
+    clYinstarts_reduce = to_device(p.queue, np.array(Yinstarts_reduce, dtype=np.int32))
+    clYstride0s_reduce = to_device(p.queue, np.array(Ystride0s_reduce, dtype=np.int32))
+    clYstarts_reduce = to_device(p.queue, np.array(Ystarts_reduce, dtype=np.int32))
+    clYbufinds_reduce = CLRaggedArray.from_arrays(p.queue, Ybufinds_reduce, dtype=np.int32, align=align)
+    assert len(clYbufinds_reduce) == Nreduce
+    assert (clYbufinds_reduce.shape1s == 1).all()
+
+    textconf_reduce = dict(
+        Ybuf=clYbuf,
+        Yin=p.Y_in,
+        Y=p.Y,
+    )
+
+    full_args_reduce = (
+        clYshape0s_reduce,
+        clYbufinds_reduce.cl_shape0s,
+        clYbufinds_reduce.cl_starts,
+        clYbufinds_reduce.cl_buf,
+        clYbuf,
+        clYinstride0s_reduce,
+        clYinstarts_reduce,
+        p.Y_in.cl_buf,
+        clYstride0s_reduce,
+        clYstarts_reduce,
+        p.Y.cl_buf,
+    )
+
+    lsize_reduce = None
+    gsize_reduce = (block_y, Nreduce)
+
+    source_reduce = """
+    __kernel void reduce(
+        __global const int *shape0s,
+        __global const int *Ishape0s,
+        __global const int *Istarts,
+        __global const int *Idata,
+        __global ${Ybuf.ctype} *Ybufdata,
+        __global const int *Yinstride0s,
+        __global const int *Yinstarts,
+        __global ${Yin.ctype} *Yindata,
+        __global const int *Ystride0s,
+        __global const int *Ystarts,
+        __global ${Y.ctype} *Ydata
+    )
+    {
+        const int i = get_global_id(0);
+        const int n = get_global_id(1);
+        if (i >= shape0s[n])
+            return;
+
+        const int Ishape0 = Ishape0s[n];
+
+        __global const int *Ybufstart = Idata + Istarts[n];
+        __global ${Yin.ctype} *yin = Yindata + Yinstarts[n];
+        __global ${Y.ctype} *y = Ydata + Ystarts[n];
+
+        ${Y.ctype} sum = yin[i*Yinstride0s[n]];
+        for (int j = 0; j < Ishape0; j++) {
+            sum += Ybufdata[Ybufstart[j] + i];
+        }
+
+        y[i*Ystride0s[n]] = sum;
+    }
+    """
+
+    source_reduce = Template(source_reduce, output_encoding='ascii').render(
+        **textconf_reduce)
+    kernel_reduce = cl.Program(p.queue.context, source_reduce).build().reduce
+    kernel_reduce.set_args(*[arr.data for arr in full_args_reduce])
+
+    plan_reduce = Plan(p.queue, kernel_reduce, gsize_reduce, lsize_reduce,
+                       name='clra_gemv.block_impl_reduce',
+                       tag=p.tag,
+                       bw_per_call=bw_reduce,
+                   )
+    plan_reduce.full_args = full_args_reduce  # prevent GC the args
+    # plan_reduce.description = p.geometry_summary(items)
+
+    return [plan, plan_reduce]
+
+
 class plan_ref(gemv_prog):
 
     def choose_plans(self):
@@ -862,43 +1152,46 @@ class plan_reduce(gemv_prog):
 class plan_ragged_gather_gemv(gemv_prog):
 
     def choose_plans(self):
-        remaining_items = range(len(self.Y))
-        plans = []
+        return block_impl(self, list(range(len(self.Y))))
 
-        long_dots = [
-            ii for ii in remaining_items
-            if len(self.geometry[ii]['dots']) <= 2
-            and max([0] + [dct['a_shape1']
-                           for dct in self.geometry[ii]['dots']]) > 16]
-        if long_dots:
-            try:
-                long_plan = reduce_impl(self, long_dots)
-            except NotImplementedError:
-                long_plan = ref_impl(self, long_dots)
-            long_plan.tag += '-long%i' % len(long_dots)
-            plans.append(long_plan)
-            remaining_items = [ii
-                               for ii in remaining_items
-                               if ii not in long_dots]
+    # def choose_plans(self):
+    #     remaining_items = range(len(self.Y))
+    #     plans = []
 
-        # many_dots = [ii
-            # for ii in remaining_items
-            # if len(self.geometry[ii]['dots']) > 3]
-        many_dots = remaining_items
-        if many_dots:
-            try:
-                many_plan = many_dots_impl(self, many_dots)
-                many_plan.tag += '-many%i' % len(many_dots)
-                plans.append(many_plan)
-                remaining_items = [ii
-                                   for ii in remaining_items
-                                   if ii not in many_dots]
-            except NotImplementedError:
-                pass
+    #     long_dots = [
+    #         ii for ii in remaining_items
+    #         if len(self.geometry[ii]['dots']) <= 2
+    #         and max([0] + [dct['a_shape1']
+    #                        for dct in self.geometry[ii]['dots']]) > 16]
+    #     if long_dots:
+    #         try:
+    #             long_plan = reduce_impl(self, long_dots)
+    #         except NotImplementedError:
+    #             long_plan = ref_impl(self, long_dots)
+    #         long_plan.tag += '-long%i' % len(long_dots)
+    #         plans.append(long_plan)
+    #         remaining_items = [ii
+    #                            for ii in remaining_items
+    #                            if ii not in long_dots]
 
-        if remaining_items:
-            remaining_plan = ref_impl(self, remaining_items)
-            remaining_plan.tag += '-remaining%i' % len(remaining_items)
-            plans.append(remaining_plan)
+    #     # many_dots = [ii
+    #         # for ii in remaining_items
+    #         # if len(self.geometry[ii]['dots']) > 3]
+    #     many_dots = remaining_items
+    #     if many_dots:
+    #         try:
+    #             many_plan = many_dots_impl(self, many_dots)
+    #             many_plan.tag += '-many%i' % len(many_dots)
+    #             plans.append(many_plan)
+    #             remaining_items = [ii
+    #                                for ii in remaining_items
+    #                                if ii not in many_dots]
+    #         except NotImplementedError:
+    #             pass
 
-        return plans
+    #     if remaining_items:
+    #         remaining_plan = ref_impl(self, remaining_items)
+    #         remaining_plan.tag += '-remaining%i' % len(remaining_items)
+    #         plans.append(remaining_plan)
+
+    #     return plans

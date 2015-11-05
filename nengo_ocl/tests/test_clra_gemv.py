@@ -31,13 +31,15 @@ def allclose(raA, raB):
 
 def test_basic():
     # -- prepare initial conditions on host
-    A = RA([[[0.1, .2], [.3, .4]], [[.5, .6]]])
-    X = RA([[3, 5]])
-    Y = RA([[0.0], [2, 3], ])
-    A_js = RA([[1], [0]])
-    X_js = RA([[0], [0]])
-    alpha = 0.5
-    beta = 0.1
+    A = RA([[[0.1, .2], [.3, .4]], [[.5, .6]]], dtype=np.float32)
+    X = RA([[3, 5]], dtype=np.float32)
+    Y = RA([[0.0], [2, 3], ], dtype=np.float32)
+    A_js = RA([[1], [0]], dtype=np.int32)
+    X_js = RA([[0], [0]], dtype=np.int32)
+    # alpha = 0.5
+    alpha = 1.0
+    # beta = 0.1
+    beta = 1.0
 
     # -- prepare initial conditions on device
     queue = cl.CommandQueue(ctx)
@@ -55,9 +57,12 @@ def test_basic():
     # -- run cl computation
     prog = plan_ragged_gather_gemv(
         queue, alpha, clA, A_js, clX, X_js, beta, clY)
-    plans = prog.choose_plans()
-    assert len(plans) == 1
-    plans[0]()
+    # plans = prog.choose_plans()
+    # assert len(plans) == 1
+    for plan in prog.plans:
+        plan()
+
+    print(prog.plans[0].Ybuf.get())
 
     # -- ensure they match
     for i in range(len(A_js)):
@@ -105,10 +110,9 @@ def _test_random(k=4, p=1, m=10, n=10):
     # -- run cl computation
     prog = plan_ragged_gather_gemv(
         queue, alpha, clA, A_js, clX, X_js, beta, clY)
-    plans = prog.choose_plans()
 
     print('-' * 5 + ' Plans ' + '-' * 45)
-    for plan in plans:
+    for plan in prog.plans:
         print(plan)
         plan()
 
@@ -171,7 +175,7 @@ def check_from_shapes(
     prog = planner(
         queue, alpha, clA, clA_js, clX, clX_js, beta, clY, gamma=gamma)
 
-    plans = prog.choose_plans()
+    plans = prog.plans
     assert len(plans) == 1
     plans[0]()
 
