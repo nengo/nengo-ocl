@@ -1,3 +1,5 @@
+from __future__ import division
+
 import numpy as np
 import pyopencl as cl
 from mako.template import Template
@@ -142,7 +144,7 @@ def plan_reset(queue, Y, values, tag=None):
     max_group = min(queue.device.max_work_group_size, 256)
     n_per_item = 1
     local_i = 16
-    local_j = max_group / local_i
+    local_j = max_group // local_i
     # local_i = min(256, Y.sizes.max())
 
     Ysizes, Yinds, Ystarts = blockify_matrix(local_i, Y)
@@ -152,7 +154,7 @@ def plan_reset(queue, Y, values, tag=None):
     clvalues = to_device(queue, values[Yinds])
 
     N = len(Ysizes)
-    NN = -(-N / n_per_item)  # ceiling division
+    NN = -(-N // n_per_item)  # ceiling division
     lsize = (local_i, local_j)
     gsize = (local_i, round_up(NN, local_j))
     # lsize = None
@@ -227,13 +229,13 @@ def plan_copy(queue, A, B, incs, tag=None):
     max_group = min(queue.device.max_work_group_size, 256)
     # n_per_item = 1
     local_i = 16
-    local_j = max_group / local_i
+    local_j = max_group // local_i
     # local_i = min(256, A.sizes.max())
 
     sizes, inds, [Astarts, Bstarts] = blockify_vectors(local_i, [A, B])
 
     N = len(sizes)
-    # NN = -(-N / n_per_item)  # ceiling division
+    # NN = -(-N // n_per_item)  # ceiling division
     lsize = (local_i, local_j)
     gsize = (local_i, round_up(N, local_j))
     # lsize = None
@@ -332,13 +334,13 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     max_group = min(queue.device.max_work_group_size, 256)
     # n_per_item = 1
     local_i = 16
-    local_j = max_group / local_i
+    local_j = max_group // local_i
 
     sizes, inds, [AIstarts, BIstarts] = blockify_vectors(
         local_i, [Ainds, Binds])
 
     N = len(sizes)
-    # NN = -(-N / n_per_item)  # ceiling division
+    # NN = -(-N // n_per_item)  # ceiling division
     lsize = (local_i, local_j)
     gsize = (local_i, round_up(N, local_j))
 
@@ -1260,7 +1262,7 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
         """
 
     textconf = dict(Ytype=Y.ctype, Ptype=dist_params.ctype,
-                    sqrt_dt_inv=1. / np.sqrt(dt), dist_header=dist_header)
+                    sqrt_dt_inv=1 / np.sqrt(dt), dist_header=dist_header)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
@@ -1373,10 +1375,9 @@ def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
     """
     Parameters
     ----------
-        filters = n x ch x size_i x size_j             # global
-        filters = n x ni x nj x ch x size_i x size_j   # conv
-        filters = ch x size_i x size_j x n             # global transposed
-        filters = ni x nj x ch x size_i x size_j x n   # conv transposed
+        filters = ch x size_i x size_j x nf             # conv transposed
+        filters = ch x size_i x size_j x nf x ni x nj   # local transposed
+        biases = nf x ni x nj
 
         conv : whether this is a convolution (true) or local filtering (false)
     """
@@ -1387,10 +1388,10 @@ def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
         if len(ary.shape) == 2:
             assert ary.strides[0] == ary.dtype.itemsize * ary.shape[1]
 
+    assert filters.start == biases.start == 0
     assert X.ctype == Y.ctype == filters.ctype == biases.ctype
 
-    LOCAL_MEMORY = False  # whether to use the local memory kernel or not
-    text = ("""
+    text = """
     __kernel void conv2(
         __global const ${type} *x,
         __global const ${type} *f,
@@ -1398,34 +1399,39 @@ def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
         __global ${type} *y
     )
     {
-        const int i = get_global_id(0);
-        const int j = get_global_id(1);
+        const int j = get_global_id(0);
+        const int i = get_global_id(1);
         const int ij = i*${nj} + j;
 
-        const int ti = get_local_id(0);
-        const int tj = get_local_id(1);
-        const int lsizej = get_local_size(1);
-        const int lsize = get_local_size(0) * lsizej;
+        const int tj = get_local_id(0);
+        const int ti = get_local_id(1);
+        const int lsizej = get_local_size(0);
+        const int lsizei = get_local_size(1);
+        const int lsize = lsizei * lsizej;
         const int tij = ti*lsizej + tj;
         const int i0 = i - ti;
         const int j0 = j - tj;
-        __local ${type} patch[${npatch}];
-
+        __local ${type} patch[${nipatch}][${njpatch}];
+    % if conv:
+        __local ${type} filters[${sij} * ${nf}];
+    % else:
+        f += ij;
+    % endif
         x += ${xstart};
         y += ${ystart};
-% if not conv:
-% if transposed:
-        f += ij * ${csij} * ${nf};
-% else:
-        f += ij * ${csij};
-% endif
-% endif
 
-        // standard convolution
+    % if conv or nf_per >= nf:
         ${type} outs[${nf}];
-        #pragma unroll
         for (int k = 0; k < ${nf}; k++)
             outs[k] = b[k*${nij} + ij];
+    % else:
+        const int k0 = get_global_id(2);
+        const int ksize = get_global_size(2);
+
+        ${type} outs[${nf_per}];
+        for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
+            outs[k] = (kk < ${nf}) ? b[kk*${nij} + ij] : 0;
+    % endif
 
         for (int c = 0; c < ${nc}; c++) {
 
@@ -1437,32 +1443,41 @@ def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
                 const int ii = i0 + ki - ${si2};
                 const int jj = j0 + kj - ${sj2};
                 if (ii >= 0 && ii < ${ni} && jj >= 0 && jj < ${nj})
-                    patch[k] = xc[ii*${nj} + jj];
+                    patch[ki][kj] = xc[ii*${nj} + jj];
                 else
-                    patch[k] = 0;
+                    patch[ki][kj] = 0;
             }
+
+    % if conv:
+            // load filters
+            __global const ${type} *fc = f + c*${sij}*${nf};
+            for (int k = tij; k < ${sij} * ${nf}; k += lsize) {
+                filters[k] = fc[k];
+            }
+    % endif
 
             barrier(CLK_LOCAL_MEM_FENCE);
 
             for (int ii = 0; ii < ${si}; ii++) {
             for (int jj = 0; jj < ${sj}; jj++) {
-                const ${type} xcij = patch[(ti+ii)*${njpatch} + (tj+jj)];
-% if transposed:
+                const ${type} xcij = patch[ti+ii][tj+jj];
+    % if conv:
+                __local const ${type} *fcij = &filters[(ii*${sj} + jj)*${nf}];
+    % else:
                 __global const ${type} *fcij =
-                    &f[(c*${sij} + ii*${sj} + jj)*${nf}];
-% else:
-                __global const ${type} *fcij = &f[c*${sij} + ii*${sj} + jj];
-% endif
+                    &f[(c*${sij} + ii*${sj} + jj)*${nf}*${nij}];
+    % endif
 
-                #pragma unroll
+    % if conv:
                 for (int k = 0; k < ${nf}; k++)
-% if transposed:
                     outs[k] += fcij[k] * xcij;
-% elif conv:
-                    outs[k] += fcij[k*${csij}] * xcij;
-% else:
-                    outs[k] += fcij[k*${nij}*${csij}] * xcij;
-% endif
+    % elif nf_per >= nf:
+                for (int k = 0; k < ${nf}; k++)
+                    outs[k] += fcij[k*${nij}] * xcij;
+    % else:
+                for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
+                    outs[k] += (kk < ${nf}) ? fcij[kk*${nij}] * xcij : 0;
+    % endif
             }
             }
 
@@ -1470,100 +1485,46 @@ def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
         }
 
         if (i < ${ni} && j < ${nj}) {
-            #pragma unroll
+    % if conv or nf_per >= nf:
             for (int k = 0; k < ${nf}; k++)
                 y[k*${nij} + ij] = outs[k];
+    % else:
+            for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
+                if (kk < ${nf})  y[kk*${nij} + ij] = outs[k];
+    % endif
         }
     }
-    """ if LOCAL_MEMORY else
-            """
-    __kernel void conv2(
-        __global const ${type} *x,
-        __global const ${type} *f,
-        __global const ${type} *b,
-        __global ${type} *y
-    )
-    {
-        const int i = get_global_id(0);
-        const int j = get_global_id(1);
-        const int ij = i*${nj} + j;
-        if (i >= ${ni} || j >= ${nj})
-            return;
-
-        x += ${xstart};
-        y += ${ystart};
-% if not conv:
-% if transposed:
-        f += ij * ${csij} * ${nf};
-% else:
-        f += ij * ${csij};
-% endif
-% endif
-
-        ${type} outs[${nf}];
-        #pragma unroll
-        for (int k = 0; k < ${nf}; k++)
-            outs[k] = b[k*${nij} + ij];
-
-        // standard convolution
-        for (int c = 0; c < ${nc}; c++) {
-
-            for (int ii = max(-${si2}, -i); ii < min(${si2}+1, ${ni}-i); ii++)
-            for (int jj = max(-${sj2}, -j); jj < min(${sj2}+1, ${nj}-j); jj++)
-            {
-                const ${type} xcij = x[c*${nij} + (i+ii)*${nj} + (j+jj)];
-% if transposed:
-                __global const ${type} *fcij =
-                    &f[(c*${sij} + (${si2}+ii)*${sj} + (${sj2}+jj))*${nf}];
-% else:
-                __global const ${type} *fcij =
-                    &f[c*${sij} + (${si2}+ii)*${sj} + (${sj2}+jj)];
-% endif
-
-                #pragma unroll
-                for (int k = 0; k < ${nf}; k++)
-% if transposed:
-                    outs[k] += fcij[k] * xcij;
-% elif conv:
-                    outs[k] += fcij[k*${csij}] * xcij;
-% else:
-                    outs[k] += fcij[k*${nij}*${csij}] * xcij;
-% endif
-            }
-
-        }
-
-        #pragma unroll
-        for (int k = 0; k < ${nf}; k++)
-            y[k*${nij} + ij] = outs[k];
-    }
-    """)
+    """
 
     nf, ni, nj, nc, si, sj = shape
+    nf_per = 16
 
-    max_group = min(queue.device.max_work_group_size, 64)
+    max_group = min(queue.device.max_work_group_size, 256)
     assert max_group >= 32
-    lsize = (max_group / 8, 8)
-    gsize = (round_up(ni, lsize[0]), round_up(nj, lsize[1]))
+    lsize0 = min(nj, 32)
+    lsize1 = min(max_group // lsize0, ni)
+    lsize = (lsize0, lsize1)
+    gsize = (round_up(nj, lsize[0]), round_up(ni, lsize[1]))
+    if not conv and nf_per < nf:
+        lsize = lsize + (1,)
+        gsize = gsize + (int(np.ceil(nf / nf_per)),)
 
     nij = ni * nj
     sij = si * sj
     csij = nc * sij
-    si2, sj2 = (si - 1) / 2, (sj - 1) / 2
-    nipatch, njpatch = lsize[0] + si - 1, lsize[1] + sj - 1
+    si2, sj2 = (si - 1) // 2, (sj - 1) // 2
+    njpatch = lsize[0] + sj - 1
+    nipatch = lsize[1] + si - 1
     npatch = nipatch * njpatch
-    bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
 
     assert np.prod(lsize) <= queue.device.max_work_group_size
-    assert X.ctype == Y.ctype == filters.ctype == biases.ctype
     assert npatch <= queue.device.local_mem_size / X.dtype.itemsize
 
-    assert filters.start == biases.start == 0
     textconf = dict(
         type=X.ctype, conv=conv, nf=nf, ni=ni, nj=nj, nc=nc, si=si, sj=sj,
-        nij=nij, sij=sij, csij=csij, si2=si2, sj2=sj2,
+        nf_per=nf_per, nij=nij, sij=sij, csij=csij, si2=si2, sj2=sj2,
         nipatch=nipatch, njpatch=njpatch, npatch=npatch,
-        xstart=X.start, ystart=Y.start, transposed=transposed)
+        xstart=X.start, ystart=Y.start)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (X.base_data, filters.data, biases.data, Y.base_data)
@@ -1572,7 +1533,8 @@ def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
 
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = bw_per_call
+    rval.flops_per_call = 2 * ni * nj * nf * nc * si * sj
+    rval.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
     return rval
 
 

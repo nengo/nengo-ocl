@@ -368,20 +368,20 @@ class Simulator(sim_npy.Simulator):
         return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
 
     def _plan_Conv2(self, ops):
-        TRANSPOSED = True
-
         plans = []
         for op in ops:
             p, f, b = op.process, op.process.filters, op.process.biases
+            assert f.ndim in [4, 6]
+            conv = (f.ndim == 4)
             X = self.all_data.getitem_device(self.sidx[op.input])
             Y = self.all_data.getitem_device(self.sidx[op.output])
-            F = self.Array(np.rollaxis(f, 0, f.ndim).ravel()
-                           if TRANSPOSED else f.ravel())
+            f = np.array(np.transpose(
+                f, (1, 2, 3, 0) if conv else (3, 4, 5, 0, 1, 2)), order='C')
+            F = self.Array(f.ravel())
             B = self.Array((np.zeros(p.shape_out) + b).ravel())
             shape = list(p.shape_out) + list(p.filters.shape[-3:])
-            conv = (p.filters.ndim == 4)
             plans.append(plan_conv2(
-                self.queue, X, Y, F, B, shape, conv, transposed=TRANSPOSED,
+                self.queue, X, Y, F, B, shape, conv,
                 tag="shape=%s, conv=%s" % (shape, conv)))
 
         return plans
