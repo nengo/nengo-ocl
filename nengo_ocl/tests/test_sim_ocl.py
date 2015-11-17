@@ -59,8 +59,6 @@ xfail('test.nengo.tests.test_learning_rules.test_dt_dependence',
       "Filtering matrices (i.e. learned transform) not implemented")
 
 # neuron types
-xfail('test.nengo.tests.test_neurons.test_alif',
-      "ALIF neurons not implemented")
 xfail('test.nengo.tests.test_neurons.test_izhikevich',
       "Izhikevich neurons not implemented")
 xfail('test.nengo.tests.test_neurons.test_lif_min_voltage',

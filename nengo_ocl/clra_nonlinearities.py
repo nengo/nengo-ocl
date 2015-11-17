@@ -626,37 +626,43 @@ ${code}
     return rval
 
 
-def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
-             tag=None, n_elements=0, upsample=1):
-    for array in [V, W, outV, outW, outS]:
+def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
+             inc_n=None, tag=None, n_elements=0, upsample=1):
+    adaptive = N is not None
+    assert J.ctype == 'float'
+    for array in [V, W, outS]:
         assert V.ctype == J.ctype
 
     inputs = dict(J=J, V=V, W=W)
-    outputs = dict(outV=outV, outW=outW, outS=outS)
+    outputs = dict(outV=V, outW=W, outS=outS)
     parameters = dict(tau=tau, ref=ref)
+    if adaptive:
+        assert all(ary is not None for ary in [N, tau_n, inc_n])
+        assert N.ctype == J.ctype
+        inputs.update(dict(N=N))
+        outputs.update(dict(outN=N))
+        parameters.update(dict(tau_n=tau_n, inc_n=inc_n))
 
     dt = float(dt)
-    textconf = dict(Vtype=V.ctype,
-                    upsample=upsample,
-                    dtu=dt / upsample,
-                    dtu_inv=upsample / dt,
-                    dt_inv=1 / dt,
-                    V_threshold=1.)
-    declares = """
+    textconf = dict(type=J.ctype, dt=dt, upsample=upsample, adaptive=adaptive,
+                    dtu=dt/upsample, dtu_inv=upsample/dt, dt_inv=1/dt)
+    decs = """
         char spiked;
-        ${Vtype} dV, overshoot;
-
-        const ${Vtype} dtu = ${dtu},
-                       dtu_inv = ${dtu_inv},
-                       dt_inv = ${dt_inv},
-                       V_threshold = ${V_threshold};
+        ${type} dV, overshoot;
+        const ${type} dt = ${dt}, dtu = ${dtu}, dtu_inv = ${dtu_inv},
+                      dt_inv = ${dt_inv};
+        const ${type} V_threshold = 1;
         """
     # TODO: could precompute -expm1(-dtu / tau)
     text = """
         spiked = 0;
 
 % for ii in range(upsample):
+% if adaptive:
+        dV = -expm1(-dtu / tau) * (J - N - V);
+% else:
         dV = -expm1(-dtu / tau) * (J - V);
+% endif
         V += dV;
         W -= dtu;
 
@@ -675,59 +681,56 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
         outV = V;
         outW = W;
         outS = (spiked) ? dt_inv : 0;
+% if adaptive:
+        outN = N + (dt / tau_n) * (inc_n * outS - N);
+% endif
         """
-    declares = as_ascii(
-        Template(declares, output_encoding='ascii').render(**textconf))
+    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    cl_name = "cl_alif" if adaptive else "cl_lif"
     return _plan_template(
-        queue, "cl_lif", text, declares=declares,
+        queue, cl_name, text, declares=decs,
         tag=tag, n_elements=n_elements,
         inputs=inputs, outputs=outputs, parameters=parameters)
 
 
-def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
+def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
+                  tag=None, n_elements=0):
+    assert J.ctype == 'float'
     assert R.ctype == J.ctype
+    adaptive = N is not None
 
     inputs = dict(J=J)
     outputs = dict(R=R)
     parameters = dict(tau=tau, ref=ref)
-    textconf = dict(Rtype=R.ctype)
-    declares = """
-        const ${Rtype} c0 = 0, c1 = 1;
+    textconf = dict(type=J.ctype, dt=dt, adaptive=adaptive)
+    if adaptive:
+        assert all(ary is not None for ary in [N, tau_n, inc_n])
+        assert N.ctype == J.ctype
+        inputs.update(dict(N=N))
+        outputs.update(dict(outN=N))
+        parameters.update(dict(tau_n=tau_n, inc_n=inc_n))
+
+    decs = """
+        const ${type} c0 = 0, c1 = 1;
+        const ${type} dt = ${dt};
         """
     text = """
-        J = max(J - 1, c0);
-        R = c1 / (ref + tau * log1p(c1/J));
-        """
-    declares = as_ascii(
-        Template(declares, output_encoding='ascii').render(**textconf))
-    return _plan_template(
-        queue, "cl_lif_rate", text, declares=declares,
-        tag=tag, n_elements=n_elements,
-        inputs=inputs, outputs=outputs, parameters=parameters)
-
-
-def plan_adaptive_lif_rate(
-        queue, J, R, N, ref, tau, tau_n, inc_n, dt, tag=None, n_elements=0):
-    assert R.ctype == J.ctype
-
-    inputs = dict(J=J, N=N)
-    outputs = dict(R=R, outN=N)
-    parameters = dict(tau=tau, ref=ref, tau_n=tau_n, inc_n=inc_n)
-    textconf = dict(Rtype=R.ctype, dt=dt)
-    declares = """
-        const ${Rtype} c0 = 0, c1 = 1;
-        const ${Rtype} dt = ${dt};
-        """
-    text = """
+    % if adaptive:
         J = max(J - N - 1, c0);
+    % else:
+        J = max(J - 1, c0);
+    % endif
         R = c1 / (ref + tau * log1p(c1/J));
+    % if adaptive:
         outN = N + (dt / tau_n) * (inc_n*R - N);
+    % endif
         """
-    declares = as_ascii(
-        Template(declares, output_encoding='ascii').render(**textconf))
+    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    cl_name = "cl_alif_rate" if adaptive else "cl_lif_rate"
     return _plan_template(
-        queue, "cl_alif_rate", text, declares=declares,
+        queue, cl_name, text, declares=decs,
         tag=tag, n_elements=n_elements,
         inputs=inputs, outputs=outputs, parameters=parameters)
 
