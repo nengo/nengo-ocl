@@ -6,7 +6,7 @@ import warnings
 import numpy as np
 import pyopencl as cl
 
-from nengo.neurons import LIF, LIFRate
+from nengo.neurons import LIF, LIFRate, AdaptiveLIFRate
 from nengo.processes import WhiteNoise, FilteredNoise, WhiteSignal
 from nengo.synapses import LinearFilter
 from nengo.utils.compat import OrderedDict
@@ -17,8 +17,9 @@ from nengo_ocl import sim_npy
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
 from nengo_ocl.clra_nonlinearities import (
-    plan_timeupdate, plan_reset, plan_slicedcopy, plan_lif, plan_lif_rate,
-    plan_direct, plan_probes, plan_linear_synapse, plan_elementwise_inc,
+    plan_timeupdate, plan_reset, plan_slicedcopy,
+    plan_direct, plan_lif, plan_lif_rate, plan_adaptive_lif_rate,
+    plan_probes, plan_linear_synapse, plan_elementwise_inc,
     init_rng, get_dist_enums_params, plan_whitenoise, plan_whitesignal)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.ast_conversion import OCL_Function
@@ -222,10 +223,11 @@ class Simulator(sim_npy.Simulator):
                 plans.extend(self._plan_LIF(ops))
             elif neuron_class is LIFRate:
                 plans.extend(self._plan_LIFRate(ops))
+            elif neuron_class is AdaptiveLIFRate:
+                plans.extend(self._plan_AdaptiveLIFRate(ops))
             else:
                 raise ValueError("Unsupported neuron type '%s'"
                                  % neuron_class.__name__)
-
         return plans
 
     def _plan_LIF(self, ops):
@@ -253,6 +255,22 @@ class Simulator(sim_npy.Simulator):
         dt = self.model.dt
         return [plan_lif_rate(self.queue, J, R, ref, tau, dt,
                               n_elements=2)]
+
+    def _plan_AdaptiveLIFRate(self, ops):
+        J = self.all_data[[self.sidx[op.J] for op in ops]]
+        R = self.all_data[[self.sidx[op.output] for op in ops]]
+        N = self.all_data[[self.sidx[op.states[0]] for op in ops]]
+        ref = self.RaggedArray(
+            [np.array(op.neurons.tau_ref, dtype=J.dtype) for op in ops])
+        tau = self.RaggedArray(
+            [np.array(op.neurons.tau_rc, dtype=J.dtype) for op in ops])
+        tau_n = self.RaggedArray(
+            [np.array(op.neurons.tau_n, dtype=J.dtype) for op in ops])
+        inc_n = self.RaggedArray(
+            [np.array(op.neurons.inc_n, dtype=J.dtype) for op in ops])
+        dt = self.model.dt
+        return [plan_adaptive_lif_rate(
+            self.queue, J, R, N, ref, tau, tau_n, inc_n, dt, n_elements=2)]
 
     def plan_SimSynapse(self, ops):
         for op in ops:

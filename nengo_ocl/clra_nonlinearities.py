@@ -707,6 +707,31 @@ def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
         inputs=inputs, outputs=outputs, parameters=parameters)
 
 
+def plan_adaptive_lif_rate(
+        queue, J, R, N, ref, tau, tau_n, inc_n, dt, tag=None, n_elements=0):
+    assert R.ctype == J.ctype
+
+    inputs = dict(J=J, N=N)
+    outputs = dict(R=R, outN=N)
+    parameters = dict(tau=tau, ref=ref, tau_n=tau_n, inc_n=inc_n)
+    textconf = dict(Rtype=R.ctype, dt=dt)
+    declares = """
+        const ${Rtype} c0 = 0, c1 = 1;
+        const ${Rtype} dt = ${dt};
+        """
+    text = """
+        J = max(J - N - 1, c0);
+        R = c1 / (ref + tau * log1p(c1/J));
+        outN = N + (dt / tau_n) * (inc_n*R - N);
+        """
+    declares = as_ascii(
+        Template(declares, output_encoding='ascii').render(**textconf))
+    return _plan_template(
+        queue, "cl_alif_rate", text, declares=declares,
+        tag=tag, n_elements=n_elements,
+        inputs=inputs, outputs=outputs, parameters=parameters)
+
+
 def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
                    inputs={}, outputs={}, parameters={}):
     """Template for making a plan for vector nonlinearities.
