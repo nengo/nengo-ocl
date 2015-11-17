@@ -631,8 +631,8 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
     for array in [V, W, outV, outW, outS]:
         assert V.ctype == J.ctype
 
-    inputs = dict(j=J, v=V, w=W)
-    outputs = dict(ov=outV, ow=outW, os=outS)
+    inputs = dict(J=J, V=V, W=W)
+    outputs = dict(outV=outV, outW=outW, outS=outS)
     parameters = dict(tau=tau, ref=ref)
 
     dt = float(dt)
@@ -656,25 +656,25 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
         spiked = 0;
 
 % for ii in range(upsample):
-        dV = -expm1(-dtu / tau) * (j - v);
-        v += dV;
-        w -= dtu;
+        dV = -expm1(-dtu / tau) * (J - V);
+        V += dV;
+        W -= dtu;
 
-        if (v < 0 || w > dtu)
-            v = 0;
-        else if (w >= 0)
-            v *= 1 - w * dtu_inv;
+        if (V < 0 || W > dtu)
+            V = 0;
+        else if (W >= 0)
+            V *= 1 - W * dtu_inv;
 
-        if (v > V_threshold) {
-            overshoot = dtu * (v - V_threshold) / dV;
-            w = ref - overshoot + dtu;
-            v = 0;
+        if (V > V_threshold) {
+            overshoot = dtu * (V - V_threshold) / dV;
+            W = ref - overshoot + dtu;
+            V = 0;
             spiked = 1;
         }
 % endfor
-        ov = v;
-        ow = w;
-        os = (spiked) ? dt_inv : 0;
+        outV = V;
+        outW = W;
+        outS = (spiked) ? dt_inv : 0;
         """
     declares = as_ascii(
         Template(declares, output_encoding='ascii').render(**textconf))
@@ -688,16 +688,16 @@ def plan_lif(queue, J, V, W, outV, outW, outS, ref, tau, dt,
 def plan_lif_rate(queue, J, R, ref, tau, dt, tag=None, n_elements=0):
     assert R.ctype == J.ctype
 
-    inputs = dict(j=J)
-    outputs = dict(r=R)
+    inputs = dict(J=J)
+    outputs = dict(R=R)
     parameters = dict(tau=tau, ref=ref)
     textconf = dict(Rtype=R.ctype)
     declares = """
         const ${Rtype} c0 = 0, c1 = 1;
         """
     text = """
-        j = max(j - 1, c0);
-        r = c1 / (ref + tau * log1p(c1/j));
+        J = max(J - 1, c0);
+        R = c1 / (ref + tau * log1p(c1/J));
         """
     declares = as_ascii(
         Template(declares, output_encoding='ascii').render(**textconf))
@@ -761,7 +761,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         assert (v.stride1s == 1).all()  # columns contiguous
         assert (v.shape1s == 1).all()  # vectors only
 
-        offset = '%(name)s_starts[n]' % {'name': vname}
+        offset = '%(name)s_starts[gind1]' % {'name': vname}
         avars[vname] = (v.ctype, offset)
         bw_per_call += v.nbytes
 
@@ -773,7 +773,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
         assert (v.stride1s == 1).all()  # columns contiguous
         assert (v.shape1s == 1).all()  # vectors only
 
-        offset = '%(name)s_starts[n]' % {'name': vname}
+        offset = '%(name)s_starts[gind1]' % {'name': vname}
         avars[vname] = (v.ctype, offset)
         bw_per_call += v.nbytes
 
@@ -809,24 +809,25 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             __global const int *lengths
         )
         {
-            const int gid = get_global_id(0);
-            int m = gid * ${n_elements}, n = 0;
-            while (m >= lengths[n]) {
-                m -= lengths[n];
-                n++;
+            int gind0 = get_global_id(0) * ${n_elements};
+            int gind1 = 0;
+            while (gind0 >= lengths[gind1]) {
+                gind0 -= lengths[gind1];
+                gind1++;
             }
-            if (n >= ${N}) return;
+            if (gind1 >= ${N}) return;
 
 % for name, [type, offset] in ivars.items():
-            __global const ${type} *cur_${name} = in_${name} + ${offset} + m;
+            __global const ${type} *cur_${name} =
+                in_${name} + ${offset} + gind0;
 % endfor
 % for name, [type, offset] in ovars.items():
-            __global ${type} *cur_${name} = in_${name} + ${offset} + m;
+            __global ${type} *cur_${name} = in_${name} + ${offset} + gind0;
 % endfor
 % for name, [type, offset] in pvars.items():
             __global const ${type} *cur_${name} = in_${name} + ${offset};
-            int ${name}_isvector = ${name}_shape0s[n] > 1;
-            if (${name}_isvector) cur_${name} += m;
+            int ${name}_isvector = ${name}_shape0s[gind1] > 1;
+            if (${name}_isvector) cur_${name} += gind0;
 % endfor
 % for name, [type, offset] in \
         list(ivars.items()) + list(ovars.items()) + list(pvars.items()):
@@ -860,18 +861,18 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
   % endfor
 
   % if ii + 1 < n_elements:
-            m++;
-            if (m >= lengths[n]) {
-                n++;
-                m = 0;
-                if (n >= ${N}) return;
+            gind0++;
+            if (gind0 >= lengths[gind1]) {
+                gind1++;
+                gind0 = 0;
+                if (gind1 >= ${N}) return;
 
     % for name, [_, offset] in \
         list(ivars.items()) + list(ovars.items()) + list(pvars.items()):
                 cur_${name} = in_${name} + ${offset};
     % endfor
     % for name, _ in pvars.items():
-                ${name}_isvector = ${name}_shape0s[n] > 1;
+                ${name}_isvector = ${name}_shape0s[gind1] > 1;
                 if (!${name}_isvector) ${name} = *cur_${name};
     % endfor
             } else {
@@ -908,20 +909,19 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             __global const int *lengths
         )
         {
-            const int m = get_global_id(0);
-            const int n = get_global_id(1);
-            const int M = lengths[n];
-            if (m >= M) return;
+            const int gind0 = get_global_id(0);
+            const int gind1 = get_global_id(1);
+            if (gind0 >= lengths[gind1]) return;
 
 % for name, [type, offset] in ivars.items():
-            ${type} ${name} = in_${name}[${offset} + m];
+            ${type} ${name} = in_${name}[${offset} + gind0];
 % endfor
 % for name, [type, offset] in ovars.items():
             ${type} ${name};
 % endfor
 % for name, [type, offset] in pvars.items():
-            const ${type} ${name} = (${name}_shape0s[n] > 1) ?
-                in_${name}[${offset} + m] : in_${name}[${offset}];
+            const ${type} ${name} = (${name}_shape0s[gind1] > 1) ?
+                in_${name}[${offset} + gind0] : in_${name}[${offset}];
 % endfor
 % for name, [type, value] in static_params.items():
             const ${type} ${name} = ${value};
@@ -937,7 +937,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None, n_elements=0,
             /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
 
 % for name, [type, offset] in ovars.items():
-            in_${name}[${offset} + m] = ${name};
+            in_${name}[${offset} + gind0] = ${name};
 % endfor
         }
         """
