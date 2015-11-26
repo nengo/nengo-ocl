@@ -387,16 +387,16 @@ class Simulator(sim_npy.Simulator):
         return plans
 
     def _plan_Pool2(self, ops):
-        ps = [op.process for op in ops]
-        assert all(p.kind == 'avg' for p in ps)
-        X = self.all_data[[self.sidx[op.input] for op in ops]]
-        Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        shapes = self.RaggedArray([
-            np.array(list(p.shape_out) + list(p.shape_in[1:]), dtype=np.int32)
-            for p in ps])
-        sizes = self.Array([p.size for p in ps], dtype=np.int32)
-        strides = self.Array([p.stride for p in ps], dtype=np.int32)
-        return [plan_pool2(self.queue, X, Y, shapes, sizes, strides)]
+        plans = []
+        for op in ops:
+            assert op.process.kind == 'avg'
+            p = op.process
+            X = self.all_data.getitem_device(self.sidx[op.input])
+            Y = self.all_data.getitem_device(self.sidx[op.output])
+            shape = p.shape_out + p.shape_in[1:]
+            plans.append(plan_pool2(self.queue, X, Y, shape, p.size, p.stride))
+
+        return plans
 
     def plan_SimBCM(self, ops):
         raise NotImplementedError("BCM learning rule")

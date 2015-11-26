@@ -1538,95 +1538,98 @@ def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
     return rval
 
 
-def plan_pool2(queue, X, Y, shapes, sizes, strides, tag=None):
-    N = len(X)
-    assert all(len(ary) == N for ary in [X, Y, shapes, sizes, strides])
+def plan_pool2(queue, X, Y, shape, size, stride, tag=None):
+    for ary in [X, Y]:
+        # assert that arrays are contiguous
+        assert len(ary.shape) in [1, 2]
+        assert ary.strides[-1] == ary.dtype.itemsize
+        if len(ary.shape) == 2:
+            assert ary.strides[0] == ary.dtype.itemsize * ary.shape[1]
 
-    for i in range(N):
-        for arr in [X, Y, shapes]:
-            assert arr.stride0s[i] == arr.shape1s[i]
-            assert arr.stride1s[i] == 1
-
-        assert shapes.shape0s[i] == 5 and shapes.shape1s[i] == 1
-
-    assert sizes.shape == strides.shape == (N,)
-    assert shapes.cl_buf.ctype == sizes.ctype == strides.ctype == 'int'
+    assert X.ctype == Y.ctype
 
     text = """
-        ////////// MAIN FUNCTION //////////
-        __kernel void pool2(
-            __global const int *Sstarts,
-            __global const int *Sdata,
-            __global const int *Xstarts,
-            __global ${Xtype} *Xdata,
-            __global const int *Ystarts,
-            __global ${Ytype} *Ydata,
-            __global const int *sizes,
-            __global const int *strides
-        )
-        {
-            int cij = get_global_id(0);
-            const int n = get_global_id(1);
+    ////////// MAIN FUNCTION //////////
+    __kernel void pool2(
+        __global const ${type} *x,
+        __global ${type} *y
+    )
+    {
+        const int j = get_global_id(0);
+        const int i = get_global_id(1);
+        const int c = get_global_id(2);
 
-            __global const int *shapes = Sdata + Sstarts[n];
-            const int nc = shapes[0];
-            const int ni = shapes[1];
-            const int nj = shapes[2];
-            const int nxi = shapes[3];
-            const int nxj = shapes[4];
-            const int nij = ni * nj;
-            const int ncij = nc * nij;
-            const int nxij = nxi * nxj;
+        const int tj = get_local_id(0);
+        const int ti = get_local_id(1);
+        const int lsizej = get_local_size(0);
+        const int lsizei = get_local_size(1);
+        const int lsize = lsizei * lsizej;
+        const int tij = ti*lsizej + tj;
+        const int i0 = i - ti;
+        const int j0 = j - tj;
+        __local ${type} patch[${nipatch}][${njpatch}];
 
-            __global ${Xtype} *x = Xdata + Xstarts[n];
-            __global ${Ytype} *y = Ydata + Ystarts[n];
+        x += ${Xstart};
+        y += ${Ystart};
 
-            const int s = sizes[n];
-            const int st = strides[n];
+        // load image patch
+        __global const ${type} *xc = &x[c * ${nxi * nxj}];
+        for (int k = tij; k < ${nipatch * njpatch}; k += lsize) {
+            const int ki = k / ${njpatch};
+            const int kj = k % ${njpatch};
+            const int ii = i0*${st} + ki;
+            const int jj = j0*${st} + kj;
+            if (ii >= 0 && ii < ${nxi} && jj >= 0 && jj < ${nxj})
+                patch[ki][kj] = xc[ii*${nxj} + jj];
+            else
+                patch[ki][kj] = NAN;
+        }
 
-            // average pooling
-            for (; cij < ncij; cij += get_global_size(0)) {
-                const int c = cij / nij;
-                const int ij = cij - c * nij;
-                const int i = ij / nj;
-                const int j = ij - i * nj;
-                const int xi = i * st;
-                const int xj = j * st;
+        barrier(CLK_LOCAL_MEM_FENCE);
 
-                ${Ytype} out = 0;
-                int n = 0;
-
-                for (int ii = xi; ii < min(xi + s, nxi); ii++)
-                for (int jj = xj; jj < min(xj + s, nxj); jj++) {
-                    out += x[c*nxij + ii*nxj + jj];
-                    n++;
-                }
-
-                y[cij] = out / n;
+        ${type} out = 0;
+        int n = 0;
+        ${type} xij;
+        for (int ii = 0; ii < ${s}; ii++) {
+        for (int jj = 0; jj < ${s}; jj++) {
+            xij = patch[ti*${st} + ii][tj*${st} + jj];
+            if (!isnan(xij)) {
+                out += xij;
+                n++;
             }
         }
-        """
+        }
 
-    textconf = dict(Xtype=X.cl_buf.ctype, Ytype=Y.cl_buf.ctype)
+        if (i < ${nyi} && j < ${nyj})
+            y[c*${nyi * nyj} + i*${nyj} + j] = out / n;
+    }
+    """
+    nc, nyi, nyj, nxi, nxj = shape
+
+    max_group = min(queue.device.max_work_group_size, 64)
+    assert max_group >= 32
+    lsize0 = min(nyj, 8)
+    lsize1 = min(nyi, max_group // lsize0)
+    lsize = (lsize0, lsize1, 1)
+    gsize = (round_up(nyj, lsize[0]), round_up(nyi, lsize[1]), nc)
+
+    njpatch = lsize[0]*stride + size - 1
+    nipatch = lsize[1]*stride + size - 1
+    assert nipatch*njpatch <= queue.device.local_mem_size / X.dtype.itemsize
+
+    textconf = dict(
+        type=X.ctype, Xstart=X.start, Ystart=Y.start,
+        nxi=nxi, nxj=nxj, nyi=nyi, nyj=nyj, s=size, st=stride,
+        nipatch=nipatch, njpatch=njpatch)
 
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
-    full_args = (
-        shapes.cl_starts,
-        shapes.cl_buf,
-        X.cl_starts,
-        X.cl_buf,
-        Y.cl_starts,
-        Y.cl_buf,
-        sizes,
-        strides,
-    )
+    full_args = (X.base_data, Y.base_data)
     _fn = cl.Program(queue.context, text).build().pool2
-    _fn.set_args(*[arr.data for arr in full_args])
+    _fn.set_args(*full_args)
 
-    max_len = min(queue.device.max_work_group_size, 32)  # TODO: better max
-    gsize = (max_len, N)
-    lsize = (max_len, 1)
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_pool2", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
+    rval.flops_per_call = X.size
+    rval.bw_per_call = X.nbytes + Y.nbytes
     return rval
