@@ -1370,8 +1370,8 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     return rval
 
 
-def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
-               transposed=False):
+def plan_conv2d(queue, X, Y, filters, biases, shape, conv, tag=None,
+                transposed=False):
     """
     Parameters
     ----------
@@ -1392,7 +1392,7 @@ def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
     assert X.ctype == Y.ctype == filters.ctype == biases.ctype
 
     text = """
-    __kernel void conv2(
+    __kernel void conv2d(
         __global const ${type} *x,
         __global const ${type} *f,
         __global const ${type} *b,
@@ -1528,17 +1528,17 @@ def plan_conv2(queue, X, Y, filters, biases, shape, conv, tag=None,
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (X.base_data, filters.data, biases.data, Y.base_data)
-    _fn = cl.Program(queue.context, text).build().conv2
+    _fn = cl.Program(queue.context, text).build().conv2d
     _fn.set_args(*full_args)
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2", tag=tag)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2d", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     rval.flops_per_call = 2 * ni * nj * nf * nc * si * sj
     rval.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
     return rval
 
 
-def plan_pool2(queue, X, Y, shape, size, stride, tag=None):
+def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
     for ary in [X, Y]:
         # assert that arrays are contiguous
         assert len(ary.shape) in [1, 2]
@@ -1550,7 +1550,7 @@ def plan_pool2(queue, X, Y, shape, size, stride, tag=None):
 
     text = """
     ////////// MAIN FUNCTION //////////
-    __kernel void pool2(
+    __kernel void pool2d(
         __global const ${type} *x,
         __global ${type} *y
     )
@@ -1625,10 +1625,10 @@ def plan_pool2(queue, X, Y, shape, size, stride, tag=None):
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (X.base_data, Y.base_data)
-    _fn = cl.Program(queue.context, text).build().pool2
+    _fn = cl.Program(queue.context, text).build().pool2d
     _fn.set_args(*full_args)
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_pool2", tag=tag)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_pool2d", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     rval.flops_per_call = X.size
     rval.bw_per_call = X.nbytes + Y.nbytes

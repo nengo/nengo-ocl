@@ -19,7 +19,7 @@ from nengo_ocl.clra_nonlinearities import (
     plan_direct, plan_lif, plan_lif_rate,
     plan_probes, plan_linear_synapse, plan_elementwise_inc,
     init_rng, get_dist_enums_params, plan_whitenoise, plan_presentinput,
-    plan_conv2, plan_pool2)
+    plan_conv2d, plan_pool2d)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.ast_conversion import OCL_Function
 from nengo_ocl.utils import indent, split
@@ -367,7 +367,7 @@ class Simulator(sim_npy.Simulator):
         dt = self.model.dt
         return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
 
-    def _plan_Conv2(self, ops):
+    def _plan_Conv2d(self, ops):
         plans = []
         for op in ops:
             p, f, b = op.process, op.process.filters, op.process.biases
@@ -380,13 +380,13 @@ class Simulator(sim_npy.Simulator):
             F = self.Array(f.ravel())
             B = self.Array((np.zeros(p.shape_out) + b).ravel())
             shape = list(p.shape_out) + list(p.filters.shape[-3:])
-            plans.append(plan_conv2(
+            plans.append(plan_conv2d(
                 self.queue, X, Y, F, B, shape, conv,
                 tag="shape=%s, conv=%s" % (shape, conv)))
 
         return plans
 
-    def _plan_Pool2(self, ops):
+    def _plan_Pool2d(self, ops):
         plans = []
         for op in ops:
             assert op.process.kind == 'avg'
@@ -394,7 +394,8 @@ class Simulator(sim_npy.Simulator):
             X = self.all_data.getitem_device(self.sidx[op.input])
             Y = self.all_data.getitem_device(self.sidx[op.output])
             shape = p.shape_out + p.shape_in[1:]
-            plans.append(plan_pool2(self.queue, X, Y, shape, p.size, p.stride))
+            plans.append(plan_pool2d(
+                self.queue, X, Y, shape, p.size, p.stride))
 
         return plans
 
