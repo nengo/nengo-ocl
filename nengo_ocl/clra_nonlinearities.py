@@ -1370,8 +1370,9 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     return rval
 
 
-def plan_conv2d(queue, X, Y, filters, biases, shape, conv, tag=None,
-                transposed=False):
+def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
+                kernel_shape, conv, padding, strides,
+                tag=None, transposed=False):
     """
     Parameters
     ----------
@@ -1401,7 +1402,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape, conv, tag=None,
     {
         const int j = get_global_id(0);
         const int i = get_global_id(1);
-        const int ij = i*${nj} + j;
+        const int ij = i*${nyj} + j;
 
         const int tj = get_local_id(0);
         const int ti = get_local_id(1);
@@ -1409,11 +1410,11 @@ def plan_conv2d(queue, X, Y, filters, biases, shape, conv, tag=None,
         const int lsizei = get_local_size(1);
         const int lsize = lsizei * lsizej;
         const int tij = ti*lsizej + tj;
-        const int i0 = i - ti;
-        const int j0 = j - tj;
+        const int j0 = (j - tj)*${stj} - ${pj};
+        const int i0 = (i - ti)*${sti} - ${pi};
         __local ${type} patch[${nipatch}][${njpatch}];
     % if conv:
-        __local ${type} filters[${sij} * ${nf}];
+        __local ${type} filters[${nf*si*sj}];
     % else:
         f += ij;
     % endif
@@ -1423,35 +1424,35 @@ def plan_conv2d(queue, X, Y, filters, biases, shape, conv, tag=None,
     % if conv or nf_per >= nf:
         ${type} outs[${nf}];
         for (int k = 0; k < ${nf}; k++)
-            outs[k] = b[k*${nij} + ij];
+            outs[k] = b[k*${nyi*nyj} + ij];
     % else:
         const int k0 = get_global_id(2);
         const int ksize = get_global_size(2);
 
         ${type} outs[${nf_per}];
         for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
-            outs[k] = (kk < ${nf}) ? b[kk*${nij} + ij] : 0;
+            outs[k] = (kk < ${nf}) ? b[kk*${nyi*nyj} + ij] : 0;
     % endif
 
         for (int c = 0; c < ${nc}; c++) {
 
             // load image section
-            __global const ${type} *xc = &x[c * ${nij}];
+            __global const ${type} *xc = &x[c * ${nxi * nxj}];
             for (int k = tij; k < ${npatch}; k += lsize) {
                 const int ki = k / ${njpatch};
                 const int kj = k % ${njpatch};
-                const int ii = i0 + ki - ${si2};
-                const int jj = j0 + kj - ${sj2};
-                if (ii >= 0 && ii < ${ni} && jj >= 0 && jj < ${nj})
-                    patch[ki][kj] = xc[ii*${nj} + jj];
+                const int ii = i0 + ki;
+                const int jj = j0 + kj;
+                if (ii >= 0 && ii < ${nxi} && jj >= 0 && jj < ${nxj})
+                    patch[ki][kj] = xc[ii*${nxj} + jj];
                 else
                     patch[ki][kj] = 0;
             }
 
     % if conv:
             // load filters
-            __global const ${type} *fc = f + c*${sij}*${nf};
-            for (int k = tij; k < ${sij} * ${nf}; k += lsize) {
+            __global const ${type} *fc = f + c*${si*sj}*${nf};
+            for (int k = tij; k < ${si*sj} * ${nf}; k += lsize) {
                 filters[k] = fc[k];
             }
     % endif
@@ -1460,12 +1461,12 @@ def plan_conv2d(queue, X, Y, filters, biases, shape, conv, tag=None,
 
             for (int ii = 0; ii < ${si}; ii++) {
             for (int jj = 0; jj < ${sj}; jj++) {
-                const ${type} xcij = patch[ti+ii][tj+jj];
+                const ${type} xcij = patch[${sti}*ti+ii][${stj}*tj+jj];
     % if conv:
                 __local const ${type} *fcij = &filters[(ii*${sj} + jj)*${nf}];
     % else:
                 __global const ${type} *fcij =
-                    &f[(c*${sij} + ii*${sj} + jj)*${nf}*${nij}];
+                    &f[(c*${si*sj} + ii*${sj} + jj)*${nf}*${nyi*nyj}];
     % endif
 
     % if conv:
@@ -1473,10 +1474,10 @@ def plan_conv2d(queue, X, Y, filters, biases, shape, conv, tag=None,
                     outs[k] += fcij[k] * xcij;
     % elif nf_per >= nf:
                 for (int k = 0; k < ${nf}; k++)
-                    outs[k] += fcij[k*${nij}] * xcij;
+                    outs[k] += fcij[k*${nyi*nyj}] * xcij;
     % else:
                 for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
-                    outs[k] += (kk < ${nf}) ? fcij[kk*${nij}] * xcij : 0;
+                    outs[k] += (kk < ${nf}) ? fcij[kk*${nyi*nyj}] * xcij : 0;
     % endif
             }
             }
@@ -1484,45 +1485,46 @@ def plan_conv2d(queue, X, Y, filters, biases, shape, conv, tag=None,
             barrier(CLK_LOCAL_MEM_FENCE);
         }
 
-        if (i < ${ni} && j < ${nj}) {
+        if (i < ${nyi} && j < ${nyj}) {
     % if conv or nf_per >= nf:
             for (int k = 0; k < ${nf}; k++)
-                y[k*${nij} + ij] = outs[k];
+                y[k*${nyi*nyj} + ij] = outs[k];
     % else:
             for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
-                if (kk < ${nf})  y[kk*${nij} + ij] = outs[k];
+                if (kk < ${nf})  y[kk*${nyi*nyj} + ij] = outs[k];
     % endif
         }
     }
     """
 
-    nf, ni, nj, nc, si, sj = shape
+    nc, nxi, nxj = shape_in
+    nf, nyi, nyj = shape_out
+    si, sj = kernel_shape
+    pi, pj = padding
+    sti, stj = strides
     nf_per = 16
 
     max_group = min(queue.device.max_work_group_size, 256)
     assert max_group >= 32
-    lsize0 = min(nj, 32)
-    lsize1 = min(max_group // lsize0, ni)
+    lsize0 = min(nyj, 32)
+    lsize1 = min(max_group // lsize0, nyi)
     lsize = (lsize0, lsize1)
-    gsize = (round_up(nj, lsize[0]), round_up(ni, lsize[1]))
+    gsize = (round_up(nyj, lsize[0]), round_up(nyi, lsize[1]))
     if not conv and nf_per < nf:
         lsize = lsize + (1,)
         gsize = gsize + (int(np.ceil(nf / nf_per)),)
 
-    nij = ni * nj
-    sij = si * sj
-    csij = nc * sij
-    si2, sj2 = (si - 1) // 2, (sj - 1) // 2
-    njpatch = lsize[0] + sj - 1
-    nipatch = lsize[1] + si - 1
+    njpatch = (lsize[0] - 1) * stj + sj
+    nipatch = (lsize[1] - 1) * sti + si
     npatch = nipatch * njpatch
 
     assert np.prod(lsize) <= queue.device.max_work_group_size
-    assert npatch <= queue.device.local_mem_size / X.dtype.itemsize
+    assert (npatch*X.dtype.itemsize + conv*nf*si*sj*filters.dtype.itemsize
+            <= queue.device.local_mem_size)
 
     textconf = dict(
-        type=X.ctype, conv=conv, nf=nf, ni=ni, nj=nj, nc=nc, si=si, sj=sj,
-        nf_per=nf_per, nij=nij, sij=sij, csij=csij, si2=si2, sj2=sj2,
+        type=X.ctype, conv=conv, nf=nf, nxi=nxi, nxj=nxj, nyi=nyi, nyj=nyj,
+        nc=nc, si=si, sj=sj, pi=pi, pj=pj, sti=sti, stj=stj, nf_per=nf_per,
         nipatch=nipatch, njpatch=njpatch, npatch=npatch,
         xstart=X.start, ystart=Y.start)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
@@ -1533,7 +1535,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape, conv, tag=None,
 
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2d", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
-    rval.flops_per_call = 2 * ni * nj * nf * nc * si * sj
+    rval.flops_per_call = 2 * nyi * nyj * nf * nc * si * sj
     rval.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
     return rval
 

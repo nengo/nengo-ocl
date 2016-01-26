@@ -379,10 +379,11 @@ class Simulator(sim_npy.Simulator):
                 f, (1, 2, 3, 0) if conv else (3, 4, 5, 0, 1, 2)), order='C')
             F = self.Array(f.ravel())
             B = self.Array((np.zeros(p.shape_out) + b).ravel())
-            shape = list(p.shape_out) + list(p.filters.shape[-3:])
             plans.append(plan_conv2d(
-                self.queue, X, Y, F, B, shape, conv,
-                tag="shape=%s, conv=%s" % (shape, conv)))
+                self.queue, X, Y, F, B, p.shape_in, p.shape_out,
+                p.filters.shape[-2:], conv, p.padding, p.stride,
+                tag="shape_in=%s, shape_out=%s, kernel=%s, conv=%s" % (
+                    p.shape_in, p.shape_out, f.shape[-2:], conv)))
 
         return plans
 
