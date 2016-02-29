@@ -124,7 +124,7 @@ class Simulator(sim_npy.Simulator):
         unique_ops = OrderedDict()
         for op in ops:
             # assert op.n_args in (1, 2), op.n_args
-            op_key = (op.fn, op.t_in, op.x is not None)
+            op_key = (op.fn, op.t is not None, op.x is not None)
             if op_key not in unique_ops:
                 unique_ops[op_key] = {'in': [], 'out': []}
             unique_ops[op_key]['in'].append(op.x)
@@ -178,7 +178,7 @@ class Simulator(sim_npy.Simulator):
                 inputs = []
                 if t_in:  # append time
                     inputs.append(self.all_data[
-                        [self.sidx[self._time] for i in signals['out']]])
+                        [self.sidx[self.model.time] for i in signals['out']]])
                 if x_in:  # append x
                     inputs.append(self.all_data[
                         [self.sidx[i] for i in signals['in']]])
@@ -201,7 +201,7 @@ class Simulator(sim_npy.Simulator):
         return plans
 
     def _plan_pythonfn(self, fn, t_in, signals, fn_name=""):
-        t_idx = self.sidx[self._time]
+        t_idx = self.sidx[self.model.time]
         in_idx = [self.sidx[s] if s else None for s in signals['in']]
         out_idx = [self.sidx[s] if s else None for s in signals['out']]
         assert len(in_idx) == len(out_idx)
@@ -347,7 +347,7 @@ class Simulator(sim_npy.Simulator):
 
     def _plan_WhiteSignal(self, ops):
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self._step] for _ in ops]]
+        t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
 
         dt = self.model.dt
         signals = []
@@ -363,7 +363,7 @@ class Simulator(sim_npy.Simulator):
     def _plan_PresentInput(self, ops):
         ps = [op.process for op in ops]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self._step] for _ in ops]]
+        t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
         inputs = self.RaggedArray([p.inputs.reshape(p.inputs.shape[0], -1)
                                    for p in ps], dtype=np.float32)
         pres_t = self.Array([p.presentation_time for p in ps])
@@ -474,7 +474,6 @@ class Simulator(sim_npy.Simulator):
                 if has_probes:
                     self.drain_probe_buffers()
                 N -= B
-                self.n_steps += B
                 progress.step(n=B)
 
         if self.profiling > 1:

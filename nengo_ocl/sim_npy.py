@@ -399,9 +399,6 @@ class Simulator(nengo.Simulator):
         self.seed = seed
         self.rng = np.random.RandomState(self.seed)
 
-        self._step = Signal(np.array(0.0, dtype=np.float64), name='step')
-        self._time = Signal(np.array(0.0, dtype=np.float64), name='time')
-
         # --- operators
         with Timer() as planner_timer:
             operators = list(self.model.operators)
@@ -416,7 +413,7 @@ class Simulator(nengo.Simulator):
                 "All resets not planned together")
 
             # add time operator after planning, to ensure it goes first
-            time_op = TimeUpdate(self._step, self._time)
+            time_op = TimeUpdate(self.model.step, self.model.time)
             operators.insert(0, time_op)
             op_groups.insert(0, (type(time_op), [time_op]))
 
@@ -471,8 +468,6 @@ class Simulator(nengo.Simulator):
             self._plan.extend(self.plan_probes())
 
         logger.info("Plans in %0.3f s" % plans_timer.duration)
-
-        self.n_steps = 0
 
     def _prep_all_data(self):
         pass
@@ -547,12 +542,6 @@ class Simulator(nengo.Simulator):
                 return iter(self.all_bases)
 
             def __getitem__(_, item):
-                # -- handle a few special keys
-                item = {
-                    '__time__': self._time,
-                    '__step__': self._step,
-                }.get(item, item)
-
                 raw = self.all_data[self.sidx[item]]
                 assert raw.ndim == 2
                 if item.ndim == 0:
