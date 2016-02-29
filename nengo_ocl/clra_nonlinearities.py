@@ -1504,7 +1504,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     sti, stj = strides
     nf_per = 16
 
-    max_group = min(queue.device.max_work_group_size, 256)
+    max_group = min(queue.device.max_work_group_size, 128)
     assert max_group >= 32
     lsize0 = min(nyj, 32)
     lsize1 = min(max_group // lsize0, nyi)
