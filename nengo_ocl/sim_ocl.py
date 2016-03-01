@@ -58,7 +58,7 @@ class Simulator(sim_npy.Simulator):
 
         self.n_prealloc_probes = n_prealloc_probes
         self.ocl_only = ocl_only
-        self.cl_rng_state = None
+        self._cl_rng_state = None
 
         # -- allocate data
         sim_npy.Simulator.__init__(
@@ -68,8 +68,8 @@ class Simulator(sim_npy.Simulator):
         self._plans = Plans(self._plan, self.profiling)
 
     def _init_cl_rng(self):
-        if self.cl_rng_state is None:
-            self.cl_rng_state = init_rng(self.queue, self.seed)
+        if self._cl_rng_state is None:
+            self._cl_rng_state = init_rng(self.queue, self.seed)
 
     def _prep_all_data(self):
         # -- replace the numpy-allocated RaggedArray with OpenCL one
@@ -340,7 +340,7 @@ class Simulator(sim_npy.Simulator):
         params = CLRaggedArray(self.queue, params)
         dt = self.model.dt
         return [plan_whitenoise(self.queue, Y, enums, params, scale, dt,
-                                self.cl_rng_state)]
+                                self._cl_rng_state)]
 
     def _plan_FilteredNoise(self, ops):
         raise NotImplementedError()
@@ -454,6 +454,9 @@ class Simulator(sim_npy.Simulator):
         return self.run_steps(1, progress_bar=False)
 
     def run_steps(self, N, progress_bar=True):
+        if self.closed:
+            raise ValueError("Simulator cannot run because it is closed.")
+
         has_probes = self._cl_probe_plan is not None
 
         if has_probes:
@@ -476,6 +479,16 @@ class Simulator(sim_npy.Simulator):
 
         if self.profiling > 1:
             self.print_profiling()
+
+    def close(self):
+        super(Simulator, self).close()
+        self.context = None
+        self.queue = None
+        self.all_data = None
+        self._plan = []
+        self._plans = None
+        self._cl_rng_state = None
+        self._cl_probe_plan = None
 
     def print_plans(self):
         print(" Plans ".center(80, '-'))

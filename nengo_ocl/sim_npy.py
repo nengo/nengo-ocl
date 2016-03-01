@@ -8,8 +8,9 @@ from collections import defaultdict
 
 import numpy as np
 
+import nengo
+from nengo.simulator import ProbeDict
 from nengo.cache import get_default_decoder_cache
-from nengo.simulator import ProbeDict, Simulator
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalDict
@@ -331,12 +332,13 @@ def signals_from_operators(operators):
     return stable_unique(all_with_dups())
 
 
-class Simulator(Simulator):
+class Simulator(nengo.Simulator):
 
     profiling = False
 
     def __init__(self, network, dt=0.001, seed=None, model=None,
                  planner=greedy_planner):
+        self.closed = False
 
         with Timer() as nengo_timer:
             if model is None:
@@ -413,7 +415,7 @@ class Simulator(Simulator):
             builder.add_views_to(self.all_data)
 
             self.all_bases = all_bases
-            self.sidx = builder.sidx
+            self.sidx = dict(builder.sidx)
 
             self._prep_all_data()
 
@@ -669,4 +671,7 @@ class Simulator(Simulator):
         return Accessor()
 
     def reset(self, seed=None):
+        if self.closed:
+            raise ValueError("Simulator closed.")
+
         raise NotImplementedError("Resetting not implemented")

@@ -57,6 +57,8 @@ xfail('test.nengo.tests.test_learning_rules.test_unsupervised',
       "Unsupervised learning rules not implemented")
 xfail('test.nengo.tests.test_learning_rules.test_dt_dependence',
       "Filtering matrices (i.e. learned transform) not implemented")
+xfail('test.nengo.tests.test_learning_rules.test_voja*',
+      "VOja learning rule not implemented")
 
 # neuron types
 xfail('test.nengo.tests.test_neurons.test_izhikevich',
