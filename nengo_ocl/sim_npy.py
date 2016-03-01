@@ -23,22 +23,6 @@ from nengo_ocl.raggedarray import RaggedArray
 logger = logging.getLogger(__name__)
 
 
-class TimeUpdate(Operator):
-    """Updates the simulation time"""
-
-    def __init__(self, step, time):
-        self.step = step
-        self.time = time
-
-        self.reads = []
-        self.updates = [step, time]
-        self.incs = []
-        self.sets = []
-
-    def __str__(self):
-        return 'TimeUpdate()'
-
-
 class MultiProdUpdate(Operator):
     """ y <- gamma + beta * y_in + \sum_i dot(A_i, x_i) """
 
@@ -411,11 +395,6 @@ class Simulator(nengo.Simulator):
             op_groups = planner(operators)
             assert len([typ for typ, _ in op_groups if typ is Reset]) < 2, (
                 "All resets not planned together")
-
-            # add time operator after planning, to ensure it goes first
-            time_op = TimeUpdate(self.model.step, self.model.time)
-            operators.insert(0, time_op)
-            op_groups.insert(0, (type(time_op), [time_op]))
 
             self.operators = operators
             self.op_groups = op_groups
