@@ -433,9 +433,13 @@ class Simulator(sim_npy.Simulator):
             self._cl_probe_plan = cl_plan
             return [cl_plan]
 
-    def drain_probe_buffers(self):
-        self.queue.finish()
+    def _probe(self):
+        """Copy all probed signals to buffers"""
         plan = self._cl_probe_plan
+        if plan is None:
+            return  # nothing to probe
+
+        self.queue.finish()
         bufpositions = plan.cl_bufpositions.get()
         for i, probe in enumerate(self.model.probes):
             shape = self.model.sig[probe]['in'].shape
@@ -457,9 +461,11 @@ class Simulator(sim_npy.Simulator):
         if self.closed:
             raise ValueError("Simulator cannot run because it is closed.")
 
-        has_probes = self._cl_probe_plan is not None
+        if self.n_steps + N >= 2**24:
+            # since n_steps is float32, point at which `n_steps == n_steps + 1`
+            raise ValueError("Cannot handle more than 2**24 steps")
 
-        if has_probes:
+        if self._cl_probe_plan is not None:
             # -- precondition: the probe buffers have been drained
             bufpositions = self._cl_probe_plan.cl_bufpositions.get()
             assert np.all(bufpositions == 0)
@@ -471,8 +477,7 @@ class Simulator(sim_npy.Simulator):
             while N:
                 B = min(N, self._max_steps_between_probes)
                 self._plans.call_n_times(B)
-                if has_probes:
-                    self.drain_probe_buffers()
+                self._probe()
                 N -= B
                 progress.step(n=B)
 
