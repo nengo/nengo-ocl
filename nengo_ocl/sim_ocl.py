@@ -67,6 +67,8 @@ class Simulator(sim_npy.Simulator):
         # -- create object to execute list of plans
         self._plans = Plans(self._plan, self.profiling)
 
+        self._probe_step_time()
+
     def _init_cl_rng(self):
         if self._cl_rng_state is None:
             self._cl_rng_state = init_rng(self.queue, self.seed)
@@ -435,6 +437,8 @@ class Simulator(sim_npy.Simulator):
 
     def _probe(self):
         """Copy all probed signals to buffers"""
+        self._probe_step_time()
+
         plan = self._cl_probe_plan
         if plan is None:
             return  # nothing to probe
@@ -485,7 +489,7 @@ class Simulator(sim_npy.Simulator):
             self.print_profiling()
 
     def close(self):
-        super(Simulator, self).close()
+        self.closed = True
         self.context = None
         self.queue = None
         self.all_data = None
