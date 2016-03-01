@@ -328,6 +328,8 @@ class Simulator(sim_npy.Simulator):
 
     def _plan_WhiteNoise(self, ops):
         assert all(op.input is None for op in ops)
+        if any(op.process.seed is not None for op in ops):
+            raise NotImplementedError("Seeds not supported for WhiteNoise")
 
         self._init_cl_rng()
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
@@ -351,7 +353,8 @@ class Simulator(sim_npy.Simulator):
         signals = []
         for op in ops:
             assert op.input is None and op.output is not None
-            f = op.process.make_step(0, op.output.size, dt, self.rng)
+            rng = op.process.get_rng(self.rng)
+            f = op.process.make_step(0, op.output.size, dt, rng)
             signals.append(get_closures(f)['signal'])
 
         signals = self.RaggedArray(signals, dtype=np.float32)

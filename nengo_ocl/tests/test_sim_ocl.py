@@ -75,6 +75,8 @@ xfail('test.nengo.tests.test_ensemble.test_noise_copies_ok',
       "Filtered noise processes not yet implemented")
 xfail('test.nengo.tests.test_simulator.test_noise_copies_ok',
       "Filtered noise processes not yet implemented")
+xfail('test.nengo.tests.test_processes.test_seed',
+      "Seeds for WhiteNoise not yet implemented")
 
 # synapses
 xfail('test.nengo.tests.test_synapses.test_triangle',
