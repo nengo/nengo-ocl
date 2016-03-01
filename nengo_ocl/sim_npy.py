@@ -306,7 +306,7 @@ class ViewBuilder(object):
 
         assert obj.size and obj.ndim <= 2
         idx = self.sidx[obj.base]
-        self.starts.append(self.rarray.starts[idx] + obj.offset)
+        self.starts.append(self.rarray.starts[idx] + obj.elemoffset)
         self.shape0s.append(obj.shape[0] if obj.ndim > 0 else 1)
         self.shape1s.append(obj.shape[1] if obj.ndim > 1 else 1)
         self.stride0s.append(obj.elemstrides[0] if obj.ndim > 0 else 1)
