@@ -95,6 +95,17 @@ xfail('test.nengo.tests.test_processes.test_reset',
 
 locals().update(tests)
 
+# --- nengo_deeplearning
+try:
+    import nengo_deeplearning
+except ImportError:
+    pass
+else:
+    nengo_deeplearning_dir = os.path.dirname(nengo_deeplearning.__file__)
+    modules = find_modules(nengo_deeplearning_dir, prefix='nengo_deeplearning')
+    tests = load_functions(modules, arg_pattern='^Simulator$')
+    locals().update(tests)
+
 
 if __name__ == '__main__':
     # To profile, run `python -m cProfile -o test_sim_ocl.log test_sim_ocl.py`.
