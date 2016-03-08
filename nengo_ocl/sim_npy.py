@@ -4,7 +4,7 @@ numpy Simulator in the style of the OpenCL one, to get design right.
 from __future__ import print_function
 
 import logging
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 import numpy as np
 
@@ -14,7 +14,7 @@ from nengo.cache import get_default_decoder_cache
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalDict
-from nengo.utils.compat import OrderedDict, iteritems
+from nengo.utils.compat import iteritems
 import nengo.utils.numpy as npext
 from nengo.utils.stdlib import Timer
 

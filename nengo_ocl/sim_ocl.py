@@ -2,12 +2,12 @@ import inspect
 import logging
 import os
 import warnings
+from collections import OrderedDict
 
 import numpy as np
 import pyopencl as cl
 
 from nengo.synapses import LinearFilter
-from nengo.utils.compat import OrderedDict
 from nengo.utils.progress import ProgressTracker
 from nengo.utils.stdlib import groupby
 

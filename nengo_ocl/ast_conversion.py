@@ -22,10 +22,11 @@ except ImportError:
 import ast
 import inspect
 import math
+from collections import OrderedDict
 
 import numpy as np
 
-from nengo.utils.compat import is_iterable, OrderedDict, range
+from nengo.utils.compat import is_iterable, range
 
 
 def is_symbolic(x):
