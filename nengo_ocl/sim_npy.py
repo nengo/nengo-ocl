@@ -40,10 +40,7 @@ class TimeUpdate(Operator):
 
 
 class MultiProdUpdate(Operator):
-
-    """
-    y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)
-    """
+    """ y <- gamma + beta * y_in + \sum_i dot(A_i, x_i) """
 
     def __init__(self, Y, Y_in, beta, gamma, tag, as_update=False):
         assert Y.ndim == 1
@@ -185,14 +182,53 @@ class MultiProdUpdate(Operator):
                     rval.append(inc_op)
         return rval
 
+    @staticmethod
+    def _as2d(view):
+        if view.ndim == 0:
+            return view.reshape(1, 1)
+        elif view.ndim == 1:
+            return view.reshape(view.shape[0], 1)
+        elif view.ndim == 2:
+            return view
+        else:
+            raise ValueError(
+                "No support for tensors with %d dimensions" % view.ndim)
 
-def is_op(op):
-    return isinstance(op, Operator)
+    def get_views(self):
+        Y_view = self._as2d(self.Y)
+        Y_in_view = self._as2d(self.Y_in)
+        beta_view = (self._as2d(self._signal_beta)
+                     if self._signal_beta is not None else None)
+
+        A_views = []
+        X_views = []
+        for A, X in zip(self.As, self.Xs):
+            X_view = self._as2d(X)
+            if A.ndim == 1 and X.ndim == 1:
+                A_view = A.reshape((1, A.shape[0]))  # vector dot
+            else:
+                A_view = self._as2d(A)
+
+            if A_view.shape == (1, 1):
+                # -- scalar AX_views can be done as reverse multiplication
+                A_view, X_view = X_view, A_view
+            elif not (X_view.shape[0] == A_view.shape[1] and
+                      X_view.shape[1] == Y_view.shape[1] and
+                      A_view.shape[0] == Y_view.shape[0]):
+                raise ValueError('shape mismach (A: %s, X: %s, Y: %s)' %
+                                 (A.shape, X.shape, self.Y.shape))
+
+            A_views.append(A_view)
+            X_views.append(X_view)
+
+        return A_views, X_views, Y_view, Y_in_view, beta_view
 
 
 def greedy_planner(operators):
     from nengo.utils.simulator import operator_depencency_graph
     edges = operator_depencency_graph(operators)
+
+    is_op = lambda op: isinstance(op, Operator)
     for op, dests in iteritems(edges):
         assert is_op(op) and all(is_op(op2) for op2 in dests)
 
@@ -296,6 +332,10 @@ class ViewBuilder(object):
         self.stride1s = []
         self.names = []
 
+        self._A_views = {}
+        self._X_views = {}
+        self._YYB_views = {}
+
     def append_view(self, obj):
         if obj in self.sidx:
             return  # we already have this view
@@ -315,21 +355,21 @@ class ViewBuilder(object):
         self.sidx[obj] = len(self.sidx)
 
     def add_views_to(self, rarray):
-        rarray.add_views(
-            starts=self.starts,
-            shape0s=self.shape0s,
-            shape1s=self.shape1s,
-            stride0s=self.stride0s,
-            stride1s=self.stride1s,
-            names=self.names)
+        rarray.add_views(self.starts, self.shape0s, self.shape1s,
+                         self.stride0s, self.stride1s, names=self.names)
 
+    def setup_views(self, ops):
+        all_views = [sig for op in ops for sig in op.all_signals]
+        for op in (op for op in ops if isinstance(op, MultiProdUpdate)):
+            A_views, X_views, Y_view, Y_in_view, beta_view = op.get_views()
+            all_views.extend(A_views + X_views + [Y_view, Y_in_view] +
+                             ([beta_view] if beta_view else []))
+            self._A_views[op] = A_views
+            self._X_views[op] = X_views
+            self._YYB_views[op] = [Y_view, Y_in_view, beta_view]
 
-def signals_from_operators(operators):
-    def all_with_dups():
-        for op in operators:
-            for sig in op.all_signals:
-                yield sig
-    return stable_unique(all_with_dups())
+        for view in all_views:
+            self.append_view(view)
 
 
 class Simulator(nengo.Simulator):
@@ -387,8 +427,9 @@ class Simulator(nengo.Simulator):
 
         with Timer() as signals_timer:
             # Initialize signals
-            all_signals = signals_from_operators(operators)
-            all_bases = stable_unique([sig.base for sig in all_signals])
+            all_signals = stable_unique(
+                sig for op in operators for sig in op.all_signals)
+            all_bases = stable_unique(sig.base for sig in all_signals)
 
             sigdict = SignalDict()  # map from Signal.base -> ndarray
             for op in operators:
@@ -406,16 +447,17 @@ class Simulator(nengo.Simulator):
                 dtype=np.float32)
 
             builder = ViewBuilder(all_bases, self.all_data)
-            self._AX_views = {}
-            self._YYB_views = {}
-            for op_type, op_list in op_groups:
-                self.setup_views(builder, op_type, op_list)
+            builder.setup_views(operators)
             for probe in self.model.probes:
                 builder.append_view(self.model.sig[probe]['in'])
             builder.add_views_to(self.all_data)
 
             self.all_bases = all_bases
             self.sidx = dict(builder.sidx)
+            self._A_views = builder._A_views
+            self._X_views = builder._X_views
+            self._YYB_views = builder._YYB_views
+            del builder
 
             self._prep_all_data()
 
@@ -438,179 +480,56 @@ class Simulator(nengo.Simulator):
     def plan_op_group(self, op_type, ops):
         return getattr(self, 'plan_' + op_type.__name__)(ops)
 
-    def setup_views(self, view_builder, op_type, ops):
-        if hasattr(self, 'setup_views_' + op_type.__name__):
-            getattr(self, 'setup_views_' + op_type.__name__)(
-                view_builder, ops)
-        else:
-            for op in ops:
-                list(map(view_builder.append_view, op.all_signals))
-
-    def setup_views_MultiProdUpdate(self, view_builder, ops):
-        def as2d(view):
-            if view.ndim == 0:
-                return view.reshape(1, 1)
-            elif view.ndim == 1:
-                return view.reshape(view.shape[0], 1)
-            elif view.ndim == 2:
-                return view
-            else:
-                raise ValueError(
-                    "No support for tensors with %d dimensions" % view.ndim)
-
-        for op in ops:
-            Y_view = as2d(op.Y)
-            Y_in_view = as2d(op.Y_in)
-            if op._signal_beta is not None:
-                YYB_views = [Y_view, Y_in_view, as2d(op._signal_beta)]
-            else:
-                YYB_views = [Y_view, Y_in_view]
-
-            AX_views = []
-            for A, X in zip(op.As, op.Xs):
-                X_view = as2d(X)
-                if A.ndim == 1 and X.ndim == 1:
-                    A_view = A.reshape((1, A.shape[0]))  # vector dot
-                else:
-                    A_view = as2d(A)
-
-                if A_view.shape == (1, 1):
-                    # -- scalar AX_views can be done as reverse multiplication
-                    A_view, X_view = X_view, A_view
-                elif not (X_view.shape[0] == A_view.shape[1] and
-                          X_view.shape[1] == Y_view.shape[1] and
-                          A_view.shape[0] == Y_view.shape[0]):
-                    raise ValueError('shape mismach (A: %s, X: %s, Y: %s)' %
-                                     (A.shape, X.shape, op.Y.shape))
-
-                AX_views.extend([A_view, X_view])
-
-            list(map(view_builder.append_view,
-                     op.all_signals + AX_views + YYB_views))
-            self._AX_views[op] = AX_views
-            self._YYB_views[op] = YYB_views
-
     def plan_PreserveValue(self, ops):
         return []  # do nothing
 
     def plan_MultiProdUpdate(self, ops):
-        constant_bs = [op for op in ops
-                       if op._float_beta is not None]
+        constant_bs = [op for op in ops if op._float_beta is not None]
         vector_bs = [op for op in ops
                      if op._signal_beta is not None
                      and op._signal_beta.ndim == 1]
-
         if len(constant_bs) + len(vector_bs) != len(ops):
             raise NotImplementedError()
 
-        if len(ops) == 1:
-            tag = ops[0].tag
-        else:
-            tag = 'ProdUpdate-scalar-constant-beta-%i' % len(ops)
-
-        constant_b_gemvs = self.sig_gemv(
-            constant_bs,
-            1.0,
-            A_js_fn=lambda op: self._AX_views[op][0::2],
-            X_js_fn=lambda op: self._AX_views[op][1::2],
+        args = (
+            lambda op: self._A_views[op],
+            lambda op: self._X_views[op],
+            lambda op: self._YYB_views[op][0],
+            lambda op: self._YYB_views[op][1],
+            )
+        constant_b_gemvs = self._sig_gemv(
+            constant_bs, *args,
             beta=[op._float_beta for op in constant_bs],
-            Y_sig_fn=lambda op: self._YYB_views[op][0],
-            Y_in_sig_fn=lambda op: self._YYB_views[op][1],
             gamma=[op.gamma for op in constant_bs],
-            verbose=0,
-            tag=tag
-        )
-
-        vector_b_gemvs = self.sig_gemv(
-            vector_bs,
-            1.0,
-            A_js_fn=lambda op: self._AX_views[op][0::2],
-            X_js_fn=lambda op: self._AX_views[op][1::2],
+            tag='ProdUpdate-constant-beta-%d' % len(constant_bs))
+        vector_b_gemvs = self._sig_gemv(
+            vector_bs, *args,
             beta=lambda op: self._YYB_views[op][2],
-            Y_sig_fn=lambda op: self._YYB_views[op][0],
-            Y_in_sig_fn=lambda op: self._YYB_views[op][1],
             gamma=[op.gamma for op in vector_bs],
-            verbose=0,
-            tag='ProdUpdate-vector-beta'
-        )
+            tag='ProdUpdate-vector-beta-%d' % len(vector_bs))
         return constant_b_gemvs + vector_b_gemvs
 
-    def sig_gemv(self, seq, alpha, A_js_fn, X_js_fn, beta, Y_sig_fn,
-                 Y_in_sig_fn=None,
-                 gamma=None,
-                 verbose=0,
-                 tag=None
-                 ):
-        if len(seq) == 0:
+    def _sig_gemv(self, ops, A_js_fn, X_js_fn, Y_fn, Y_in_fn=None,
+                  alpha=1.0, beta=1.0, gamma=0.0, tag=None):
+        if len(ops) == 0:
             return []
-        sidx = self.sidx
 
+        all_data, sidx = self.all_data, self.sidx
+        A_js = RaggedArray(
+            [[sidx[ss] for ss in A_js_fn(op)] for op in ops], dtype=np.int32)
+        X_js = RaggedArray(
+            [[sidx[ss] for ss in X_js_fn(op)] for op in ops], dtype=np.int32)
+        Y_sigs = [Y_fn(item) for item in ops]
+        Y_in_sigs = [Y_in_fn(item) for item in ops] if Y_in_fn else Y_sigs
+        Y = all_data[[sidx[sig] for sig in Y_sigs]]
+        Y_in = all_data[[sidx[sig] for sig in Y_in_sigs]]
         if callable(beta):
-            beta_sigs = list(map(beta, seq))
-            beta = RaggedArray(
-                list(map(sidx.__getitem__, beta_sigs)), dtype=np.float32)
-
-        Y_sigs = [Y_sig_fn(item) for item in seq]
-        if Y_in_sig_fn is None:
-            Y_in_sigs = Y_sigs
-        else:
-            Y_in_sigs = [Y_in_sig_fn(item) for item in seq]
-        Y_idxs = [sidx[sig] for sig in Y_sigs]
-        Y_in_idxs = [sidx[sig] for sig in Y_in_sigs]
-
-        # -- The following lines illustrate what we'd *like* to see...
-        #
-        # A_js = RaggedArray(
-        #   [[sidx[ss] for ss in A_js_fn(item)] for item in seq])
-        # X_js = RaggedArray(
-        #   [[sidx[ss] for ss in X_js_fn(item)] for item in seq])
-        #
-        # -- ... but the simulator supports broadcasting. So in fact whenever
-        #    a signal in X_js has shape (N, 1), the corresponding A_js signal
-        #    can have shape (M, N) or (1, 1).
-        #    Fortunately, scalar multiplication of X by A can be seen as
-        #    Matrix multiplication of A by X, so we can still use gemv,
-        #    we just need to reorder and transpose.
-        A_js = []
-        X_js = []
-        for ii, item in enumerate(seq):
-            A_js_i = []
-            X_js_i = []
-            A_sigs_i = A_js_fn(item)
-            X_sigs_i = X_js_fn(item)
-            assert len(A_sigs_i) == len(X_sigs_i)
-            for asig, xsig in zip(A_sigs_i, X_sigs_i):
-                A_js_i.append(sidx[asig])
-                X_js_i.append(sidx[xsig])
-            A_js.append(A_js_i)
-            X_js.append(X_js_i)
-
-        if verbose:
-            print("in sig_vemv")
-            print("print A", A_js)
-            print("print X", X_js)
-
-        A_js = RaggedArray(A_js, dtype=np.int32)
-        X_js = RaggedArray(X_js, dtype=np.int32)
-        Y = self.all_data[Y_idxs]
-        Y_in = self.all_data[Y_in_idxs]
+            beta = RaggedArray([sidx[beta(o)] for o in ops], dtype=np.float32)
 
         rval = self.plan_ragged_gather_gemv(
-            alpha=alpha,
-            A=self.all_data, A_js=A_js,
-            X=self.all_data, X_js=X_js,
-            beta=beta,
-            Y=Y,
-            Y_in=Y_in,
-            tag=tag,
-            seq=seq,
-            gamma=gamma,
-        )
-
-        try:
-            return rval.plans
-        except AttributeError:
-            return [rval]
+            alpha=alpha, A=all_data, A_js=A_js, X=all_data, X_js=X_js,
+            beta=beta, Y=Y, Y_in=Y_in, gamma=gamma, tag=tag)
+        return rval.plans
 
     def __getitem__(self, item):
         """

@@ -9,15 +9,6 @@ from nengo_ocl.plan import Plan
 from nengo_ocl.utils import as_ascii
 
 
-def dhist(seq):
-    """Return the counts of entries in `seq` in a defaultdict.
-    """
-    d = defaultdict(int)
-    for obj in seq:
-        d[obj] += 1
-    return d
-
-
 def float_cl_clra(queue, arg, cl_dtype, N):
     float_arg = None
     cl_arg = None
@@ -103,7 +94,7 @@ class gemv_prog(object):
 
     def __init__(self,
                  queue, alpha, A, A_js, X, X_js,
-                 beta, Y, Y_in=None, tag=None, seq=None, gamma=0.0):
+                 beta, Y, Y_in=None, tag=None, gamma=0.0):
         """
         """
         self.float_alpha, self.cl_alpha, self.clra_alpha = \
@@ -125,7 +116,6 @@ class gemv_prog(object):
         self.X_js = X_js
         self.Y = Y
         self.tag = str(tag)
-        self.seq = seq
 
         self.geometry = self._geometry()
         self.plans = self.choose_plans()
