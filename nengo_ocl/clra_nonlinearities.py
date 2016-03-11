@@ -1333,7 +1333,7 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
             const int nt = Sshape0s[k];
     % if Ptype is not None:
             const float pt = Pdata[k];
-            const int ti = (int)((it + 0.5f) * (${dt}f / pt)) % nt;
+            const int ti = (int)((it - 0.5f) * (${dt}f / pt)) % nt;
     % else:
             const int ti = (int)it % nt;
     % endif
