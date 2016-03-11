@@ -1,11 +1,11 @@
 """
-Black-box testing of the sim_ocl Simulator.
+Black-box testing of the nengo_ocl.Simulator.
 
 TestCase classes are added automatically from
 nengo.tests, but you can still run individual
 test files like this:
 
-$ py.test test/test_sim_ocl.py -k test_ensemble.test_scalar
+$ py.test nengo_ocl/tests/test_simulator.py -k test_ensemble.test_scalar
 
 See http://pytest.org/latest/usage.html for more invocations.
 
@@ -21,14 +21,14 @@ import nengo
 import nengo.tests.test_synapses
 from nengo.utils.testing import find_modules, allclose
 
-from nengo_ocl import sim_ocl
+import nengo_ocl
 from nengo_ocl.tests.utils import load_functions
 
 ctx = cl.create_some_context()
 
 
 def OclSimulator(*args, **kwargs):
-    return sim_ocl.Simulator(*args, context=ctx, **kwargs)
+    return nengo_ocl.Simulator(*args, context=ctx, **kwargs)
 
 
 def pytest_funcarg__Simulator(request):
@@ -108,7 +108,7 @@ else:
 
 
 if __name__ == '__main__':
-    # To profile, run `python -m cProfile -o test_sim_ocl.log test_sim_ocl.py`.
+    # To profile, run `python -m cProfile -o test_sim.log test_simulator.py`.
     # Appending the argument `-k <filter>` allows you to control which tests
     # are run (e.g. `-k "test_ensemble."` runs all tests in test_ensemble.py).
     pytest.main(sys.argv)

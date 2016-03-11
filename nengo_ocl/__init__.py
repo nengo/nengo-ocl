@@ -4,7 +4,7 @@ import sys
 from nengo.utils.logging import log
 
 from .version import version as __version__
-from .sim_ocl import Simulator
+from .simulator import Simulator
 
 # logging (default to no handler; use imported `log` fn to change this)
 try:

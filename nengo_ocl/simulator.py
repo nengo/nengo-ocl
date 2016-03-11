@@ -290,7 +290,7 @@ class Simulator(nengo.Simulator):
                  n_prealloc_probes=32, profiling=None, ocl_only=False,
                  planner=greedy_planner):
         if context is None:
-            print('No context argument was provided to sim_ocl.Simulator')
+            print('No context argument was provided to nengo_ocl.Simulator')
             print("Calling pyopencl.create_some_context() for you now:")
             context = cl.create_some_context()
         if profiling is None:

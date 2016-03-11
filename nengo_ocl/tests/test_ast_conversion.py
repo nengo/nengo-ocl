@@ -18,7 +18,7 @@ ctx = cl.create_some_context()
 
 
 def OclSimulator(*args, **kwargs):
-    return nengo_ocl.sim_ocl.Simulator(
+    return nengo_ocl.Simulator(
         *args, context=ctx, ocl_only=True, **kwargs)
 
 
