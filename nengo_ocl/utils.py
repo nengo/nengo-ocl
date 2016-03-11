@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import numpy as np
 
 from nengo.utils.compat import PY2
@@ -10,6 +12,11 @@ def as_ascii(string):
         return str(string)
     else:
         return string
+
+
+def get_closures(f):
+    return OrderedDict(zip(
+        f.__code__.co_freevars, (c.cell_contents for c in f.__closure__)))
 
 
 def indent(s, i):
@@ -32,3 +39,13 @@ def split(iterator, criterion):
             b.append(x)
 
     return a, b
+
+
+def stable_unique(seq):
+    seen = set()
+    rval = []
+    for item in seq:
+        if item not in seen:
+            seen.add(item)
+            rval.append(item)
+    return rval
