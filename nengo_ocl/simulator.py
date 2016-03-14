@@ -11,6 +11,7 @@ import pyopencl as cl
 
 import nengo
 from nengo.cache import get_default_decoder_cache
+from nengo.exceptions import SimulatorClosed
 from nengo.simulator import ProbeDict
 from nengo.synapses import LinearFilter
 from nengo.builder.builder import Model
@@ -849,7 +850,7 @@ class Simulator(nengo.Simulator):
 
     def run_steps(self, N, progress_bar=True):
         if self.closed:
-            raise ValueError("Simulator cannot run because it is closed.")
+            raise SimulatorClosed("Simulator cannot run because it is closed.")
 
         if self.n_steps + N >= 2**24:
             # since n_steps is float32, point at which `n_steps == n_steps + 1`
@@ -876,7 +877,7 @@ class Simulator(nengo.Simulator):
 
     def reset(self, seed=None):
         if self.closed:
-            raise ValueError("Simulator closed.")
+            raise SimulatorClosed("Cannot reset closed Simulator.")
 
         raise NotImplementedError("Resetting not implemented")
 
