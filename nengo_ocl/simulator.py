@@ -721,13 +721,14 @@ class Simulator(nengo.Simulator):
         self._cl_rngs[rngs] = [op.process.seed for op in ops]
 
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        scale = self.RaggedArray([op.process.scale for op in ops],
-                                 dtype=np.int32)
+        scale = self.Array([op.process.scale for op in ops], dtype=np.int32)
+        inc = self.Array([op.inc for op in ops], dtype=np.int32)
         enums, params = get_dist_enums_params([op.process.dist for op in ops])
         enums = CLRaggedArray(self.queue, enums)
         params = CLRaggedArray(self.queue, params)
         dt = self.model.dt
-        return [plan_whitenoise(self.queue, Y, enums, params, scale, dt, rngs)]
+        return [plan_whitenoise(
+            self.queue, Y, enums, params, scale, inc, dt, rngs)]
 
     def _plan_FilteredNoise(self, ops):
         raise NotImplementedError()

@@ -1207,16 +1207,16 @@ def get_dist_enums_params(dists):
             RaggedArray(params, dtype=np.float32))
 
 
-def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, rngs,
+def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
                     tag=None):
     N = len(Y)
-    assert len(Y) == len(dist_enums) == len(dist_params) == len(scale)
+    assert N == len(dist_enums) == len(dist_params) == scale.size == inc.size
 
     assert dist_enums.ctype == 'int'
-    assert scale.ctype == 'int'
+    assert scale.ctype == inc.ctype == 'int'
 
     for i in range(N):
-        for arr in [Y, dist_enums, dist_params, scale]:
+        for arr in [Y, dist_enums, dist_params]:
             assert arr.stride1s[i] == 1
 
         assert Y.shape1s[i] == 1
@@ -1225,9 +1225,6 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, rngs,
 
         assert dist_enums.shape0s[i] == dist_enums.shape1s[i] == 1
         assert dist_params.shape1s[i] == 1
-
-        assert scale.shape0s[i] == scale.shape1s[i] == 1
-        assert scale.stride0s[i] == scale.stride1s[i] == 1
 
     text = """
         ${dist_header}
@@ -1241,8 +1238,8 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, rngs,
             __global const int *Edata,
             __global const int *Pstarts,
             __global const ${Ptype} *Pdata,
-            __global const int *scalestarts,
-            __global const int *scaledata,
+            __global const int *scales,
+            __global const int *incs,
             __global const int *rng_starts,
             __global int *rng_data
         )
@@ -1258,7 +1255,8 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, rngs,
             __global ranluxcl_state_t *gstate = rng_data + rng_starts[k];
             ranluxcl_state_t state = gstate[i0];
 
-            const int scale = *(scaledata + scalestarts[k]);
+            const int scale = scales[k];
+            const int inc = incs[k];
             const int dist_enum = *(Edata + Estarts[k]);
             __global const float *dist_params = Pdata + Pstarts[k];
 
@@ -1273,7 +1271,8 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, rngs,
                 }
 
                 sample = getfloat4(samples, samplei);
-                y[i] = (scale) ? ${sqrt_dt_inv} * sample : sample;
+                if (scale) sample *= ${sqrt_dt_inv};
+                if (inc) y[i] += sample; else y[i] = sample;
                 samplei++;
             }
 
@@ -1293,8 +1292,8 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, rngs,
         dist_enums.cl_buf,
         dist_params.cl_starts,
         dist_params.cl_buf,
-        scale.cl_starts,
-        scale.cl_buf,
+        scale,
+        inc,
         rngs.cl_starts,
         rngs.cl_buf,
     )
