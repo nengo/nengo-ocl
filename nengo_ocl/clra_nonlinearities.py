@@ -1117,34 +1117,53 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
     return rval
 
 
-def init_rng(queue, seed):
+def create_rngs(queue, n):
+    # max 32 states per RNG to save memory (many processes just need a few)
+    work_items = min(queue.device.max_work_group_size, 32)
+    rngs = CLRaggedArray.from_arrays(
+        queue, [np.zeros((work_items, 28), dtype=np.int32)] * n)
+    return rngs
 
-    work_items = queue.device.max_work_group_size
-    ranluxcltab = to_device(queue, np.zeros(28 * work_items, dtype='int32'))
 
-    text = """
-        #include "pyopencl-ranluxcl.cl"
+_init_rng_kernel = None
+def init_rngs(queue, rngs, seeds):
+    assert len(seeds) == len(rngs)
+    assert np.all(rngs.shape0s == rngs.shape0s[0])
+    assert np.all(rngs.shape1s == 28)
 
-        ////////// MAIN FUNCTION //////////
-        __kernel void init_rng(
-            uint ins,
-            __global ranluxcl_state_t *ranluxcltab
-        )
-        {
-            ranluxcl_initialization(ins, ranluxcltab);
-        }
-        """
+    global _init_rng_kernel
+    if _init_rng_kernel is None:
+        text = """
+            #define RANLUXCL_LUX 2  // do not need highest quality
+            #include "pyopencl-ranluxcl.cl"
 
-    textconf = dict()
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+            ////////// MAIN FUNCTION //////////
+            __kernel void init_rng(
+                __global const uint *seeds,
+                __global const int *rng_starts,
+                __global int *rng_data
+            )
+            {
+                const int i = get_global_id(0);
+                const int k = get_global_id(1);
 
-    kernel = cl.Program(queue.context, text).build().init_rng
-    gsize = (work_items,)
+                // scale seed by 2**32 (see pyopencl-ranluxcl.cl)
+                ulong x = (ulong)i + (ulong)seeds[k] * ((ulong)UINT_MAX + 1);
+                __global ranluxcl_state_t *rng = rng_data + rng_starts[k];
+                ranluxcl_init(x, rng + i);
+            }
+            """
+        text = as_ascii(Template(text, output_encoding='ascii').render())
+        _init_rng_kernel = cl.Program(queue.context, text).build().init_rng
+
+    cl_seeds = to_device(queue, np.array(seeds, dtype=np.uint32))
+    args = (cl_seeds, rngs.cl_starts, rngs.cl_buf)
+
+    rng_items = rngs.shape0s[0]
+    gsize = (rng_items, len(rngs))
     lsize = None
-    kernel(queue, gsize, lsize, np.uint32(seed), ranluxcltab.data)
-    queue.finish()
-
-    return ranluxcltab
+    e = _init_rng_kernel(queue, gsize, lsize, *[arr.data for arr in args])
+    e.wait()
 
 
 _dist_enums = {nengod.Uniform: 0, nengod.Gaussian: 1}
@@ -1188,7 +1207,7 @@ def get_dist_enums_params(dists):
             RaggedArray(params, dtype=np.float32))
 
 
-def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
+def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, rngs,
                     tag=None):
     N = len(Y)
     assert len(Y) == len(dist_enums) == len(dist_params) == len(scale)
@@ -1224,7 +1243,8 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
             __global const ${Ptype} *Pdata,
             __global const int *scalestarts,
             __global const int *scaledata,
-            __global ranluxcl_state_t *ranluxcltab
+            __global const int *rng_starts,
+            __global int *rng_data
         )
         {
             const int i0 = get_global_id(0);
@@ -1235,8 +1255,8 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
 
             __global ${Ytype} *y = Ydata + Ystarts[k];
 
-            ranluxcl_state_t state;
-            ranluxcl_download_seed(&state, ranluxcltab);
+            __global ranluxcl_state_t *gstate = rng_data + rng_starts[k];
+            ranluxcl_state_t state = gstate[i0];
 
             const int scale = *(scaledata + scalestarts[k]);
             const int dist_enum = *(Edata + Estarts[k]);
@@ -1257,7 +1277,7 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
                 samplei++;
             }
 
-            ranluxcl_upload_seed(&state, ranluxcltab);
+            gstate[i0] = state;
         }
         """
 
@@ -1275,12 +1295,13 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, dt, ranluxcltab,
         dist_params.cl_buf,
         scale.cl_starts,
         scale.cl_buf,
-        ranluxcltab,
+        rngs.cl_starts,
+        rngs.cl_buf,
     )
     _fn = cl.Program(queue.context, text).build().whitenoise
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_len = min(queue.device.max_work_group_size, max(Y.shape0s))
+    max_len = min(min(rngs.shape0s), max(Y.shape0s))
     gsize = (max_len, N)
     lsize = (max_len, 1)
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitenoise", tag=tag)

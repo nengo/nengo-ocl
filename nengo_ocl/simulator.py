@@ -28,8 +28,8 @@ from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_reset, plan_copy, plan_slicedcopy,
     plan_direct, plan_lif, plan_lif_rate,
     plan_probes, plan_linear_synapse, plan_elementwise_inc,
-    init_rng, get_dist_enums_params, plan_whitenoise, plan_presentinput,
-    plan_conv2d, plan_pool2d)
+    create_rngs, init_rngs, get_dist_enums_params, plan_whitenoise,
+    plan_presentinput, plan_conv2d, plan_pool2d)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.planners import greedy_planner
 from nengo_ocl.ast_conversion import OCL_Function
@@ -304,7 +304,7 @@ class Simulator(nengo.Simulator):
 
         self.n_prealloc_probes = n_prealloc_probes
         self.ocl_only = ocl_only
-        self._cl_rng_state = None
+        self._cl_rngs = {}
 
         # --- Nengo build
         self.closed = False
@@ -397,10 +397,13 @@ class Simulator(nengo.Simulator):
         self._plans = Plans(self._plan, self.profiling)
 
         self._probe_step_time()
+        self._reset_cl_rngs()
 
-    def _init_cl_rng(self):
-        if self._cl_rng_state is None:
-            self._cl_rng_state = init_rng(self.queue, self.seed)
+    def _reset_cl_rngs(self):
+        for rngs, seeds in self._cl_rngs.items():
+            seeds = [self.rng.randint(npext.maxint) if s is None else s
+                     for s in seeds]
+            init_rngs(self.queue, rngs, seeds)
 
     def _prep_all_data(self):
         # -- replace the numpy-allocated RaggedArray with OpenCL one
@@ -713,10 +716,10 @@ class Simulator(nengo.Simulator):
 
     def _plan_WhiteNoise(self, ops):
         assert all(op.input is None for op in ops)
-        if any(op.process.seed is not None for op in ops):
-            raise NotImplementedError("Seeds not supported for WhiteNoise")
 
-        self._init_cl_rng()
+        rngs = create_rngs(self.queue, len(ops))
+        self._cl_rngs[rngs] = [op.process.seed for op in ops]
+
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
         scale = self.RaggedArray([op.process.scale for op in ops],
                                  dtype=np.int32)
@@ -724,8 +727,7 @@ class Simulator(nengo.Simulator):
         enums = CLRaggedArray(self.queue, enums)
         params = CLRaggedArray(self.queue, params)
         dt = self.model.dt
-        return [plan_whitenoise(self.queue, Y, enums, params, scale, dt,
-                                self._cl_rng_state)]
+        return [plan_whitenoise(self.queue, Y, enums, params, scale, dt, rngs)]
 
     def _plan_FilteredNoise(self, ops):
         raise NotImplementedError()
