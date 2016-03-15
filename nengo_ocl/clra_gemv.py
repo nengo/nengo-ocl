@@ -889,7 +889,6 @@ def block_impl(p, items):
             Ybufind_reduce = []
 
             # loop over dot products outputting to same Y
-            n_dots = len(p.A_js[n])
             assert len(p.A_js[n]) == len(p.X_js[n])
             for aj, xj in zip(p.A_js[n], p.X_js[n]):
                 assert aj.size == 1 and xj.size == 1
@@ -905,7 +904,8 @@ def block_impl(p, items):
                     shape1s.append(min(shape1n - j, block_x))
                     Astride0s.append(p.A.stride0s[aj])
                     Astride1s.append(p.A.stride1s[aj])
-                    Astarts.append(p.A.starts[aj] + i*p.A.stride0s[aj] + j*p.A.stride1s[aj])
+                    Astarts.append(p.A.starts[aj] +
+                                   i*p.A.stride0s[aj] + j*p.A.stride1s[aj])
                     Xstride0s.append(p.X.stride0s[xj])
                     Xstarts.append(p.X.starts[xj] + j*p.X.stride0s[xj])
 
@@ -981,7 +981,8 @@ def block_impl(p, items):
 
         // load structure
         __local int lstructure[${n_structure_vars}];
-        const int local_idx = get_local_id(0) + get_local_id(1)*get_local_size(0);
+        const int local_idx =
+            get_local_id(0) + get_local_id(1)*get_local_size(0);
         if (local_idx < ${n_structure_vars})
             lstructure[local_idx] = gstructure[
                 n * ${n_structure_vars} + local_idx];
@@ -1036,12 +1037,18 @@ def block_impl(p, items):
     align = False
 
     Nreduce = len(Yshape0s_reduce)
-    clYshape0s_reduce = to_device(p.queue, np.array(Yshape0s_reduce, dtype=np.int32))
-    clYinstride0s_reduce = to_device(p.queue, np.array(Yinstride0s_reduce, dtype=np.int32))
-    clYinstarts_reduce = to_device(p.queue, np.array(Yinstarts_reduce, dtype=np.int32))
-    clYstride0s_reduce = to_device(p.queue, np.array(Ystride0s_reduce, dtype=np.int32))
-    clYstarts_reduce = to_device(p.queue, np.array(Ystarts_reduce, dtype=np.int32))
-    clYbufinds_reduce = CLRaggedArray.from_arrays(p.queue, Ybufinds_reduce, dtype=np.int32, align=align)
+    clYshape0s_reduce = to_device(
+        p.queue, np.array(Yshape0s_reduce, dtype=np.int32))
+    clYinstride0s_reduce = to_device(
+        p.queue, np.array(Yinstride0s_reduce, dtype=np.int32))
+    clYinstarts_reduce = to_device(
+        p.queue, np.array(Yinstarts_reduce, dtype=np.int32))
+    clYstride0s_reduce = to_device(
+        p.queue, np.array(Ystride0s_reduce, dtype=np.int32))
+    clYstarts_reduce = to_device(
+        p.queue, np.array(Ystarts_reduce, dtype=np.int32))
+    clYbufinds_reduce = CLRaggedArray.from_arrays(
+        p.queue, Ybufinds_reduce, dtype=np.int32, align=align)
     assert len(clYbufinds_reduce) == Nreduce
     assert (clYbufinds_reduce.shape1s == 1).all()
 
@@ -1111,11 +1118,9 @@ def block_impl(p, items):
     kernel_reduce.set_args(*[arr.data for arr in full_args_reduce])
 
     plan_reduce = Plan(p.queue, kernel_reduce, gsize_reduce, lsize_reduce,
-                       name='clra_gemv.block_impl_reduce',
-                       tag=p.tag,
-                       bw_per_call=bw_reduce,
-                   )
-    plan_reduce.full_args = full_args_reduce  # prevent GC the args
+                       name='clra_gemv.block_impl_reduce', tag=p.tag)
+    plan_reduce.full_args = full_args_reduce  # prevent GC of the args
+    plan_reduce.bw_per_call = bw_reduce
     # plan_reduce.description = p.geometry_summary(items)
 
     return [plan, plan_reduce]

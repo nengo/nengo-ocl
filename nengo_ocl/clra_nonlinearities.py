@@ -1127,6 +1127,8 @@ def create_rngs(queue, n):
 
 
 _init_rng_kernel = None
+
+
 def init_rngs(queue, rngs, seeds):
     assert len(seeds) == len(rngs)
     assert np.all(rngs.shape0s == rngs.shape0s[0])

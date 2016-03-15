@@ -37,17 +37,13 @@ def test_lif_step(upsample):
     OS = RA([np.zeros(n) for n in n_neurons])
 
     ref = 2e-3
-    # refs = rng.uniform(low=1e-3, high=5e-3, size=len(n_neurons))
     taus = rng.uniform(low=15e-3, high=80e-3, size=len(n_neurons))
-    # refs = RA([rng.uniform(low=1e-3, high=5e-3, size=n) for n in n_neurons])
-    # taus = RA([rng.uniform(low=15e-3, high=80e-3, size=n) for n in n_neurons])
 
     queue = cl.CommandQueue(ctx)
     clJ = CLRA(queue, J)
     clV = CLRA(queue, V)
     clW = CLRA(queue, W)
     clOS = CLRA(queue, OS)
-    # clRefs = CLRA(queue, RA([r * np.ones(n) for r, n in zip(refs, n_neurons)]))
     clTaus = CLRA(queue, RA([t * np.ones(n) for t, n in zip(taus, n_neurons)]))
 
     # simulate host

@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 import pyopencl as cl
-import pyopencl.array
+import pyopencl.array  # noqa: F401
 import pytest
 
 from nengo.utils.compat import range
@@ -250,8 +250,8 @@ def test_speed(rng):
     except ImportError:
         pyopencl_blas = None
 
-    enable_out_of_order = (
-        cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE)
+    # enable_out_of_order = (
+    #     cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE)
 
     k = 300
     # k = 100

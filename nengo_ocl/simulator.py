@@ -17,7 +17,7 @@ from nengo.synapses import LinearFilter
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalDict
-from nengo.utils.compat import iteritems
+from nengo.utils.compat import iteritems, StringIO
 from nengo.utils.progress import ProgressTracker
 import nengo.utils.numpy as npext
 from nengo.utils.stdlib import groupby, Timer
@@ -902,7 +902,6 @@ class Simulator(nengo.Simulator):
 
             def __getitem__(_, item):
                 raw = self.all_data[self.sidx[item]]
-                assert raw.ndim == 2
                 if item.ndim == 0:
                     return raw[0, 0]
                 elif item.ndim == 1:
@@ -913,8 +912,6 @@ class Simulator(nengo.Simulator):
                     raise NotImplementedError()
 
             def __setitem__(_, item, val):
-                raw = self.all_data[self.sidx[item]]
-                assert raw.ndim == 2
                 incoming = np.asarray(val)
                 if item.ndim == 0:
                     assert incoming.size == 1
@@ -929,7 +926,6 @@ class Simulator(nengo.Simulator):
                     raise NotImplementedError()
 
             def __str__(self_):
-                from nengo.utils.compat import StringIO
                 sio = StringIO()
                 for k in self_:
                     print(k, self_[k], file=sio)
