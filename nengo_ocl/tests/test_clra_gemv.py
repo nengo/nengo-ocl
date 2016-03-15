@@ -7,20 +7,24 @@ import pytest
 from nengo.utils.compat import range
 from nengo.utils.stdlib import Timer
 
-from nengo_ocl.raggedarray import RaggedArray as RA
+from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 from nengo_ocl.clra_gemv import (
-    plan_ragged_gather_gemv, plan_many_dots, plan_reduce, plan_ref)
+    plan_reduce_gemv, plan_many_dots_gemv, plan_block_gemv,
+    plan_ragged_gather_gemv)
 
 
 ctx = cl.create_some_context()
 logger = logging.getLogger(__name__)
+RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
 
 
 def pytest_generate_tests(metafunc):
     if "planner" in metafunc.funcargnames:
         metafunc.parametrize(
-            "planner", [plan_ref, plan_reduce, plan_many_dots])
+            "planner", [
+                plan_reduce_gemv, plan_many_dots_gemv, plan_block_gemv,
+                plan_ragged_gather_gemv])
 
 
 def allclose(raA, raB):
@@ -33,9 +37,9 @@ def allclose(raA, raB):
 
 def test_basic():
     # -- prepare initial conditions on host
-    A = RA([[[0.1, .2], [.3, .4]], [[.5, .6]]], dtype=np.float32)
-    X = RA([[3, 5]], dtype=np.float32)
-    Y = RA([[0.0], [2, 3], ], dtype=np.float32)
+    A = RA([[[0.1, .2], [.3, .4]], [[.5, .6]]])
+    X = RA([[3, 5]])
+    Y = RA([[0.0], [2, 3], ])
     A_js = RA([[1], [0]], dtype=np.int32)
     X_js = RA([[0], [0]], dtype=np.int32)
     # alpha = 0.5
@@ -48,13 +52,9 @@ def test_basic():
     clA = CLRA(queue, A)
     clX = CLRA(queue, X)
     clY = CLRA(queue, Y)
-    clA_js = CLRA(queue, A_js)
-    clX_js = CLRA(queue, X_js)
     assert allclose(A, clA)
     assert allclose(X, clX)
     assert allclose(Y, clY)
-    assert allclose(A_js, clA_js)
-    assert allclose(X_js, clX_js)
 
     # -- run cl computation
     prog = plan_ragged_gather_gemv(
@@ -63,8 +63,6 @@ def test_basic():
     # assert len(plans) == 1
     for plan in prog.plans:
         plan()
-
-    print(prog.plans[0].Ybuf.get())
 
     # -- ensure they match
     for i in range(len(A_js)):
@@ -95,8 +93,8 @@ def _test_random(k=4, p=1, m=10, n=10):
     A = RA(aa)
     X = RA(xx)
     Y = RA(yy)
-    A_js = RA(ajs)
-    X_js = RA(xjs)
+    A_js = RA(ajs, dtype=np.int32)
+    X_js = RA(xjs, dtype=np.int32)
     alpha = 0.5
     beta = 0.1
 
@@ -154,32 +152,27 @@ def check_from_shapes(
     rng = np.random.RandomState(1234)
     A = RA([0.1 + rng.rand(*shp) for shp in A_shapes])
     X = RA([0.1 + rng.rand(*shp) for shp in X_shapes])
-    Y = RA([0.1 + rng.rand(
-        A_shapes[A_js[ii][0]][0],
-        X_shapes[X_js[ii][0]][1])
-        for ii in range(len(A_js))])
-    A_js = RA(A_js)
-    X_js = RA(X_js)
+    Y = RA([0.1 + rng.rand(A_shapes[A_js[ii][0]][0], X_shapes[X_js[ii][0]][1])
+            for ii in range(len(A_js))])
+    A_js = RA(A_js, dtype=np.int32)
+    X_js = RA(X_js, dtype=np.int32)
     # -- prepare initial conditions on device
     queue = cl.CommandQueue(ctx)
     clA = CLRA(queue, A)
     clX = CLRA(queue, X)
     clY = CLRA(queue, Y)
-    clA_js = CLRA(queue, A_js)
-    clX_js = CLRA(queue, X_js)
     assert allclose(A, clA)
     assert allclose(X, clX)
     assert allclose(Y, clY)
-    assert allclose(A_js, clA_js)
-    assert allclose(X_js, clX_js)
 
     # -- run cl computation
     prog = planner(
-        queue, alpha, clA, clA_js, clX, clX_js, beta, clY, gamma=gamma)
+        queue, alpha, clA, A_js, clX, X_js, beta, clY, gamma=gamma)
 
     plans = prog.plans
-    assert len(plans) == 1
-    plans[0]()
+    # assert len(plans) == 1
+    for plan in plans:
+        plan()
 
     # -- ensure they match
     for i in range(len(A_js)):
@@ -289,12 +282,12 @@ def test_speed(rng):
     clA = CLRA.from_arrays(queue, aa)
     clX = CLRA.from_arrays(queue, xx)
     clY = CLRA.from_arrays(queue, yy)
-    clA_js = CLRA.from_arrays(queue, ajs)
-    clX_js = CLRA.from_arrays(queue, xjs)
+    A_js = RA(ajs, dtype=np.int32)
+    X_js = RA(xjs, dtype=np.int32)
 
     # -- run cl computation
     prog = plan_ragged_gather_gemv(
-        queue, alpha, clA, clA_js, clX, clX_js, beta, clY)
+        queue, alpha, clA, A_js, clX, X_js, beta, clY)
     plans = prog.choose_plans()
 
     print('')

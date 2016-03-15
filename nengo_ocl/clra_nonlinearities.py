@@ -4,7 +4,7 @@ import numpy as np
 import pyopencl as cl
 from mako.template import Template
 import nengo.dists as nengod
-from nengo.utils.compat import itervalues, range
+from nengo.utils.compat import is_number, itervalues, range
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
@@ -49,8 +49,8 @@ def blockify_matrix(max_size, ra):
 
 def blockify_vectors(max_size, ras):
     ras = list(ras)
-    ra0 = ras[0]
-    N = len(ra0)
+    ra0 = ras[0] if len(ras) > 0 else None
+    N = len(ra0) if ra0 is not None else 0
     for ra in ras:
         assert len(ra) == N
         assert np.all(ra.shape1s == 1)
@@ -973,11 +973,12 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
     for k, v in parameters.items():
         if isinstance(v, CLRaggedArray):
             params[k] = v
+        elif is_number(v):
+            static_params[k] = ('float', float(v))
         else:
-            try:
-                static_params[k] = ('float', float(v))
-            except TypeError:
-                raise
+            raise ValueError(
+                "Parameter %r must be CLRaggedArray or float (got %s)"
+                % (k, type(v)))
 
     avars = {}
     bw_per_call = 0

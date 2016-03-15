@@ -3,12 +3,12 @@ import numpy as np
 import pyopencl as cl
 import pytest
 
-from nengo.neurons import LIF, LIFRate
+import nengo
 from nengo.utils.compat import range
 from nengo.utils.stdlib import Timer
 
 from nengo_ocl import raggedarray as ra
-from nengo_ocl.raggedarray import RaggedArray as RA
+from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA, to_device
 
 from nengo_ocl.clra_nonlinearities import (
@@ -17,15 +17,15 @@ from nengo_ocl.clra_nonlinearities import (
 
 ctx = cl.create_some_context()
 logger = logging.getLogger(__name__)
+RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
 
 
 def not_close(a, b, rtol=1e-3, atol=1e-3):
     return np.abs(a - b) > atol + rtol * np.abs(b)
 
 
-@pytest.mark.parametrize(
-    "upsample, n_elements", [(1, 0), (1, 6), (4, 0), (4, 7)])
-def test_lif_step(upsample, n_elements):
+@pytest.mark.parametrize("upsample", [1, 4])
+def test_lif_step(upsample):
     """Test the lif nonlinearity, comparing one step with the Numpy version."""
     rng = np.random
 
@@ -37,17 +37,21 @@ def test_lif_step(upsample, n_elements):
     OS = RA([np.zeros(n) for n in n_neurons])
 
     ref = 2e-3
-    taus = list(rng.uniform(low=15e-3, high=80e-3, size=len(n_neurons)))
+    # refs = rng.uniform(low=1e-3, high=5e-3, size=len(n_neurons))
+    taus = rng.uniform(low=15e-3, high=80e-3, size=len(n_neurons))
+    # refs = RA([rng.uniform(low=1e-3, high=5e-3, size=n) for n in n_neurons])
+    # taus = RA([rng.uniform(low=15e-3, high=80e-3, size=n) for n in n_neurons])
 
     queue = cl.CommandQueue(ctx)
     clJ = CLRA(queue, J)
     clV = CLRA(queue, V)
     clW = CLRA(queue, W)
     clOS = CLRA(queue, OS)
-    clTau = CLRA(queue, RA(taus))
+    # clRefs = CLRA(queue, RA([r * np.ones(n) for r, n in zip(refs, n_neurons)]))
+    clTaus = CLRA(queue, RA([t * np.ones(n) for t, n in zip(taus, n_neurons)]))
 
     # simulate host
-    nls = [LIF(tau_ref=ref, tau_rc=taus[i])
+    nls = [nengo.LIF(tau_ref=ref, tau_rc=taus[i])
            for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
         if upsample <= 1:
@@ -59,8 +63,8 @@ def test_lif_step(upsample, n_elements):
                 OS[i] = (1./dt) * ((OS[i] > 0) | (s > 0))
 
     # simulate device
-    plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, clTau, dt,
-                    n_elements=n_elements, upsample=upsample)
+    plan = plan_lif(
+        queue, dt, clJ, clV, clW, clOS, ref, clTaus, upsample=upsample)
     plan()
 
     if 1:
@@ -101,11 +105,12 @@ def test_lif_speed(rng, heterogeneous):
         n_neurons = [1.1e5] * 50
     n_neurons = list(map(int, n_neurons))
 
-    J = RA([rng.randn(n) for n in n_neurons])
-    V = RA([rng.uniform(low=0, high=1, size=n) for n in n_neurons])
+    J = RA([rng.randn(n) for n in n_neurons], dtype=np.float32)
+    V = RA([rng.uniform(low=0, high=1, size=n) for n in n_neurons],
+           dtype=np.float32)
     W = RA([rng.uniform(low=-10 * dt, high=10 * dt, size=n)
-            for n in n_neurons])
-    OS = RA([np.zeros(n) for n in n_neurons])
+            for n in n_neurons], dtype=np.float32)
+    OS = RA([np.zeros(n) for n in n_neurons], dtype=np.float32)
 
     queue = cl.CommandQueue(
         ctx, properties=cl.command_queue_properties.PROFILING_ENABLE)
@@ -116,7 +121,7 @@ def test_lif_speed(rng, heterogeneous):
     clOS = CLRA(queue, OS)
 
     for i, blockify in enumerate([False, True]):
-        plan = plan_lif(queue, clJ, clV, clW, clV, clW, clOS, ref, tau, dt,
+        plan = plan_lif(queue, dt, clJ, clV, clW, clOS, ref, tau,
                         blockify=blockify)
 
         with Timer() as timer:
@@ -127,8 +132,8 @@ def test_lif_speed(rng, heterogeneous):
               % (i, blockify, timer.duration))
 
 
-@pytest.mark.parametrize("n_elements", [0, 1, 10])
-def test_lif_rate(n_elements):
+@pytest.mark.parametrize("blockify", [False, True])
+def test_lif_rate(blockify):
     """Test the `lif_rate` nonlinearity"""
     rng = np.random
     dt = 1e-3
@@ -143,17 +148,16 @@ def test_lif_rate(n_elements):
     queue = cl.CommandQueue(ctx)
     clJ = CLRA(queue, J)
     clR = CLRA(queue, R)
-    clTau = CLRA(queue, RA(taus))
+    clTaus = CLRA(queue, RA([t * np.ones(n) for t, n in zip(taus, n_neurons)]))
 
     # simulate host
-    nls = [LIFRate(tau_ref=ref, tau_rc=taus[i])
+    nls = [nengo.LIFRate(tau_ref=ref, tau_rc=taus[i])
            for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
         nl.step_math(dt, J[i], R[i])
 
     # simulate device
-    plan = plan_lif_rate(queue, clJ, clR, ref, clTau, dt=dt,
-                         n_elements=n_elements)
+    plan = plan_lif_rate(queue, dt, clJ, clR, ref, clTaus, blockify=blockify)
     plan()
 
     rate_sum = np.sum([np.sum(r) for r in R])
@@ -216,7 +220,7 @@ def test_slicedcopy(rng):
     sizes = rng.randint(20, 200, size=10)
     A = RA([rng.normal(size=size) for size in sizes])
     B = RA([rng.normal(size=size) for size in sizes])
-    incs = RA([rng.randint(0, 2) for _ in sizes])
+    incs = rng.randint(0, 2, size=len(sizes))
 
     Ainds = []
     Binds = []
@@ -234,15 +238,14 @@ def test_slicedcopy(rng):
             Ainds.append(rng.permutation(size)[:n])
             Binds.append(rng.permutation(size)[:n])
 
-    Ainds = RA(Ainds)
-    Binds = RA(Binds)
+    Ainds = RA(Ainds, dtype=np.int32)
+    Binds = RA(Binds, dtype=np.int32)
 
     queue = cl.CommandQueue(ctx)
     clA = CLRA(queue, A)
     clB = CLRA(queue, B)
     clAinds = CLRA(queue, Ainds)
     clBinds = CLRA(queue, Binds)
-    clincs = CLRA(queue, incs)
 
     # compute on host
     for i in range(len(sizes)):
@@ -252,7 +255,7 @@ def test_slicedcopy(rng):
             B[i][Binds[i]] = A[i][Ainds[i]]
 
     # compute on device
-    plan = plan_slicedcopy(queue, clA, clB, clAinds, clBinds, clincs)
+    plan = plan_slicedcopy(queue, clA, clB, clAinds, clBinds, incs)
     plan()
 
     # check result

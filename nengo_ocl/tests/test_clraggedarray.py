@@ -16,7 +16,7 @@ def make_random_ra(n, d, low=20, high=40, rng=None):
     """Helper to make a random RaggedArray on the host"""
     shapes = zip(*(rng.randint(low=low, high=high+1, size=n).tolist()
                    for dd in range(d)))
-    vals = [rng.normal(size=shape) for shape in shapes]
+    vals = [rng.normal(size=shape).astype(np.float32) for shape in shapes]
     return RA(vals)
 
 
@@ -29,12 +29,12 @@ def make_random_pair(n, d, **kwargs):
 
 
 def test_shape_zeros():
-    A = RA([[]])
+    A = RA([[]], dtype=np.float32)
     assert A[0].shape == (0, 1)
 
 
 def test_unit(rng):
-    val = rng.randn()
+    val = np.float32(rng.randn())
     A = RA([val])
 
     queue = cl.CommandQueue(ctx)
@@ -44,7 +44,7 @@ def test_unit(rng):
 
 def test_small(rng):
     sizes = [3] * 3
-    vals = [rng.normal(size=size) for size in sizes]
+    vals = [rng.normal(size=size).astype(np.float32) for size in sizes]
     A = RA(vals)
 
     queue = cl.CommandQueue(ctx)
@@ -53,7 +53,7 @@ def test_small(rng):
 
 
 def test_random_vectors(rng):
-    n = rng.randint(low=5, high=10)
+    n = np.int32(rng.randint(low=5, high=10))
     A, clA = make_random_pair(n, 1, low=3000, high=4000, rng=rng)
     assert ra.allclose(A, clA.to_host())
 

@@ -92,11 +92,9 @@ class DotSignature(object):
 
 class gemv_prog(object):
 
-    def __init__(self,
-                 queue, alpha, A, A_js, X, X_js,
-                 beta, Y, Y_in=None, tag=None, gamma=0.0):
-        """
-        """
+    def __init__(self, queue, alpha, A, A_js, X, X_js, beta, Y,
+                 Y_in=None, gamma=0.0, tag=None):
+
         self.float_alpha, self.cl_alpha, self.clra_alpha = \
             float_cl_clra(queue, alpha, Y.dtype, len(Y))
         self.float_beta, self.cl_beta, self.clra_beta = \
@@ -184,7 +182,7 @@ class gemv_prog(object):
                         'a_shape1': A_shape1s[aj],
                     })
             rval.append(dbb)
-            assert len(dbb['dots']) == 1
+
         return rval
 
     def cl_geometry_and_textconf(self, items, padding=4):
@@ -833,10 +831,6 @@ def many_dots_impl(p, items):
 
 def block_impl(p, items):
 
-    assert p.float_alpha == 1.0
-    assert p.float_beta == 1.0
-    assert p.float_gamma == 0.0
-
     if p.clra_alpha is not None:
         raise NotImplementedError()
     if p.clra_gamma is not None:
@@ -844,6 +838,8 @@ def block_impl(p, items):
     if p.clra_beta is not None:
         raise NotImplementedError()
     if p.cl_alpha is not None:
+        raise NotImplementedError()
+    if p.cl_beta is not None:
         raise NotImplementedError()
     if p.cl_gamma is not None:
         raise NotImplementedError()
@@ -961,6 +957,7 @@ def block_impl(p, items):
         block_x=block_x,
         lsize0=lsize0,
         lsize0_log2=lsize0_log2,
+        float_alpha=p.float_alpha,
     )
 
     full_args = (
@@ -1015,8 +1012,9 @@ def block_impl(p, items):
             sums[i][j] += sums[i][${2**k} + j];
         barrier(CLK_LOCAL_MEM_FENCE);
     % endfor
+
         if (i < ${shape0} && j == 0)
-            ybuf[i] = sums[i][0] + sums[i][1];
+            ybuf[i] = ${float_alpha} * (sums[i][0] + sums[i][1]);
     }
     """
 
@@ -1051,6 +1049,8 @@ def block_impl(p, items):
         Ybuf=clYbuf,
         Yin=p.Y_in,
         Y=p.Y,
+        float_beta=p.float_beta,
+        float_gamma=p.float_gamma,
     )
 
     full_args_reduce = (
@@ -1096,12 +1096,12 @@ def block_impl(p, items):
         __global ${Yin.ctype} *yin = Yindata + Yinstarts[n];
         __global ${Y.ctype} *y = Ydata + Ystarts[n];
 
-        ${Y.ctype} sum = yin[i*Yinstride0s[n]];
+        ${Y.ctype} sum = ${float_beta} * yin[i*Yinstride0s[n]];
         for (int j = 0; j < Ishape0; j++) {
             sum += Ybufdata[Ybufstart[j] + i];
         }
 
-        y[i*Ystride0s[n]] = sum;
+        y[i*Ystride0s[n]] = sum + ${float_gamma};
     }
     """
 
@@ -1121,67 +1121,68 @@ def block_impl(p, items):
     return [plan, plan_reduce]
 
 
-class plan_ref(gemv_prog):
-
+class plan_ref_gemv(gemv_prog):
     def choose_plans(self):
         return [ref_impl(self, range(len(self.Y)))]
 
 
-class plan_many_dots(gemv_prog):
-
+class plan_many_dots_gemv(gemv_prog):
     def choose_plans(self):
         return [many_dots_impl(self, range(len(self.Y)))]
 
 
-class plan_reduce(gemv_prog):
-
+class plan_reduce_gemv(gemv_prog):
     def choose_plans(self):
         return [reduce_impl(self, range(len(self.Y)))]
 
 
-class plan_ragged_gather_gemv(gemv_prog):
-
+class plan_block_gemv(gemv_prog):
     def choose_plans(self):
         return block_impl(self, list(range(len(self.Y))))
 
-    # def choose_plans(self):
-    #     remaining_items = range(len(self.Y))
-    #     plans = []
 
-    #     long_dots = [
-    #         ii for ii in remaining_items
-    #         if len(self.geometry[ii]['dots']) <= 2
-    #         and max([0] + [dct['a_shape1']
-    #                        for dct in self.geometry[ii]['dots']]) > 16]
-    #     if long_dots:
-    #         try:
-    #             long_plan = reduce_impl(self, long_dots)
-    #         except NotImplementedError:
-    #             long_plan = ref_impl(self, long_dots)
-    #         long_plan.tag += '-long%i' % len(long_dots)
-    #         plans.append(long_plan)
-    #         remaining_items = [ii
-    #                            for ii in remaining_items
-    #                            if ii not in long_dots]
+class plan_ragged_gather_gemv(gemv_prog):
+    # EH: This heuristic was designed by James to get the best speeds, but for
+    # large models (i.e. Spaun) just using block_impl seems to be faster.
 
-    #     # many_dots = [ii
-    #         # for ii in remaining_items
-    #         # if len(self.geometry[ii]['dots']) > 3]
-    #     many_dots = remaining_items
-    #     if many_dots:
-    #         try:
-    #             many_plan = many_dots_impl(self, many_dots)
-    #             many_plan.tag += '-many%i' % len(many_dots)
-    #             plans.append(many_plan)
-    #             remaining_items = [ii
-    #                                for ii in remaining_items
-    #                                if ii not in many_dots]
-    #         except NotImplementedError:
-    #             pass
+    def choose_plans(self):
+        remaining_items = range(len(self.Y))
+        plans = []
 
-    #     if remaining_items:
-    #         remaining_plan = ref_impl(self, remaining_items)
-    #         remaining_plan.tag += '-remaining%i' % len(remaining_items)
-    #         plans.append(remaining_plan)
+        long_dots = [
+            ii for ii in remaining_items
+            if len(self.geometry[ii]['dots']) <= 2
+            and max([0] + [dct['a_shape1']
+                           for dct in self.geometry[ii]['dots']]) > 16]
+        if long_dots:
+            try:
+                long_plan = reduce_impl(self, long_dots)
+            except NotImplementedError:
+                long_plan = ref_impl(self, long_dots)
+            long_plan.tag += '-long%i' % len(long_dots)
+            plans.append(long_plan)
+            remaining_items = [ii
+                               for ii in remaining_items
+                               if ii not in long_dots]
 
-    #     return plans
+        # many_dots = [ii
+            # for ii in remaining_items
+            # if len(self.geometry[ii]['dots']) > 3]
+        many_dots = remaining_items
+        if many_dots:
+            try:
+                many_plan = many_dots_impl(self, many_dots)
+                many_plan.tag += '-many%i' % len(many_dots)
+                plans.append(many_plan)
+                remaining_items = [ii
+                                   for ii in remaining_items
+                                   if ii not in many_dots]
+            except NotImplementedError:
+                pass
+
+        if remaining_items:
+            remaining_plan = ref_impl(self, remaining_items)
+            remaining_plan.tag += '-remaining%i' % len(remaining_items)
+            plans.append(remaining_plan)
+
+        return plans

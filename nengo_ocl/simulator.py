@@ -24,7 +24,7 @@ from nengo.utils.stdlib import groupby, Timer
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
-from nengo_ocl.clra_gemv import plan_ragged_gather_gemv
+from nengo_ocl.clra_gemv import plan_block_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_reset, plan_copy, plan_slicedcopy,
     plan_direct, plan_lif, plan_lif_rate,
@@ -228,7 +228,7 @@ class MultiProdUpdate(Operator):
 class ViewBuilder(object):
 
     def __init__(self, bases, rarray):
-        self.sidx = dict((bb, ii) for ii, bb in enumerate(bases))
+        self.sidx = {bb: ii for ii, bb in enumerate(bases)}
         assert len(bases) == len(self.sidx)
         self.rarray = rarray
 
@@ -363,25 +363,28 @@ class Simulator(nengo.Simulator):
             # Provide a nicer interface to probe outputs
             self.data = ProbeDict(self._probe_outputs)
 
+            # Create data on host and add views
             self.all_data = RaggedArray(
                 [sigdict[sb] for sb in all_bases],
-                [getattr(sb, 'name', '') for sb in all_bases],
+                names=[getattr(sb, 'name', '') for sb in all_bases],
                 dtype=np.float32)
 
-            builder = ViewBuilder(all_bases, self.all_data)
-            builder.setup_views(operators)
+            view_builder = ViewBuilder(all_bases, self.all_data)
+            view_builder.setup_views(operators)
             for probe in self.model.probes:
-                builder.append_view(self.model.sig[probe]['in'])
-            builder.add_views_to(self.all_data)
+                view_builder.append_view(self.model.sig[probe]['in'])
+            view_builder.add_views_to(self.all_data)
 
             self.all_bases = all_bases
-            self.sidx = dict(builder.sidx)
-            self._A_views = builder._A_views
-            self._X_views = builder._X_views
-            self._YYB_views = builder._YYB_views
-            del builder
+            self.sidx = {
+                k: np.int32(v) for k, v in iteritems(view_builder.sidx)}
+            self._A_views = view_builder._A_views
+            self._X_views = view_builder._X_views
+            self._YYB_views = view_builder._YYB_views
+            del view_builder
 
-            self._prep_all_data()
+            # Copy data to device
+            self.all_data = CLRaggedArray(self.queue, self.all_data)
 
         logger.info("Signals in %0.3f s" % signals_timer.duration)
 
@@ -401,14 +404,10 @@ class Simulator(nengo.Simulator):
         self._reset_cl_rngs()
 
     def _reset_cl_rngs(self):
-        for rngs, seeds in self._cl_rngs.items():
+        for rngs, seeds in iteritems(self._cl_rngs):
             seeds = [self.rng.randint(npext.maxint) if s is None else s
                      for s in seeds]
             init_rngs(self.queue, rngs, seeds)
-
-    def _prep_all_data(self):
-        # -- replace the numpy-allocated RaggedArray with OpenCL one
-        self.all_data = CLRaggedArray(self.queue, self.all_data)
 
     def plan_op_group(self, op_type, ops):
         return getattr(self, 'plan_' + op_type.__name__)(ops)
@@ -448,10 +447,8 @@ class Simulator(nengo.Simulator):
             return []
 
         all_data, sidx = self.all_data, self.sidx
-        A_js = RaggedArray(
-            [[sidx[ss] for ss in A_js_fn(op)] for op in ops], dtype=np.int32)
-        X_js = RaggedArray(
-            [[sidx[ss] for ss in X_js_fn(op)] for op in ops], dtype=np.int32)
+        A_js = RaggedArray([[sidx[ss] for ss in A_js_fn(op)] for op in ops])
+        X_js = RaggedArray([[sidx[ss] for ss in X_js_fn(op)] for op in ops])
         Y_sigs = [Y_fn(item) for item in ops]
         Y_in_sigs = [Y_in_fn(item) for item in ops] if Y_in_fn else Y_sigs
         Y = all_data[[sidx[sig] for sig in Y_sigs]]
@@ -459,13 +456,10 @@ class Simulator(nengo.Simulator):
         if callable(beta):
             beta = RaggedArray([sidx[beta(o)] for o in ops], dtype=np.float32)
 
-        rval = self.plan_ragged_gather_gemv(
-            alpha=alpha, A=all_data, A_js=A_js, X=all_data, X_js=X_js,
-            beta=beta, Y=Y, Y_in=Y_in, gamma=gamma, tag=tag)
+        rval = plan_block_gemv(
+            self.queue, alpha, all_data, A_js, all_data, X_js, beta, Y,
+            Y_in=Y_in, gamma=gamma, tag=tag)
         return rval.plans
-
-    def plan_ragged_gather_gemv(self, *args, **kwargs):
-        return plan_ragged_gather_gemv(self.queue, *args, **kwargs)
 
     def plan_TimeUpdate(self, ops):
         op, = ops
@@ -521,7 +515,7 @@ class Simulator(nengo.Simulator):
 
         # make plans
         plans = []
-        for (fn, t_in, x_in), signals in unique_ops.items():
+        for (fn, t_in, x_in), signals in iteritems(unique_ops):
             fn_name = (fn.__name__ if inspect.isfunction(fn) else
                        fn.__class__.__name__)
             if fn_name == "<lambda>":
