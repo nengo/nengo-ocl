@@ -1031,3 +1031,38 @@ class Simulator(nengo.Simulator):
             print('\n')
             for r in unknowns:
                 print("%s %s" % r)
+
+
+Simulator.unsupported.extend([
+    # learning rules
+    ('nengo?tests?test_learning_rules*test_unsupervised*',
+     "Unsupervised learning rules not implemented"),
+    ('nengo?tests?test_learning_rules*test_dt_dependence*',
+     "Filtering matrices (i.e. learned transform) not implemented"),
+    ('nengo?tests?test_learning_rules*test_reset*',
+     "Filtering matrices not implemented"),
+    ('nengo?tests?test_learning_rules*test_voja_*',
+     "VOja learning rule not implemented"),
+
+    # neuron types
+    ('nengo?tests?test_neurons*test_izhikevich',
+     "Izhikevich neurons not implemented"),
+    ('nengo?tests?test_neurons*test_lif_min_voltage*',
+     "Min voltage not implemented"),
+
+    # nodes
+    ('nengo?tests?test_node*test_none',
+     "No error if nodes output None"),
+
+    # processes
+    ('nengo?tests?test_processes*test_brownnoise',
+     "Filtered noise processes not yet implemented"),
+    ('nengo?tests?test_ensemble*test_noise_copies_ok*',
+     "Filtered noise processes not yet implemented"),
+    ('nengo?tests?test_simulator*test_noise_copies_ok',
+     "Filtered noise processes not yet implemented"),
+
+    # synapses
+    ('nengo?tests?test_synapses*test_triangle',
+     "Only linear filters implemented"),
+])
