@@ -305,7 +305,6 @@ class Simulator(nengo.Simulator):
 
         self.n_prealloc_probes = n_prealloc_probes
         self.ocl_only = ocl_only
-        self._cl_rngs = {}
 
         # --- Nengo build
         self.closed = False
@@ -323,11 +322,6 @@ class Simulator(nengo.Simulator):
                 self.model.build(network)
 
         logger.info("Nengo build in %0.3f s" % nengo_timer.duration)
-
-        # --- set seed
-        seed = np.random.randint(npext.maxint) if seed is None else seed
-        self.seed = seed
-        self.rng = np.random.RandomState(self.seed)
 
         # --- operators
         with Timer() as planner_timer:
@@ -358,7 +352,7 @@ class Simulator(nengo.Simulator):
                 op.init_signals(sigdict)
 
             # Add built states to the probe dictionary
-            self._probe_outputs = self.model.params
+            self._probe_outputs = dict(self.model.params)
 
             # Provide a nicer interface to probe outputs
             self.data = ProbeDict(self._probe_outputs)
@@ -388,7 +382,15 @@ class Simulator(nengo.Simulator):
 
         logger.info("Signals in %0.3f s" % signals_timer.duration)
 
+        # --- set seed
+        seed = np.random.randint(npext.maxint) if seed is None else seed
+        self.seed = seed
+        self._reset_rng()
+
         # --- create list of plans
+        self._raggedarrays_to_reset = {}
+        self._cl_rngs = {}
+
         with Timer() as plans_timer:
             self._plan = []
             for op_type, op_list in op_groups:
@@ -400,8 +402,11 @@ class Simulator(nengo.Simulator):
         # -- create object to execute list of plans
         self._plans = Plans(self._plan, self.profiling)
 
-        self._probe_step_time()
         self._reset_cl_rngs()
+        self._probe_step_time()
+
+    def _reset_rng(self):
+        self.rng = np.random.RandomState(self.seed)
 
     def _reset_cl_rngs(self):
         for rngs, seeds in iteritems(self._cl_rngs):
@@ -690,10 +695,14 @@ class Simulator(nengo.Simulator):
         B = self.RaggedArray([f.num for f in steps], dtype=np.float32)
         X = self.all_data[[self.sidx[op.input] for op in ops]]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        Xbuf = self.RaggedArray([np.zeros((b.size, x.size))
-                                 for b, x in zip(B, X)], dtype=np.float32)
-        Ybuf = self.RaggedArray([np.zeros((a.size, y.size))
-                                 for a, y in zip(A, Y)], dtype=np.float32)
+        Xbuf0 = RaggedArray([np.zeros((b.size, x.size)) for b, x in zip(B, X)],
+                            dtype=np.float32)
+        Ybuf0 = RaggedArray([np.zeros((a.size, y.size)) for a, y in zip(A, Y)],
+                            dtype=np.float32)
+        Xbuf = CLRaggedArray(self.queue, Xbuf0)
+        Ybuf = CLRaggedArray(self.queue, Ybuf0)
+        self._raggedarrays_to_reset[Xbuf] = Xbuf0
+        self._raggedarrays_to_reset[Ybuf] = Ybuf0
         return [plan_linear_synapse(self.queue, X, Y, A, B, Xbuf, Ybuf)]
 
     def plan_SimProcess(self, all_ops):
@@ -873,7 +882,30 @@ class Simulator(nengo.Simulator):
         if self.closed:
             raise SimulatorClosed("Cannot reset closed Simulator.")
 
-        raise NotImplementedError("Resetting not implemented")
+        if seed is not None:
+            raise NotImplementedError("Seed changing not implemented")
+
+        # reset signals
+        for base in self.all_bases:
+            # TODO: copy all data on at once
+            if not base.readonly:
+                self.all_data[self.sidx[base]] = base.initial_value
+
+        for clra, ra in iteritems(self._raggedarrays_to_reset):
+            # TODO: copy all data on at once
+            for i in range(len(clra)):
+                clra[i] = ra[i]
+
+        # clear probe data
+        if self._cl_probe_plan is not None:
+            self._cl_probe_plan.cl_bufpositions.fill(0)
+
+            for probe in self.model.probes:
+                del self._probe_outputs[probe][:]
+
+        self._reset_rng()
+        self._reset_cl_rngs()
+        self._probe_step_time()
 
     def close(self):
         self.closed = True
@@ -882,7 +914,8 @@ class Simulator(nengo.Simulator):
         self.all_data = None
         self._plan = []
         self._plans = None
-        self._cl_rng_state = None
+        self._raggedarrays_to_reset = None
+        self._cl_rngs = None
         self._cl_probe_plan = None
 
     def __getitem__(self, item):

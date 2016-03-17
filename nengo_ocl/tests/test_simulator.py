@@ -57,6 +57,8 @@ xfail('test.nengo.tests.test_learning_rules.test_unsupervised',
       "Unsupervised learning rules not implemented")
 xfail('test.nengo.tests.test_learning_rules.test_dt_dependence',
       "Filtering matrices (i.e. learned transform) not implemented")
+xfail('test.nengo.tests.test_learning_rules.test_reset',
+      "Filtering matrices not implemented")
 xfail('test.nengo.tests.test_learning_rules.test_voja*',
       "VOja learning rule not implemented")
 
@@ -82,14 +84,6 @@ xfail('test.nengo.tests.test_simulator.test_noise_copies_ok',
 xfail('test.nengo.tests.test_synapses.test_triangle',
       "Only linear filters implemented")
 nengo.tests.test_synapses.allclose = allclose_tol  # looser tolerances
-
-# resetting
-xfail('test.nengo.tests.test_learning_rules.test_reset',
-      "Resetting not implemented")
-xfail('test.nengo.tests.test_neurons.test_reset',
-      "Resetting not implemented")
-xfail('test.nengo.tests.test_processes.test_reset',
-      "Resetting not implemented")
 
 locals().update(tests)
 

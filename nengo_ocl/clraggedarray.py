@@ -229,12 +229,13 @@ class CLRaggedArray(object):
                 # contiguous
                 clarray = self.getitem_device(item)
                 if isinstance(new_value, np.ndarray):
-                    array = new_value.astype(self.dtype)
+                    array = np.asarray(new_value, order='C', dtype=self.dtype)
                 else:
                     array = np.zeros(clarray.shape, dtype=clarray.dtype)
                     array[...] = new_value
 
                 array.shape = clarray.shape  # reshape to avoid warning
+                assert array.strides == clarray.strides
                 clarray.set(array)
             else:
                 # discontiguous
