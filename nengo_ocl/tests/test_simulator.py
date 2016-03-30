@@ -38,7 +38,7 @@ def pytest_funcarg__Simulator(request):
 
 def allclose_tol(*args, **kwargs):
     """Use looser tolerance"""
-    kwargs.setdefault('atol', 1e-7)
+    kwargs.setdefault('atol', 2e-7)
     return allclose(*args, **kwargs)
 
 

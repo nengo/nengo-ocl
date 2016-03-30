@@ -501,7 +501,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     return rval
 
 
-def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
+def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     """
     Implements a filter of the form
 
@@ -531,7 +531,7 @@ def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
 
     text = """
         ////////// MAIN FUNCTION //////////
-        __kernel void linear_synapse(
+        __kernel void linearfilter(
             __global const int *shape0s,
             __global const int *Xstarts,
             __global const ${Xtype} *Xdata,
@@ -634,14 +634,14 @@ def plan_linear_synapse(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
         Xbufpos,
         Ybufpos,
     )
-    _fn = cl.Program(queue.context, text).build().linear_synapse
+    _fn = cl.Program(queue.context, text).build().linearfilter
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_len = min(max(X.shape0s), queue.device.max_work_group_size)
     gsize = (max_len, N)
     lsize = (max_len, 1)
     rval = Plan(
-        queue, _fn, gsize, lsize=lsize, name="cl_linear_synapse", tag=tag)
+        queue, _fn, gsize, lsize=lsize, name="cl_linearfilter", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
     rval.bw_per_call = (
         X.nbytes + Y.nbytes + A.nbytes + B.nbytes + Xbuf.nbytes + Ybuf.nbytes)

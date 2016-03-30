@@ -4,7 +4,7 @@ import inspect
 import logging
 import os
 import warnings
-from collections import OrderedDict
+from collections import defaultdict, OrderedDict
 
 import numpy as np
 import pyopencl as cl
@@ -13,7 +13,6 @@ import nengo
 from nengo.cache import get_default_decoder_cache
 from nengo.exceptions import SimulatorClosed
 from nengo.simulator import ProbeDict
-from nengo.synapses import LinearFilter
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalDict
@@ -28,7 +27,7 @@ from nengo_ocl.clra_gemv import plan_block_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_reset, plan_copy, plan_slicedcopy,
     plan_direct, plan_lif, plan_lif_rate,
-    plan_probes, plan_linear_synapse, plan_elementwise_inc,
+    plan_probes, plan_linearfilter, plan_elementwise_inc,
     create_rngs, init_rngs, get_dist_enums_params, plan_whitenoise,
     plan_presentinput, plan_conv2d, plan_pool2d)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
@@ -683,14 +682,29 @@ class Simulator(nengo.Simulator):
         return [plan_lif_rate(self.queue, dt, J, R, ref, tau,
                               N=N, tau_n=tau_n, inc_n=inc_n)]
 
-    def plan_SimSynapse(self, ops):
+    def plan_SimProcess(self, all_ops):
+        class_groups = groupby(all_ops, lambda op: op.process.__class__)
+        plan_groups = defaultdict(list)
+
+        for process_class, ops in class_groups:
+            for cls in process_class.__mro__:
+                attrname = '_plan_' + cls.__name__
+                if hasattr(self, attrname):
+                    plan_groups[attrname].extend(ops)
+                    break
+            else:
+                raise NotImplementedError("Unsupported process type '%s'"
+                                          % process_class.__name__)
+
+        return [p for attr, ops in iteritems(plan_groups)
+                for p in getattr(self, attr)(ops)]
+
+    def _plan_LinearFilter(self, ops):
         for op in ops:
-            if not isinstance(op.synapse, LinearFilter):
-                raise NotImplementedError(
-                    "%r synapses" % type(op.synapse).__name__)
             if op.input.ndim != 1:
                 raise NotImplementedError("Can only filter vectors")
-        steps = [op.synapse.make_step(self.model.dt, []) for op in ops]
+        steps = [op.process.make_step(op.input.shape, op.output.shape,
+                                      self.model.dt, rng=None) for op in ops]
         A = self.RaggedArray([f.den for f in steps], dtype=np.float32)
         B = self.RaggedArray([f.num for f in steps], dtype=np.float32)
         X = self.all_data[[self.sidx[op.input] for op in ops]]
@@ -703,20 +717,7 @@ class Simulator(nengo.Simulator):
         Ybuf = CLRaggedArray(self.queue, Ybuf0)
         self._raggedarrays_to_reset[Xbuf] = Xbuf0
         self._raggedarrays_to_reset[Ybuf] = Ybuf0
-        return [plan_linear_synapse(self.queue, X, Y, A, B, Xbuf, Ybuf)]
-
-    def plan_SimProcess(self, all_ops):
-        groups = groupby(all_ops, lambda op: op.process.__class__)
-        plans = []
-        for process_class, ops in groups:
-            attrname = '_plan_' + process_class.__name__
-            if hasattr(self, attrname):
-                plans.extend(getattr(self, attrname)(ops))
-            else:
-                raise NotImplementedError("Unsupported process type '%s'"
-                                          % process_class.__name__)
-
-        return plans
+        return [plan_linearfilter(self.queue, X, Y, A, B, Xbuf, Ybuf)]
 
     def _plan_WhiteNoise(self, ops):
         assert all(op.input is None for op in ops)
@@ -726,7 +727,7 @@ class Simulator(nengo.Simulator):
 
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
         scale = self.Array([op.process.scale for op in ops], dtype=np.int32)
-        inc = self.Array([op.inc for op in ops], dtype=np.int32)
+        inc = self.Array([op.mode == 'inc' for op in ops], dtype=np.int32)
         enums, params = get_dist_enums_params([op.process.dist for op in ops])
         enums = CLRaggedArray(self.queue, enums)
         params = CLRaggedArray(self.queue, params)
@@ -746,7 +747,7 @@ class Simulator(nengo.Simulator):
         for op in ops:
             assert op.input is None and op.output is not None
             rng = op.process.get_rng(self.rng)
-            f = op.process.make_step(0, op.output.size, dt, rng)
+            f = op.process.make_step((0,), op.output.shape, dt, rng)
             signals.append(get_closures(f)['signal'])
 
         signals = self.RaggedArray(signals, dtype=np.float32)
