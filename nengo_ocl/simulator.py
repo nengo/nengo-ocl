@@ -39,10 +39,10 @@ logger = logging.getLogger(__name__)
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 
-class MultiProdUpdate(Operator):
+class MultiDotInc(Operator):
     """ y <- gamma + beta * y_in + \sum_i dot(A_i, x_i) """
 
-    def __init__(self, Y, Y_in, beta, gamma, tag, as_update=False):
+    def __init__(self, Y, Y_in, beta, gamma, tag=None):
         assert Y.ndim == 1
         self.Y = Y
         self.Y_in = Y_in
@@ -62,14 +62,10 @@ class MultiProdUpdate(Operator):
                 raise NotImplementedError('', (beta.shape, Y.shape))
         self.gamma = float(gamma)
         self.tag = tag
-        self.as_update = as_update
         self.As = []
         self.Xs = []
-        self._incs_Y = (
-            self._signal_beta is None
-            and self._float_beta == 1
-            and self.Y_in is self.Y
-            and not as_update)
+        self._incs_Y = (self._signal_beta is None and self._float_beta == 1 and
+                        self.Y_in is self.Y)
 
     @classmethod
     def convert_to(cls, op):
@@ -96,20 +92,14 @@ class MultiProdUpdate(Operator):
     @property
     def reads(self):
         rval = self.As + self.Xs
-        if self._incs_Y:
-            pass
-        else:
+        if not self._incs_Y:
             if self._signal_beta is None:
-                if self._float_beta != 0:
-                    if self.Y_in is self.Y:
-                        pass
-                    else:
-                        rval += [self.Y_in]
+                if self._float_beta != 0 and self.Y_in is not self.Y:
+                    rval += [self.Y_in]
             else:
-                if self.Y_in is self.Y:
-                    rval += [self._signal_beta]
-                else:
-                    rval += [self._signal_beta, self.Y_in]
+                rval += [self._signal_beta]
+                if self.Y_in is not self.Y:
+                    rval += [self.Y_in]
         return rval
 
     @property
@@ -118,34 +108,20 @@ class MultiProdUpdate(Operator):
 
     @property
     def sets(self):
-        if self._incs_Y:
-            return []
-        return [] if self.as_update else [self.Y]
+        return [] if self._incs_Y else [self.Y]
 
     @property
     def updates(self):
-        if self._incs_Y:
-            return []
-        return [self.Y] if self.as_update else []
+        return []
 
     def __str__(self):
-        if self._signal_beta is None:
-            beta = self._float_beta
-        else:
-            beta = self._signal_beta
-
-        dots = []
-        for A, X in zip(self.As, self.Xs):
-            dots.append('dot(%s, %s)' % (A, X))
-        return ('<MultiProdUpdate(tag=%s, as_update=%s, Y=%s,'
-                ' Y_in=%s, beta=%s,'
-                ' gamma=%s, dots=[%s]'
-                ') at 0x%x>' % (
-                    self.tag, self.as_update, self.Y,
-                    self.Y_in, beta,
-                    self.gamma,
-                    ', '.join(dots),
-                    id(self)))
+        beta = (self._float_beta if self._signal_beta is None else
+                self._signal_beta)
+        dots = ['dot(%s, %s)' % (A, X) for A, X in zip(self.As, self.Xs)]
+        return ('<MultiDotInc(tag=%s, Y=%s, Y_in=%s, beta=%s, gamma=%s, '
+                'dots=[%s]) at 0x%x>' % (
+                    self.tag, self.Y, self.Y_in, beta, self.gamma,
+                    ', '.join(dots), id(self)))
 
     def __repr__(self):
         return self.__str__()
@@ -157,29 +133,34 @@ class MultiProdUpdate(Operator):
         rval = []
         for op in operators:
             if isinstance(op, cls):
-                if op.as_update:
-                    rval.append(op)
+                if op.sets:
+                    assert len(op.sets) == 1 and len(op.incs) == 0
+                    sets.setdefault(op.sets[0], []).append(op)
                 else:
-                    assert op.sets or op.incs
-                    if op.sets:
-                        sets.setdefault(op.sets[0], []).append(op)
-                    if op.incs:
-                        incs.setdefault(op.incs[0], []).append(op)
+                    assert len(op.incs) == 1 and len(op.sets) == 0
+                    incs.setdefault(op.incs[0], []).append(op)
             else:
                 rval.append(op)
-        done = set()
+
+        # combine incs into sets if on same view
         for view, set_ops in iteritems(sets):
             set_op, = set_ops
-            done.add(set_op)
-            for inc_op in incs.get(view, []):
+            inc_ops = incs.get(view, [])
+            for inc_op in inc_ops[:]:
                 set_op.As.extend(inc_op.As)
                 set_op.Xs.extend(inc_op.Xs)
-                done.add(inc_op)
+                inc_ops.remove(inc_op)
             rval.append(set_op)
+
+        # combine remaining incs if on same view
         for view, inc_ops in iteritems(incs):
-            for inc_op in inc_ops:
-                if inc_op not in done:
-                    rval.append(inc_op)
+            if len(inc_ops) > 0:
+                inc_op0 = inc_ops[0]
+                for inc_op in inc_ops[1:]:
+                    inc_op0.As.extend(inc_op.As)
+                    inc_op0.Xs.extend(inc_op.Xs)
+                rval.append(inc_op0)
+
         return rval
 
     @staticmethod
@@ -266,7 +247,7 @@ class ViewBuilder(object):
 
     def setup_views(self, ops):
         all_views = [sig for op in ops for sig in op.all_signals]
-        for op in (op for op in ops if isinstance(op, MultiProdUpdate)):
+        for op in (op for op in ops if isinstance(op, MultiDotInc)):
             A_views, X_views, Y_view, Y_in_view, beta_view = op.get_views()
             all_views.extend(A_views + X_views + [Y_view, Y_in_view] +
                              ([beta_view] if beta_view else []))
@@ -326,9 +307,9 @@ class Simulator(nengo.Simulator):
         with Timer() as planner_timer:
             operators = list(self.model.operators)
 
-            # convert DotInc, Reset, Copy, and ProdUpdate to MultiProdUpdate
-            operators = list(map(MultiProdUpdate.convert_to, operators))
-            operators = MultiProdUpdate.compress(operators)
+            # convert DotInc and Copy to MultiDotInc
+            operators = list(map(MultiDotInc.convert_to, operators))
+            operators = MultiDotInc.compress(operators)
 
             # plan the order of operations, combining where appropriate
             op_groups = planner(operators)
@@ -419,7 +400,7 @@ class Simulator(nengo.Simulator):
     def plan_PreserveValue(self, ops):
         return []  # do nothing
 
-    def plan_MultiProdUpdate(self, ops):
+    def plan_MultiDotInc(self, ops):
         constant_bs = [op for op in ops if op._float_beta is not None]
         vector_bs = [op for op in ops
                      if op._signal_beta is not None
@@ -437,12 +418,12 @@ class Simulator(nengo.Simulator):
             constant_bs, *args,
             beta=[op._float_beta for op in constant_bs],
             gamma=[op.gamma for op in constant_bs],
-            tag='ProdUpdate-constant-beta-%d' % len(constant_bs))
+            tag='DotInc-constant-beta-%d' % len(constant_bs))
         vector_b_gemvs = self._sig_gemv(
             vector_bs, *args,
             beta=lambda op: self._YYB_views[op][2],
             gamma=[op.gamma for op in vector_bs],
-            tag='ProdUpdate-vector-beta-%d' % len(vector_bs))
+            tag='DotInc-vector-beta-%d' % len(vector_bs))
         return constant_b_gemvs + vector_b_gemvs
 
     def _sig_gemv(self, ops, A_js_fn, X_js_fn, Y_fn, Y_in_fn=None,
