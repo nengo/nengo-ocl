@@ -12,6 +12,10 @@ from nengo_ocl.plan import Plan
 from nengo_ocl.utils import as_ascii, indent, round_up
 
 
+def get_mwgs(queue, cap=256):
+    return min(queue.device.max_work_group_size, cap)
+
+
 def blockify_matrices(max_size, ras):
     # NOTE: must be contiguous
     ras = list(ras)
@@ -141,10 +145,9 @@ def plan_reset(queue, Y, values, tag=None):
         }
         """
 
-    max_group = min(queue.device.max_work_group_size, 256)
     n_per_item = 1
     local_i = 16
-    local_j = max_group // local_i
+    local_j = get_mwgs(queue, cap=256) // local_i
     # local_i = min(256, Y.sizes.max())
 
     Ysizes, Yinds, Ystarts = blockify_matrix(local_i, Y)
@@ -226,16 +229,13 @@ def plan_copy(queue, A, B, incs, tag=None):
         }
         """
 
-    max_group = min(queue.device.max_work_group_size, 256)
-    # n_per_item = 1
     local_i = 16
-    local_j = max_group // local_i
+    local_j = get_mwgs(queue) // local_i
     # local_i = min(256, A.sizes.max())
 
     sizes, inds, [Astarts, Bstarts] = blockify_vectors(local_i, [A, B])
 
     N = len(sizes)
-    # NN = -(-N // n_per_item)  # ceiling division
     lsize = (local_i, local_j)
     gsize = (local_i, round_up(N, local_j))
     # lsize = None
@@ -331,16 +331,13 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
         }
         """
 
-    max_group = min(queue.device.max_work_group_size, 256)
-    # n_per_item = 1
     local_i = 16
-    local_j = max_group // local_i
+    local_j = get_mwgs(queue) // local_i
 
     sizes, inds, [AIstarts, BIstarts] = blockify_vectors(
         local_i, [Ainds, Binds])
 
     N = len(sizes)
-    # NN = -(-N // n_per_item)  # ceiling division
     lsize = (local_i, local_j)
     gsize = (local_i, round_up(N, local_j))
 
@@ -486,8 +483,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     _fn = cl.Program(queue.context, text).build().elementwise_inc
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_group = queue.device.max_work_group_size
-    mn = min(Y.sizes.max(), max_group)
+    mn = min(Y.sizes.max(), get_mwgs(queue))
     gsize = (mn, N)
     # lsize = (mn, 1)
     lsize = None
@@ -637,7 +633,7 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     _fn = cl.Program(queue.context, text).build().linearfilter
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_len = min(max(X.shape0s), queue.device.max_work_group_size)
+    max_len = min(max(X.shape0s), get_mwgs(queue))
     gsize = (max_len, N)
     lsize = (max_len, 1)
     rval = Plan(
@@ -750,7 +746,7 @@ def plan_probes(queue, periods, X, Y, tag=None):
     _fn = cl.Program(queue.context, text).build().probes
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_len = min(queue.device.max_work_group_size, max(X.shape0s))
+    max_len = min(max(X.shape0s), get_mwgs(queue))
     gsize = (max_len, N,)
     lsize = (max_len, 1)
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_probes", tag=tag)
@@ -1120,7 +1116,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
 
 def create_rngs(queue, n):
     # max 32 states per RNG to save memory (many processes just need a few)
-    work_items = min(queue.device.max_work_group_size, 32)
+    work_items = get_mwgs(queue, cap=32)
     rngs = CLRaggedArray.from_arrays(
         queue, [np.zeros((work_items, 28), dtype=np.int32)] * n)
     return rngs
@@ -1384,7 +1380,7 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     _fn = cl.Program(queue.context, text).build().presentinput
     _fn.set_args(*[arr.data for arr in full_args])
 
-    max_len = min(queue.device.max_work_group_size, max(Y.shape0s))
+    max_len = min(max(Y.shape0s), get_mwgs(queue))
     gsize = (max_len, N)
     lsize = (max_len, 1)
     rval = Plan(
@@ -1527,7 +1523,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     sti, stj = strides
     nf_per = 16
 
-    max_group = min(queue.device.max_work_group_size, 128)
+    max_group = get_mwgs(queue, cap=128)
     assert max_group >= 32
     lsize0 = min(nyj, 32)
     lsize1 = min(max_group // lsize0, nyi)
@@ -1631,7 +1627,7 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
     """
     nc, nyi, nyj, nxi, nxj = shape
 
-    max_group = min(queue.device.max_work_group_size, 64)
+    max_group = get_mwgs(queue, cap=64)
     assert max_group >= 32
     lsize0 = min(nyj, 8)
     lsize1 = min(nyi, max_group // lsize0)
