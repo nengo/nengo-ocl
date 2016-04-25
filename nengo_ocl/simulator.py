@@ -458,22 +458,24 @@ class Simulator(nengo.Simulator):
         return [plan_reset(self.queue, targets, values)]
 
     def plan_SlicedCopy(self, ops):
-        copies, ops = split(
-            ops, lambda op: op.a_slice is Ellipsis and op.b_slice is Ellipsis)
+        copies, ops = split(ops, lambda op: (op.src_slice is Ellipsis and
+                                             op.dst_slice is Ellipsis))
 
         plans = []
         if copies:
-            A = self.all_data[[self.sidx[op.a] for op in copies]]
-            B = self.all_data[[self.sidx[op.b] for op in copies]]
+            A = self.all_data[[self.sidx[op.src] for op in copies]]
+            B = self.all_data[[self.sidx[op.dst] for op in copies]]
             incs = np.array([op.inc for op in copies], dtype=np.int32)
             plans.append(plan_copy(self.queue, A, B, incs))
 
         if ops:
-            A = self.all_data[[self.sidx[op.a] for op in ops]]
-            B = self.all_data[[self.sidx[op.b] for op in ops]]
+            A = self.all_data[[self.sidx[op.src] for op in ops]]
+            B = self.all_data[[self.sidx[op.dst] for op in ops]]
             inds = lambda ary, i: np.arange(ary.size, dtype=np.int32)[i]
-            Ainds = self.RaggedArray([inds(op.a, op.a_slice) for op in ops])
-            Binds = self.RaggedArray([inds(op.b, op.b_slice) for op in ops])
+            Ainds = self.RaggedArray(
+                [inds(op.src, op.src_slice) for op in ops])
+            Binds = self.RaggedArray(
+                [inds(op.dst, op.dst_slice) for op in ops])
             incs = np.array([op.inc for op in ops], dtype=np.int32)
             plans.append(plan_slicedcopy(self.queue, A, B, Ainds, Binds, incs))
 
