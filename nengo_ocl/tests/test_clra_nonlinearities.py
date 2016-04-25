@@ -12,7 +12,8 @@ from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA, to_device
 
 from nengo_ocl.clra_nonlinearities import (
-    plan_lif, plan_lif_rate, plan_elementwise_inc, plan_reset, plan_slicedcopy)
+    plan_lif, plan_lif_rate, plan_elementwise_inc, plan_reset, plan_slicedcopy,
+    plan_linearfilter)
 
 
 ctx = cl.create_some_context()
@@ -257,6 +258,57 @@ def test_slicedcopy(rng):
     # check result
     for y, yy in zip(B, clB.to_host()):
         assert np.allclose(y, yy)
+
+
+@pytest.mark.parametrize('n_per_kind', [
+    (100000, 0, 0), (0, 100000, 0), (0, 0, 100000), (10000, 10000, 10000)])
+def test_linearfilter(n_per_kind, rng):
+    kinds = (
+        nengo.synapses.LinearFilter((2.,), (1.,), analog=False),
+        nengo.synapses.Lowpass(0.005),
+        nengo.synapses.Alpha(0.005),
+        )
+    assert len(n_per_kind) == len(kinds)
+    kinds_n = [(kind, n) for kind, n in zip(kinds, n_per_kind) if n > 0]
+
+    dt = 0.001
+    steps = [kind.make_step((n,), (n,), dt, None, dtype=np.float32)
+             for kind, n in kinds_n]
+    A = RA([step.den for step in steps])
+    B = RA([step.num for step in steps])
+
+    X = RA([rng.normal(size=n) for kind, n in kinds_n])
+    Y = RA([np.zeros(n) for kind, n in kinds_n])
+    Xbuf = RA([np.zeros(shape) for shape in zip(B.sizes, X.sizes)])
+    Ybuf = RA([np.zeros(shape) for shape in zip(A.sizes, Y.sizes)])
+
+    queue = cl.CommandQueue(ctx)
+    clA = CLRA(queue, A)
+    clB = CLRA(queue, B)
+    clX = CLRA(queue, X)
+    clY = CLRA(queue, Y)
+    clXbuf = CLRA(queue, Xbuf)
+    clYbuf = CLRA(queue, Ybuf)
+
+    n_calls = 3
+    plan = plan_linearfilter(queue, clX, clY, clA, clB, clXbuf, clYbuf)
+    with Timer() as timer:
+        for _ in range(n_calls):
+            plan()
+
+    print(timer.duration)
+
+    for i, [kind, n] in enumerate(kinds_n):
+        n = min(n, 100)
+        step = kind.make_step((n, 1), (n, 1), dt, None, dtype=np.float32)
+
+        x = X[i][:n]
+        y = np.zeros_like(x)
+        for _ in range(n_calls):
+            y[:] = step(0, x)
+
+        z = clY[i][:n]
+        assert np.allclose(z, y, atol=1e-7, rtol=1e-5), kind
 
 
 if __name__ == '__main__':

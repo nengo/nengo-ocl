@@ -561,10 +561,9 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
                 for (; i < n; i += get_global_size(0))
                     y[i] = b[0] * x[i];
             } else if (na == 1 && nb == 1) {
-                for (; i < n; i += get_global_size(0)) {
-                    y[i] *= -a[0];
-                    y[i] += b[0] * x[i];
-                }
+                for (; i < n; i += get_global_size(0))
+                    y[i] = b[0] * x[i] - a[0] * y[i];
+    % if na_max > 1 or nb_max > 1:  # save registers: only compile if needed
             } else {  // general filtering
                 __global ${Xtype} *xbuf = Xbufdata + Xbufstarts[k];
                 __global ${Ytype} *ybuf = Ybufdata + Ybufstarts[k];
@@ -601,15 +600,17 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
 
                 Xbufpos[k] = ix1;
                 Ybufpos[k] = iy1;
+    % endif
             }
         }
         """
 
     textconf = dict(
-        Xtype=X.ctype, Ytype=Y.ctype,
-        Atype=A.ctype, Btype=B.ctype
+        Xtype=X.ctype, Ytype=Y.ctype, Atype=A.ctype, Btype=B.ctype,
+        na_max=A.sizes.max(), nb_max=B.sizes.max(),
     )
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    assert textconf['nb_max'] >= 1
 
     full_args = (
         X.cl_shape0s,
@@ -630,6 +631,14 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
         Xbufpos,
         Ybufpos,
     )
+
+    # --- build and print info (change maxregcount to avoid cache, force build)
+    # built = cl.Program(queue.context, text).build(
+    #     options=['-cl-nv-maxrregcount=55', '-cl-nv-verbose'])
+    # print(built.get_build_info(queue.device, cl.program_build_info.LOG))
+    # _fn = built.linearfilter
+    # _fn.set_args(*[arr.data for arr in full_args])
+
     _fn = cl.Program(queue.context, text).build().linearfilter
     _fn.set_args(*[arr.data for arr in full_args])
 
