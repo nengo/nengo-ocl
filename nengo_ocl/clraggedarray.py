@@ -79,6 +79,20 @@ class CLRaggedArray(object):
         return cls(queue, RaggedArray(
             arrays, names=names, dtype=dtype, align=align))
 
+    @classmethod
+    def from_buffer(cls, queue, cl_buf, starts, shape0s, shape1s,
+                    stride0s, stride1s, names=None):
+        rval = cls.__new__(cls)
+        rval.queue = queue
+        rval.starts = starts
+        rval.shape0s = shape0s
+        rval.shape1s = shape1s
+        rval.stride0s = stride0s
+        rval.stride1s = stride1s
+        rval.cl_buf = cl_buf
+        rval.names = names
+        return rval
+
     @property
     def ctype(self):
         return self.cl_buf.ctype
@@ -86,6 +100,16 @@ class CLRaggedArray(object):
     @property
     def dtype(self):
         return self.cl_buf.dtype
+
+    @property
+    def names(self):
+        return self._names
+
+    @names.setter
+    def names(self, names):
+        if names is None:
+            names = [''] * len(self.starts)
+        self._names = tuple(names)
 
     @property
     def nbytes(self):
@@ -200,16 +224,11 @@ class CLRaggedArray(object):
             item = np.arange(len(self))[item]
 
         if is_iterable(item):
-            rval = self.__class__.__new__(self.__class__)
-            rval.queue = self.queue
-            rval.starts = self.starts[item]
-            rval.shape0s = self.shape0s[item]
-            rval.shape1s = self.shape1s[item]
-            rval.stride0s = self.stride0s[item]
-            rval.stride1s = self.stride1s[item]
-            rval.cl_buf = self.cl_buf
-            rval.names = [self.names[i] for i in item]
-            return rval
+            return CLRaggedArray.from_buffer(
+                self.queue, self.cl_buf, self.starts[item],
+                self.shape0s[item], self.shape1s[item],
+                self.stride0s[item], self.stride1s[item],
+                names=[self.names[i] for i in item])
         else:
             s = self.dtype.itemsize
             return Array(
@@ -253,12 +272,6 @@ class CLRaggedArray(object):
 
     def to_host(self):
         """Copy the whole object to a host RaggedArray"""
-        rval = RaggedArray.__new__(RaggedArray)
-        rval.starts = self.starts.tolist()
-        rval.shape0s = self.shape0s.tolist()
-        rval.shape1s = self.shape1s.tolist()
-        rval.stride0s = self.stride0s.tolist()
-        rval.stride1s = self.stride1s.tolist()
-        rval.buf = self.buf
-        rval.names = self.names[:]
-        return rval
+        return RaggedArray.from_buffer(
+            self.buf, self.starts, self.shape0s, self.shape1s,
+            self.stride0s, self.stride1s, names=self.names)

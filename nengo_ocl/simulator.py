@@ -690,10 +690,12 @@ class Simulator(nengo.Simulator):
         B = self.RaggedArray([f.num for f in steps], dtype=np.float32)
         X = self.all_data[[self.sidx[op.input] for op in ops]]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        Xbuf0 = RaggedArray([np.zeros((b.size, x.size)) for b, x in zip(B, X)],
-                            dtype=np.float32)
-        Ybuf0 = RaggedArray([np.zeros((a.size, y.size)) for a, y in zip(A, Y)],
-                            dtype=np.float32)
+        Xbuf0 = RaggedArray(
+            [np.zeros(shape) for shape in zip(B.sizes, X.sizes)],
+            dtype=np.float32)
+        Ybuf0 = RaggedArray(
+            [np.zeros(shape) for shape in zip(A.sizes, Y.sizes)],
+            dtype=np.float32)
         Xbuf = CLRaggedArray(self.queue, Xbuf0)
         Ybuf = CLRaggedArray(self.queue, Ybuf0)
         self._raggedarrays_to_reset[Xbuf] = Xbuf0
