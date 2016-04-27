@@ -1,93 +1,87 @@
-
 import time
-import numpy as np
 
+import numpy as np
 import pyopencl as cl
 
 import nengo
-from nengo.templates import EnsembleArray
-from nengo.networks.circularconvolution import circconv, CircularConvolution
+from nengo.networks.circularconvolution import circconv, transform_in
 
-# import nengo_ocl
-from nengo_ocl import sim_ocl
+import nengo_ocl
 
-dims = 10
-# dims = 128
+ctx = cl.create_some_context()
+
+dim = 16
+# dim = 256
 neurons_per_product = 50
-
-n_neurons = neurons_per_product * dims
-n_neurons_d = 2 * neurons_per_product * (
-    2*dims - (2 if dims % 2 == 0 else 1))
+# neurons_per_product = 250
 radius = 1
 
-rng = np.random.RandomState(123)
-a = rng.normal(scale=np.sqrt(1./dims), size=dims)
-b = rng.normal(scale=np.sqrt(1./dims), size=dims)
+rng = np.random.RandomState(129)
+a = rng.normal(scale=np.sqrt(1./dim), size=dim)
+b = rng.normal(scale=np.sqrt(1./dim), size=dim)
 c = circconv(a, b)
 assert np.abs(a).max() < radius
 assert np.abs(b).max() < radius
 assert np.abs(c).max() < radius
 
-### model
-model = nengo.Model("circular convolution")
-inputA = model.make_node("inputA", output=a)
-inputB = model.make_node("inputB", output=b)
-A = model.add(EnsembleArray('A', nengo.LIF(n_neurons), dims, radius=radius))
-B = model.add(EnsembleArray('B', nengo.LIF(n_neurons), dims, radius=radius))
-C = model.add(EnsembleArray('C', nengo.LIF(n_neurons), dims, radius=radius))
-D = model.add(CircularConvolution('D', neurons=nengo.LIF(n_neurons_d),
-                                  dimensions=A.dimensions, radius=radius))
-
-inputA.connect_to(A)
-inputB.connect_to(B)
-A.connect_to(D.A)
-B.connect_to(D.B)
-D.connect_to(C)
-
-model.probe(A, filter=0.03)
-model.probe(B, filter=0.03)
-model.probe(C, filter=0.03)
-model.probe(D, filter=0.03)
-
 # check FFT magnitude
-d = np.dot(D.transformA, a) + np.dot(D.transformB, b)
-assert np.abs(d).max() < radius
+tr_A = transform_in(dim, 'A', invert=False)
+tr_B = transform_in(dim, 'B', invert=False)
+d = np.dot(tr_A, a) * np.dot(tr_B, b)
+assert np.abs(d).max() < (4 * radius)
+# ^ TODO: 4 * radius just seems to work from looking at Nengo code. Why?
 
-### simulation
-def OclSimulator(model):
-    ctx = cl.create_some_context()
-    return sim_ocl.Simulator(model, ctx, profiling=True)
+# --- model
+with nengo.Network(label="ProfileConv", seed=3) as model:
+    inputA = nengo.Node(a, label="inputA")
+    inputB = nengo.Node(b, label="inputB")
+    A = nengo.networks.EnsembleArray(
+        neurons_per_product, dim, radius=radius, label='A')
+    B = nengo.networks.EnsembleArray(
+        neurons_per_product, dim, radius=radius, label='B')
+    C = nengo.networks.EnsembleArray(
+        neurons_per_product, dim, radius=radius, label='C')
+    D = nengo.networks.CircularConvolution(
+        neurons_per_product, dim, input_magnitude=radius)
 
-# sim = model.simulator()
-sim = model.simulator(sim_class=OclSimulator)
+    model.config[nengo.Connection].synapse = nengo.Alpha(0.005)
+    nengo.Connection(inputA, A.input, synapse=None)
+    nengo.Connection(inputB, B.input, synapse=None)
+    nengo.Connection(A.output, D.A)
+    nengo.Connection(B.output, D.B)
+    nengo.Connection(D.output, C.input)
 
-print "Starting simulation..."
-timer = time.time()
+    model.config[nengo.Probe].synapse = nengo.Alpha(0.03)
+    A_p = nengo.Probe(A.output)
+    B_p = nengo.Probe(B.output)
+    C_p = nengo.Probe(C.output)
+    D_p = nengo.Probe(D.product.output)
+
+# --- simulation
+sim = nengo_ocl.Simulator(model, context=ctx, profiling=True)
 sim.run(1.0)
-print "Done in %s seconds" % (time.time() - timer)
-
 sim.print_profiling(sort=1)
 
-### results
+# --- results
 import matplotlib.pyplot as plt
 
-t = sim.data(model.t).flatten()
+t = sim.trange()
 
 def plot(sim, a, A, title=""):
     a_ref = np.tile(a, (len(t), 1))
-    a_sim = sim.data(A)
+    a_sim = sim.data[A]
     colors = ['b', 'g', 'r', 'c', 'm', 'y']
-    for i in xrange(min(dims, len(colors))):
+    for i in xrange(min(dim, len(colors))):
         plt.plot(t, a_ref[:,i], '--', color=colors[i])
         plt.plot(t, a_sim[:,i], '-', color=colors[i])
         plt.title(title)
 
 plt.subplot(221)
-plot(sim, a, A, title="A")
+plot(sim, a, A_p, title="A")
 plt.subplot(222)
-plot(sim, b, B, title="B")
+plot(sim, b, B_p, title="B")
 plt.subplot(223)
-plot(sim, c, C, title="C")
+plot(sim, c, C_p, title="C")
 plt.subplot(224)
-plot(sim, d, D, title="D")
-# plt.show()
+plot(sim, d, D_p, title="D")
+plt.show()

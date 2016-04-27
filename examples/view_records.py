@@ -1,29 +1,27 @@
 #!/usr/bin/env python
 import sys
 import cPickle
-from collections import defaultdict
+from collections import OrderedDict
 
-by_name = defaultdict(list)
+by_name = OrderedDict()
 
 for recfile in sys.argv[1:]:
     records = cPickle.load(open(recfile))
     for rec in records:
         rec['filename'] = recfile
-        by_name[rec['name']].append(rec)
+        by_name.setdefault(rec['name'], []).append(rec)
 
 import matplotlib.pyplot as plt
 nr = by_name.items()
-nr.sort(key=lambda (name, recs):
-        [-rec['runtime'] for rec in recs if rec['dim'] == 50][0])
 
-nr[1:1] = [('JavaNengo', None)]
+# nr[1:1] = [('JavaNengo', None)]
 
 for name, recs in nr:
     if name == 'JavaNengo':
         plt.plot([100, 200, 500], [9, 18, 45], '.-', markersize=30, label='JavaNengo')
         continue
 
-    print name.strip()
+    print(name.strip())
     if name.strip() == 'Tahiti':
         name = 'ATI Radeon HD 7970'
     if name.strip() == 'ref':
@@ -42,11 +40,12 @@ for name, recs in nr:
     runtimes = [rec['runtime'] for rec in oks]
     filenames = [rec['filename'] for rec in oks]
     for dim, rt, fname in zip(dims, runtimes, filenames):
-        print '  ', dim, rt, fname
+        print('  %4d, %8.3f, %s' % (dim, rt, fname))
     plt.plot(dims, runtimes, '.-', markersize=30, label=name.strip())
+    # plt.semilogy(dims, runtimes, '.-', markersize=30, label=name.strip())
 
 plt.xlabel('n. dimensions convolved')
 plt.ylabel('simulation time (seconds)')
-plt.ylim(0, 20)
+# plt.ylim(0, 20)
 plt.legend(loc=2)
 plt.show()
