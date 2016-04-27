@@ -862,8 +862,10 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
     decs = """
         char spiked;
         ${type} dV, overshoot;
-        const ${type} dt = ${dt}, dtu = ${dtu}, dtu_inv = ${dtu_inv},
-                      dt_inv = ${dt_inv};
+        const ${type} dtu = ${dtu}, dtu_inv = ${dtu_inv}, dt_inv = ${dt_inv};
+% if adaptive:
+        const ${type} dt = ${dt};
+% endif
         const ${type} V_threshold = 1;
         """
     # TODO: could precompute -expm1(-dtu / tau)
