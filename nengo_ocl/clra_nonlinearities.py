@@ -1,5 +1,7 @@
 from __future__ import division
 
+from collections import OrderedDict
+
 import numpy as np
 import pyopencl as cl
 from mako.template import Template
@@ -1002,9 +1004,9 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         avars[vname] = (v.ctype, offset)
         bw_per_call += v.nbytes
 
-    ivars = dict((k, avars[k]) for k in inputs.keys())
-    ovars = dict((k, avars[k]) for k in outputs.keys())
-    pvars = dict((k, avars[k]) for k in params.keys())
+    ivars = OrderedDict((k, avars[k]) for k in inputs.keys())
+    ovars = OrderedDict((k, avars[k]) for k in outputs.keys())
+    pvars = OrderedDict((k, avars[k]) for k in params.keys())
 
     fn_name = str(name)
     textconf = dict(fn_name=fn_name, declares=declares, core_text=core_text,
@@ -1016,16 +1018,16 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
     __kernel void ${fn_name}(
 % for name, [type, offset] in ivars.items():
         __global const int *${name}_starts,
-        __global const ${type} *in_${name},
+        __global const ${type} *${name}_buf,
 % endfor
 % for name, [type, offset] in ovars.items():
         __global const int *${name}_starts,
-        __global ${type} *in_${name},
+        __global ${type} *${name}_buf,
 % endfor
 % for name, [type, offset] in pvars.items():
         __global const int *${name}_starts,
         __global const int *${name}_shape0s,
-        __global const ${type} *in_${name},
+        __global const ${type} *${name}_buf,
 % endfor
         __global const int *sizes
     )
@@ -1036,13 +1038,13 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
             return;
 
 % for name, [type, offset] in ivars.items():
-        ${type} ${name} = in_${name}[${offset} + gind0];
+        ${type} ${name} = ${name}_buf[${offset} + gind0];
 % endfor
 % for name, [type, offset] in ovars.items():
         ${type} ${name};
 % endfor
 % for name, [type, offset] in pvars.items():
-        const ${type} ${name} = in_${name}[${offset} + gind0];
+        const ${type} ${name} = ${name}_buf[${offset} + gind0];
 % endfor
 % for name, [type, value] in static_params.items():
         const ${type} ${name} = ${value};
@@ -1058,7 +1060,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         /////^^^^^ USER COMPUTATIONS ABOVE ^^^^^
 
 % for name, [type, offset] in ovars.items():
-        in_${name}[${offset} + gind0] = ${name};
+        ${name}_buf[${offset} + gind0] = ${name};
 % endfor
     }
     """

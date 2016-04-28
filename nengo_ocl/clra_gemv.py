@@ -122,7 +122,7 @@ class gemv_prog(object):
         if items is None:
             gg = self.geometry
         else:
-            gg = map(self.geometry.__getitem__, items)
+            gg = [self.geometry[i] for i in items]
 
         outputs = len(gg)
         dots = np.array([len(g['dots']) for g in gg])
@@ -967,7 +967,7 @@ def block_impl(p, items):
         clYbuf,
     )
 
-    source = """
+    text = """
     __kernel void fn(
         __global const int *gstructure,
         __global const ${A.ctype} *Adata,
@@ -1019,8 +1019,8 @@ def block_impl(p, items):
     }
     """
 
-    source = Template(source, output_encoding='ascii').render(**textconf)
-    kernel = cl.Program(p.queue.context, source).build().fn
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    kernel = cl.Program(p.queue.context, text).build().fn
     kernel.set_args(*[arr.data for arr in full_args])
 
     plan = Plan(p.queue, kernel, gsize, lsize,
@@ -1077,7 +1077,7 @@ def block_impl(p, items):
     lsize_reduce = None
     gsize_reduce = (block_y, Nreduce)
 
-    source_reduce = """
+    text_reduce = """
     __kernel void reduce(
         __global const int *shape0s,
         __global const int *Ishape0s,
@@ -1112,9 +1112,9 @@ def block_impl(p, items):
     }
     """
 
-    source_reduce = Template(source_reduce, output_encoding='ascii').render(
-        **textconf_reduce)
-    kernel_reduce = cl.Program(p.queue.context, source_reduce).build().reduce
+    text_reduce = as_ascii(Template(
+        text_reduce, output_encoding='ascii').render(**textconf_reduce))
+    kernel_reduce = cl.Program(p.queue.context, text_reduce).build().reduce
     kernel_reduce.set_args(*[arr.data for arr in full_args_reduce])
 
     plan_reduce = Plan(p.queue, kernel_reduce, gsize_reduce, lsize_reduce,
