@@ -977,8 +977,8 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
     input0 = list(inputs.values())[0]   # input to use as reference for lengths
 
     # split parameters into static and updated params
-    static_params = {}  # static params (hard-coded)
-    params = {}  # variable params (updated)
+    static_params = OrderedDict()  # static params (hard-coded)
+    params = OrderedDict()  # variable params (updated)
     for k, v in parameters.items():
         if isinstance(v, CLRaggedArray):
             params[k] = v
@@ -989,7 +989,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
                 "Parameter %r must be CLRaggedArray or float (got %s)"
                 % (k, type(v)))
 
-    avars = {}
+    avars = OrderedDict()
     bw_per_call = 0
     for vname, v in (list(inputs.items()) + list(outputs.items()) +
                      list(params.items())):
