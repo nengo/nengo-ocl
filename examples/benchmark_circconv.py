@@ -26,7 +26,8 @@ else:
 
 dims = map(int, sys.argv[2].split(','))
 
-neurons_per_product = 128
+# neurons_per_product = 128
+neurons_per_product = 256
 simtime = 1.0
 radius = 1
 
@@ -90,6 +91,7 @@ for i, dim in enumerate(dims):
             ('dim', dim),
             ('simtime', simtime),
             ('neurons_per_product', neurons_per_product),
+            ('neurons', sum(e.n_neurons for e in model.all_ensembles)),
             ('status', 'ok'),
             ('profiling', getattr(sim, 'profiling', 0)),
             ('buildtime', t_sim - t_start),

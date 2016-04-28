@@ -12,8 +12,8 @@ ctx = cl.create_some_context()
 
 dim = 16
 # dim = 256
-neurons_per_product = 50
-# neurons_per_product = 250
+neurons_per_product = 64
+# neurons_per_product = 256
 radius = 1
 
 rng = np.random.RandomState(129)
