@@ -1,1 +1,1 @@
-from .nengo_tests import Simulator
+from .test_nengo import Simulator
