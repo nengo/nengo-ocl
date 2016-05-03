@@ -3,6 +3,10 @@ from collections import OrderedDict
 import numpy as np
 
 from nengo.utils.compat import PY2
+try:
+    from nengo.utils.stdlib import Timer
+except ImportError:
+    from nengo.utils.testing import Timer  # noqa: F401
 
 
 def as_ascii(string):

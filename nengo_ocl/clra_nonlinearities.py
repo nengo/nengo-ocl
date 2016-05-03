@@ -1681,7 +1681,8 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
         __global ${type} *delta = delta_data + delta_starts[k];
         const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
         const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
-        const ${type} theta = theta_data[theta_starts[k] + i*theta_stride0s[k]];
+        const ${type} theta = theta_data[
+            theta_starts[k] + i*theta_stride0s[k]];
         const ${type} alpha = alphas[k];
 
         if (i < shape0) {

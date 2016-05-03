@@ -1,7 +1,8 @@
 import numpy as np
-
 import pyopencl as cl
+import pytest
 
+import nengo
 from nengo.builder import Model
 from nengo.builder.operator import DotInc, PreserveValue, Reset
 from nengo.builder.signal import Signal
@@ -35,3 +36,21 @@ def test_multidotinc_compress():
         sim.step()
         assert np.allclose(sim.signals[a], [4, -1])
         assert np.allclose(sim.signals[b], [4, -2])
+
+
+def test_version(monkeypatch):
+    from nengo_ocl.version import latest_nengo_version_info
+
+    monkeypatch.setattr(nengo.version, 'version_info', (2, 0, 0))
+
+    with nengo.Network() as model:
+        nengo.Ensemble(10, 1)
+
+    with pytest.raises(ValueError):
+        OclSimulator(model)
+
+    next_version = list(latest_nengo_version_info)
+    next_version[-1] += 1
+    monkeypatch.setattr(nengo.version, 'version_info', tuple(next_version))
+    with pytest.warns(UserWarning):
+        OclSimulator(model)

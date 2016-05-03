@@ -10,6 +10,8 @@ import numpy as np
 import pyopencl as cl
 
 import nengo
+import nengo.version
+import nengo.utils.numpy as npext
 from nengo.cache import get_default_decoder_cache
 from nengo.exceptions import SimulatorClosed
 from nengo.simulator import ProbeDict
@@ -18,8 +20,7 @@ from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalDict
 from nengo.utils.compat import iteritems, StringIO
 from nengo.utils.progress import ProgressTracker
-import nengo.utils.numpy as npext
-from nengo.utils.stdlib import groupby, Timer
+from nengo.utils.stdlib import groupby
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
@@ -33,7 +34,8 @@ from nengo_ocl.clra_nonlinearities import (
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.planners import greedy_planner
 from nengo_ocl.ast_conversion import OCL_Function
-from nengo_ocl.utils import get_closures, indent, split, stable_unique
+from nengo_ocl.utils import get_closures, indent, split, stable_unique, Timer
+from nengo_ocl.version import latest_nengo_version, latest_nengo_version_info
 
 logger = logging.getLogger(__name__)
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
@@ -261,6 +263,8 @@ class ViewBuilder(object):
 
 class Simulator(nengo.Simulator):
 
+    unsupported = []
+
     def Array(self, val, dtype=np.float32):
         return to_device(self.queue, np.asarray(val, dtype=dtype))
 
@@ -270,6 +274,23 @@ class Simulator(nengo.Simulator):
     def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
                  n_prealloc_probes=32, profiling=None, ocl_only=False,
                  planner=greedy_planner):
+        # --- create these first since they are used in __del__
+        self.closed = False
+        self.model = None
+
+        # --- check version
+        if nengo.version.version_info[:2] != latest_nengo_version_info[:2]:
+            raise ValueError(
+                "This simulator only supports Nengo %s.x (got %s)" %
+                ('.'.join(str(i) for i in latest_nengo_version_info[:2]),
+                 nengo.__version__))
+        elif nengo.version.version_info > latest_nengo_version_info:
+            warnings.warn("This version of `nengo_ocl` has not been tested "
+                          "with your `nengo` version (%s). The latest fully "
+                          "supported version is %s" % (
+                              nengo.__version__, latest_nengo_version))
+
+        # --- arguments/attributes
         if context is None:
             print('No context argument was provided to nengo_ocl.Simulator')
             print("Calling pyopencl.create_some_context() for you now:")
@@ -287,8 +308,6 @@ class Simulator(nengo.Simulator):
         self.ocl_only = ocl_only
 
         # --- Nengo build
-        self.closed = False
-
         with Timer() as nengo_timer:
             if model is None:
                 self.model = Model(dt=float(dt),
@@ -363,8 +382,7 @@ class Simulator(nengo.Simulator):
         logger.info("Signals in %0.3f s" % signals_timer.duration)
 
         # --- set seed
-        seed = np.random.randint(npext.maxint) if seed is None else seed
-        self.seed = seed
+        self.seed = np.random.randint(npext.maxint) if seed is None else seed
         self._reset_rng()
 
         # --- create list of plans
@@ -802,7 +820,8 @@ class Simulator(nengo.Simulator):
         post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
         encoders = self.all_data[[self.sidx[op.scaled_encoders] for op in ops]]
         delta = self.all_data[[self.sidx[op.delta] for op in ops]]
-        learning_signal = self.all_data[[self.sidx[op.learning_signal] for op in ops]]
+        learning_signal = self.all_data[
+            [self.sidx[op.learning_signal] for op in ops]]
         scale = self.RaggedArray([op.scale for op in ops], dtype=np.float32)
         alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
         return [plan_voja(self.queue, pre, post, encoders, delta,
