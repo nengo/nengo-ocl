@@ -24,9 +24,6 @@ def read(*filenames, **kwargs):
 root = os.path.dirname(os.path.realpath(__file__))
 version_module = imp.load_source(
     'version', os.path.join(root, 'nengo_ocl', 'version.py'))
-description = ("OpenCL-backed neural simulations using the methods "
-               "of the Neural Engineering Framework.")
-long_description = read('README.rst', 'CHANGES.rst')
 
 setup(
     name="nengo_ocl",
@@ -35,13 +32,30 @@ setup(
     author_email="info@appliedbrainresearch.com",
     packages=find_packages(),
     scripts=[],
+    data_files=[],
     url="https://github.com/nengo/nengo_ocl",
-    license="See LICENSE.rst",
-    description=description,
-    long_description=long_description,
+    license="Free for non-commercial use",
+    description=("OpenCL-backed neural simulations using the "
+                 "Neural Engineering Framework"),
+    long_description=read('README.rst', 'CHANGES.rst'),
+    zip_safe=False,
     install_requires=[
-        "nengo",
-        "networkx",
-        "pyopencl",
+        'nengo',
+        'mako',
+        'pyopencl',
     ],
+    tests_require=[
+        'matplotlib>=1.4',
+        'pytest>=2.9',
+    ],
+    classifiers=[  # https://pypi.python.org/pypi?%3Aaction=list_classifiers
+        'Development Status :: 5 - Production/Stable',
+        'Intended Audience :: Science/Research',
+        'License :: Free for non-commercial use',
+        'Operating System :: OS Independent',
+        'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
+        'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    ]
 )
