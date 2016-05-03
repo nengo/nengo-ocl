@@ -840,7 +840,6 @@ ${code}
          output.sizes.mean(), output.sizes.min(), output.sizes.max()))
     return rval
 
-
 def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
              inc_n=None, upsample=1, **kwargs):
     adaptive = N is not None
@@ -869,6 +868,8 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
         const ${type} dt = ${dt};
 % endif
         const ${type} V_threshold = 1;
+        int B1,b2, b2n;
+
         """
     # TODO: could precompute -expm1(-dtu / tau)
     text = """
@@ -876,28 +877,45 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
 
 % for ii in range(upsample):
 % if adaptive:
-        dV = -expm1(-dtu / tau) * (J - N - V);
+        dV = -(half_exp(-dtu / tau) * (J - N - V) -1);
 % else:
         dV = -expm1(-dtu / tau) * (J - V);
 % endif
         V += dV;
         W -= dtu;
+        //V != 0 if V > 0
+        B1 = ((int)V >> 31);
+        B1 = ((1)&~B1) | ((0)&B1);
 
-        if (V < 0 || W > dtu)
-            V = 0;
-        else if (W >= 0)
-            V *= 1 - W * dtu_inv;
+        V = B1 * V;
 
-        if (V > V_threshold) {
-            overshoot = dtu * (V - V_threshold) / dV;
-            W = ref - overshoot + dtu;
-            V = 0;
-            spiked = 1;
-        }
+
+        //W >= 0
+        B1 = ((int)W >> 31);
+        B1 = ((0)&B1) | ((1)&~B1);
+
+        //W > dtu
+        b2 = ((int)(W - dtu)>>31);
+        b2 = ((0)&b2) | ((1)&~b2);
+        //W <= dtu
+        b2n = abs(b2 - 1);
+
+        //(W > dtu OR V > 0) OR  (W <= dtu AND W >= 0 AND V > 0)
+        //OR ELSE => V
+        V = b2 * V + (b2n * B1) * (V * (1 - W * dtu_inv)) + abs(B1 - 1) * V;
+
+
+        B1 =(int)(V - V_threshold) >> 31;
+        B1 = ((1)&~B1) | ((0)&B1);
+
+        spiked = B1;
+        overshoot = B1 * (dtu * (V - V_threshold)/dV);
+        W +=  B1* (ref - overshoot + dtu);
+        V *= abs(B1 - 1);
 % endfor
         outV = V;
         outW = W;
-        outS = (spiked) ? dt_inv : 0;
+        outS = spiked * dt_inv;
 % if adaptive:
         outN = N + (dt / tau_n) * (inc_n * outS - N);
 % endif
