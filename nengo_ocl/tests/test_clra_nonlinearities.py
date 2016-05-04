@@ -95,9 +95,9 @@ def test_lif_speed(rng, heterogeneous):
     ref = 2e-3
     tau = 20e-3
 
-    n_iters = 10
+    n_iters = 1000
     if heterogeneous:
-        n_neurons = [1.0e5] * 50 + [1e3] * 5000
+        n_neurons = [1.0e5] * 50 + [1e3] * 500
     else:
         n_neurons = [1.1e5] * 50
     n_neurons = list(map(int, n_neurons))
@@ -312,4 +312,5 @@ def test_linearfilter(n_per_kind, rng):
 
 
 if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+   test_lif_speed(np.random.RandomState(1234567890),True)
+   #pytest.main([__file__, '-v'])
