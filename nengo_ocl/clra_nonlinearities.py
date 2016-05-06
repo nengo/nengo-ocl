@@ -433,7 +433,13 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             __global ${Ytype} *Ydata
         )
         {
+            const int ij = get_global_id(0);
             const int n = get_global_id(1);
+
+            const int Yshape1 = Yshape1s[n];
+            if (ij >= Yshape0s[n] * Yshape1)
+                return;
+
             __global const ${Atype} *a = Adata + Astarts[n];
             __global const ${Xtype} *x = Xdata + Xstarts[n];
             __global ${Ytype} *y = Ydata + Ystarts[n];
@@ -444,21 +450,14 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             const int Xshape0 = Xshape0s[n];
             const int Xshape1 = Xshape1s[n];
             const int Xstride0 = Xstride0s[n];
-            const int Yshape1 = Yshape1s[n];
             const int Ystride0 = Ystride0s[n];
-            const int Ysize = Yshape0s[n] * Yshape1;
 
-            for (int ij = get_global_id(0);
-                 ij < Ysize;
-                 ij += get_global_size(0))
-            {
-                int i = ij / Yshape1;
-                int j = ij % Yshape1;
+            int i = ij / Yshape1;
+            int j = ij % Yshape1;
 
-                ${Atype} aa = get_element(a, Ashape0, Ashape1, Astride0, i, j);
-                ${Xtype} xx = get_element(x, Xshape0, Xshape1, Xstride0, i, j);
-                y[i * Ystride0 + j] += aa * xx;
-            }
+            ${Atype} aa = get_element(a, Ashape0, Ashape1, Astride0, i, j);
+            ${Xtype} xx = get_element(x, Xshape0, Xshape1, Xstride0, i, j);
+            y[i * Ystride0 + j] += aa * xx;
         }
         """
 
@@ -485,9 +484,8 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     _fn = cl.Program(queue.context, text).build().elementwise_inc
     _fn.set_args(*[arr.data for arr in full_args])
 
-    mn = min(Y.sizes.max(), get_mwgs(queue))
+    mn = Y.sizes.max()
     gsize = (mn, N)
-    # lsize = (mn, 1)
     lsize = None
     plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_elementwise_inc", tag=tag)
