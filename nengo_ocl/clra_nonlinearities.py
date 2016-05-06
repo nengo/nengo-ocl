@@ -1446,25 +1446,15 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
         const int i0 = (i - ti)*${sti} - ${pi};
         __local ${type} patch[${nipatch}][${njpatch}];
     % if conv:
-        __local ${type} filters[${nf*si*sj}];
+        __local ${type} filter[${si*sj}];
     % else:
         f += ij;
     % endif
         x += ${xstart};
         y += ${ystart};
 
-    % if conv or nf_per >= nf:
-        ${type} outs[${nf}];
-        for (int k = 0; k < ${nf}; k++)
-            outs[k] = b[k*${nyi*nyj} + ij];
-    % else:
-        const int k0 = get_global_id(2);
-        const int ksize = get_global_size(2);
-
-        ${type} outs[${nf_per}];
-        for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
-            outs[k] = (kk < ${nf}) ? b[kk*${nyi*nyj} + ij] : 0;
-    % endif
+        const int kk = get_global_id(2);
+        ${type} out = b[kk*${nyi*nyj} + ij];
 
         for (int c = 0; c < ${nc}; c++) {
 
@@ -1483,49 +1473,27 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
 
     % if conv:
             // load filters
-            __global const ${type} *fc = f + c*${si*sj}*${nf};
-            for (int k = tij; k < ${si*sj} * ${nf}; k += lsize) {
-                filters[k] = fc[k];
+            __global const ${type} *fc = f + kk*${nc*si*sj} + c*${si*sj};
+            for (int k = tij; k < ${si*sj}; k += lsize) {
+                filter[k] = fc[k];
             }
     % endif
-
             barrier(CLK_LOCAL_MEM_FENCE);
 
-            for (int ii = 0; ii < ${si}; ii++) {
-            for (int jj = 0; jj < ${sj}; jj++) {
-                const ${type} xcij = patch[${sti}*ti+ii][${stj}*tj+jj];
+            for (int ii = 0; ii < ${si}; ii++)
+            for (int jj = 0; jj < ${sj}; jj++)
     % if conv:
-                __local const ${type} *fcij = &filters[(ii*${sj} + jj)*${nf}];
+                out += filter[ii*${sj}+jj] * patch[${sti}*ti+ii][${stj}*tj+jj];
     % else:
-                __global const ${type} *fcij =
-                    &f[(c*${si*sj} + ii*${sj} + jj)*${nf}*${nyi*nyj}];
+                out += f[((kk*${nc} + c)*${si*sj} + ii*${sj} + jj)*${nyi*nyj}]
+                       * patch[${sti}*ti+ii][${stj}*tj+jj];
     % endif
-
-    % if conv:
-                for (int k = 0; k < ${nf}; k++)
-                    outs[k] += fcij[k] * xcij;
-    % elif nf_per >= nf:
-                for (int k = 0; k < ${nf}; k++)
-                    outs[k] += fcij[k*${nyi*nyj}] * xcij;
-    % else:
-                for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
-                    outs[k] += (kk < ${nf}) ? fcij[kk*${nyi*nyj}] * xcij : 0;
-    % endif
-            }
-            }
 
             barrier(CLK_LOCAL_MEM_FENCE);
         }
 
-        if (i < ${nyi} && j < ${nyj}) {
-    % if conv or nf_per >= nf:
-            for (int k = 0; k < ${nf}; k++)
-                y[k*${nyi*nyj} + ij] = outs[k];
-    % else:
-            for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
-                if (kk < ${nf})  y[kk*${nyi*nyj} + ij] = outs[k];
-    % endif
-        }
+        if (i < ${nyi} && j < ${nyj})
+            y[kk*${nyi*nyj} + ij] = out;
     }
     """
 
@@ -1534,17 +1502,13 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     si, sj = kernel_shape
     pi, pj = padding
     sti, stj = strides
-    nf_per = 16
 
     max_group = get_mwgs(queue, cap=128)
     assert max_group >= 32
     lsize0 = min(nyj, 32)
     lsize1 = min(max_group // lsize0, nyi)
-    lsize = (lsize0, lsize1)
-    gsize = (round_up(nyj, lsize[0]), round_up(nyi, lsize[1]))
-    if not conv and nf_per < nf:
-        lsize = lsize + (1,)
-        gsize = gsize + (int(np.ceil(nf / nf_per)),)
+    lsize = (lsize0, lsize1, 1)
+    gsize = (round_up(nyj, lsize[0]), round_up(nyi, lsize[1]), nf)
 
     njpatch = (lsize[0] - 1) * stj + sj
     nipatch = (lsize[1] - 1) * sti + si
@@ -1556,7 +1520,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
 
     textconf = dict(
         type=X.ctype, conv=conv, nf=nf, nxi=nxi, nxj=nxj, nyi=nyi, nyj=nyj,
-        nc=nc, si=si, sj=sj, pi=pi, pj=pj, sti=sti, stj=stj, nf_per=nf_per,
+        nc=nc, si=si, sj=sj, pi=pi, pj=pj, sti=sti, stj=stj,
         nipatch=nipatch, njpatch=njpatch, npatch=npatch,
         xstart=X.start, ystart=Y.start)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))

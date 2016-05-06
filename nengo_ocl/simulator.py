@@ -756,8 +756,8 @@ class Simulator(nengo.Simulator):
             conv = (f.ndim == 4)
             X = self.all_data.getitem_device(self.sidx[op.input])
             Y = self.all_data.getitem_device(self.sidx[op.output])
-            f = np.array(np.transpose(
-                f, (1, 2, 3, 0) if conv else (3, 4, 5, 0, 1, 2)), order='C')
+            f = np.asarray(np.transpose(
+                f, (0, 1, 2, 3) if conv else (0, 3, 4, 5, 1, 2)), order='C')
             F = self.Array(f.ravel())
             B = self.Array((np.zeros(p.shape_out) + b).ravel())
             plans.append(plan_conv2d(
