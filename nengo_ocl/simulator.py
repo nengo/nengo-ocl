@@ -769,7 +769,7 @@ class Simulator(nengo.Simulator):
         Ybuf = CLRaggedArray(self.queue, Ybuf0)
         self._raggedarrays_to_reset[Xbuf] = Xbuf0
         self._raggedarrays_to_reset[Ybuf] = Ybuf0
-        return [plan_linearfilter(self.queue, X, Y, A, B, Xbuf, Ybuf)]
+        return plan_linearfilter(self.queue, X, Y, A, B, Xbuf, Ybuf)
 
     def _plan_WhiteNoise(self, ops):
         assert all(op.input is None for op in ops)

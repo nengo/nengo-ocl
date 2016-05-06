@@ -291,10 +291,10 @@ def test_linearfilter(n_per_kind, rng):
     clYbuf = CLRA(queue, Ybuf)
 
     n_calls = 3
-    plan = plan_linearfilter(queue, clX, clY, clA, clB, clXbuf, clYbuf)
+    plans = plan_linearfilter(queue, clX, clY, clA, clB, clXbuf, clYbuf)
     with Timer() as timer:
         for _ in range(n_calls):
-            plan()
+            [plan() for plan in plans]
 
     print(timer.duration)
 
