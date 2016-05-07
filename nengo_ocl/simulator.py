@@ -754,17 +754,16 @@ class Simulator(nengo.Simulator):
             p, f, b = op.process, op.process.filters, op.process.biases
             assert f.ndim in [4, 6]
             conv = (f.ndim == 4)
+            kernel_shape = f.shape[-2:]
             X = self.all_data.getitem_device(self.sidx[op.input])
             Y = self.all_data.getitem_device(self.sidx[op.output])
-            f = np.asarray(np.transpose(
+            ftrans = np.asarray(np.transpose(
                 f, (0, 1, 2, 3) if conv else (0, 3, 4, 5, 1, 2)), order='C')
-            F = self.Array(f.ravel())
+            F = self.Array(ftrans.ravel())
             B = self.Array((np.zeros(p.shape_out) + b).ravel())
             plans.append(plan_conv2d(
                 self.queue, X, Y, F, B, p.shape_in, p.shape_out,
-                p.filters.shape[-2:], conv, p.padding, p.stride,
-                tag="shape_in=%s, shape_out=%s, kernel=%s, conv=%s" % (
-                    p.shape_in, p.shape_out, f.shape[-2:], conv)))
+                kernel_shape, conv, p.padding, p.stride))
 
         return plans
 
