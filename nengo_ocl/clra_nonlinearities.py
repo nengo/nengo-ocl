@@ -1518,31 +1518,40 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
         const int i = get_global_id(1);
         const int k = get_global_id(2);
         const int ij = i*${nyj} + j;
+        const int ijk = k*${nyi*nyj} + i*${nyj} + j;
 
         const int tj = get_local_id(0);
         const int ti = get_local_id(1);
+        const int tk = get_local_id(2);
         const int lsizej = get_local_size(0);
         const int lsizei = get_local_size(1);
-        const int lsize = lsizei * lsizej;
-        const int tij = ti*lsizej + tj;
+        const int lsizek = get_local_size(2);
+
+        const int lsizeij = lsizei*lsizej;
+        const int tij = tj + ti*lsizej;
+
+        const int lsize = lsizei*lsizej*lsizek;
+        const int tijk = get_local_id(0) + get_local_id(1)*get_local_size(0) +
+                         get_local_id(2)*get_local_size(0)*get_local_size(1);
         const int j0 = (j - tj)*${stj} - ${pj};
         const int i0 = (i - ti)*${sti} - ${pi};
         __local ${type} patch[${nipatch}][${njpatch}];
     % if conv:
-        __local ${type} filter[${si*sj}];
+        __local ${type} filter[${nf_per}][${si*sj}];
+        f += k*${nc*si*sj};
     % else:
-        f += ij;
+        f += k*${nc*si*sj*nyi*nyj} + ij;
     % endif
         x += ${xstart};
         y += ${ystart};
 
-        ${type} out = b[k*${nyi*nyj} + ij];
+        ${type} out = b[ijk];
 
         for (int c = 0; c < ${nc}; c++) {
 
             // load image section
             __global const ${type} *xc = &x[c * ${nxi * nxj}];
-            for (int kij = tij; kij < ${npatch}; kij += lsize) {
+            for (int kij = tijk; kij < ${npatch}; kij += lsize) {
                 const int ki = kij / ${njpatch};
                 const int kj = kij % ${njpatch};
                 const int ii = i0 + ki;
@@ -1555,27 +1564,28 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
 
     % if conv:
             // load filters
-            __global const ${type} *fc = f + k*${nc*si*sj} + c*${si*sj};
-            for (int kij = tij; kij < ${si*sj}; kij += lsize) {
-                filter[kij] = fc[kij];
-            }
+            __global const ${type} *fc = f + c*${si*sj};
+            for (int kij = tij; kij < ${si*sj}; kij += lsizeij)
+                filter[tk][kij] = fc[kij];
+    % else:
+            __global const ${type} *filter = f + c*${si*sj*nyi*nyj};
     % endif
             barrier(CLK_LOCAL_MEM_FENCE);
 
             for (int ii = 0; ii < ${si}; ii++)
             for (int jj = 0; jj < ${sj}; jj++)
+                out += patch[${sti}*ti+ii][${stj}*tj+jj]
     % if conv:
-                out += filter[ii*${sj}+jj] * patch[${sti}*ti+ii][${stj}*tj+jj];
+                    * filter[tk][ii*${sj}+jj];
     % else:
-                out += f[((k*${nc} + c)*${si*sj} + ii*${sj} + jj)*${nyi*nyj}]
-                       * patch[${sti}*ti+ii][${stj}*tj+jj];
+                    * filter[(ii*${sj}+jj)*${nyi*nyj}];
     % endif
 
             barrier(CLK_LOCAL_MEM_FENCE);
         }
 
-        if (i < ${nyi} && j < ${nyj})
-            y[k*${nyi*nyj} + ij] = out;
+        if (i < ${nyi} && j < ${nyj} && k < ${nf})
+            y[ijk] = out;
     }
     """
 
@@ -1585,12 +1595,31 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     pi, pj = padding
     sti, stj = strides
 
-    max_group = get_mwgs(queue, cap=256)
+    max_group = get_mwgs(queue, cap=128)
+    # max_group = get_mwgs(queue, cap=256)
     assert max_group >= 32
-    lsize0 = min(nyj, 32)
-    lsize1 = min(max_group // lsize0, nyi)
-    lsize = (lsize0, lsize1, 1)
-    gsize = (round_up(nyj, lsize[0]), round_up(nyi, lsize[1]), nf)
+
+    lsize = (6, 6, 4)
+    gsize = (round_up(nyj, lsize[0]),
+             round_up(nyi, lsize[1]),
+             round_up(nf, lsize[2]))
+
+    # lsize0 = min(nyj, 32)
+    # lsize1 = min(max_group // lsize0, nyi, 32)
+    # lsize2 = min(max_group // (lsize0 * lsize1), nf)
+    # lsize = (lsize0, lsize1, lsize2)
+    # gsize = (round_up(nyj, lsize[0]),
+    #          round_up(nyi, lsize[1]),
+    #          round_up(nf, lsize[2]))
+    # print(lsize)
+    # print(gsize)
+
+    # lsize0 = min(nyj, 32)
+    # lsize1 = min(max_group // lsize0, nyi)
+    # lsize = (lsize0, lsize1, 1)
+    # gsize = (round_up(nyj, lsize[0]),
+    #          round_up(nyi, lsize[1]),
+    #          nf)
 
     njpatch = (lsize[0] - 1) * stj + sj
     nipatch = (lsize[1] - 1) * sti + si
@@ -1603,7 +1632,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     textconf = dict(
         type=X.ctype, conv=conv, nf=nf, nxi=nxi, nxj=nxj, nyi=nyi, nyj=nyj,
         nc=nc, si=si, sj=sj, pi=pi, pj=pj, sti=sti, stj=stj,
-        nipatch=nipatch, njpatch=njpatch, npatch=npatch,
+        nipatch=nipatch, njpatch=njpatch, npatch=npatch, nf_per=lsize[2],
         xstart=X.start, ystart=Y.start)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
