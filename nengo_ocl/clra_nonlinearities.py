@@ -1514,18 +1514,17 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
         __global ${type} *y
     )
     {
-        const int j = get_global_id(0);
-        const int i = get_global_id(1);
-        const int k = get_global_id(2);
+        const int j = get_global_id(1);
+        const int i = get_global_id(2);
+        const int k = get_global_id(0);
         const int ij = i*${nyj} + j;
-        const int ijk = k*${nyi*nyj} + i*${nyj} + j;
 
-        const int tj = get_local_id(0);
-        const int ti = get_local_id(1);
-        const int tk = get_local_id(2);
-        const int lsizej = get_local_size(0);
-        const int lsizei = get_local_size(1);
-        const int lsizek = get_local_size(2);
+        const int tj = get_local_id(1);
+        const int ti = get_local_id(2);
+        const int tk = get_local_id(0);
+        const int lsizej = get_local_size(1);
+        const int lsizei = get_local_size(2);
+        const int lsizek = get_local_size(0);
 
         const int lsizeij = lsizei*lsizej;
         const int tij = tj + ti*lsizej;
@@ -1537,15 +1536,16 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
         const int i0 = (i - ti)*${sti} - ${pi};
         __local ${type} patch[${nipatch}][${njpatch}];
     % if conv:
-        __local ${type} filter[${nf_per}][${si*sj}];
-        f += k*${nc*si*sj};
+        __local ${type} filter[${si*sj}][${nf_per}];
+        f += k;
     % else:
-        f += k*${nc*si*sj*nyi*nyj} + ij;
+        f += ij*${nf} + k;
     % endif
         x += ${xstart};
         y += ${ystart};
 
-        ${type} out = b[ijk];
+        const int out_ijk = k*${nyi*nyj} + i*${nyj} + j;
+        ${type} out = b[out_ijk];
 
         for (int c = 0; c < ${nc}; c++) {
 
@@ -1564,11 +1564,11 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
 
     % if conv:
             // load filters
-            __global const ${type} *fc = f + c*${si*sj};
+            __global const ${type} *fc = f + c*${si*sj*nf};
             for (int kij = tij; kij < ${si*sj}; kij += lsizeij)
-                filter[tk][kij] = fc[kij];
+                filter[kij][tk] = fc[kij*${nf}];
     % else:
-            __global const ${type} *filter = f + c*${si*sj*nyi*nyj};
+            __global const ${type} *filter = f + c*${si*sj*nyi*nyj*nf};
     % endif
             barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -1576,16 +1576,16 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
             for (int jj = 0; jj < ${sj}; jj++)
                 out += patch[${sti}*ti+ii][${stj}*tj+jj]
     % if conv:
-                    * filter[tk][ii*${sj}+jj];
+                    * filter[ii*${sj}+jj][tk];
     % else:
-                    * filter[(ii*${sj}+jj)*${nyi*nyj}];
+                    * filter[(ii*${sj}+jj)*${nyi*nyj*nf}];
     % endif
 
             barrier(CLK_LOCAL_MEM_FENCE);
         }
 
         if (i < ${nyi} && j < ${nyj} && k < ${nf})
-            y[ijk] = out;
+            y[out_ijk] = out;
     }
     """
 
@@ -1599,10 +1599,19 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     # max_group = get_mwgs(queue, cap=256)
     assert max_group >= 32
 
-    lsize = (6, 6, 4)
-    gsize = (round_up(nyj, lsize[0]),
-             round_up(nyi, lsize[1]),
-             round_up(nf, lsize[2]))
+    # # lsize = (8, 8, 4)
+    # lsize = (4, 4, 16)
+    # gsize = (round_up(nyj, lsize[0]),
+    #          round_up(nyi, lsize[1]),
+    #          round_up(nf, lsize[2]))
+
+    lsize = (16, 4, 4)
+    # lsize = (32, 4, 4)
+    # lsize = (32, 4, 1)
+    gsize = (round_up(nf, lsize[0]),
+             round_up(nyj, lsize[1]),
+             round_up(nyi, lsize[2]),
+    )
 
     # lsize0 = min(nyj, 32)
     # lsize1 = min(max_group // lsize0, nyi, 32)
