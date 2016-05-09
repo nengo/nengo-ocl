@@ -93,6 +93,14 @@ class Plan(BasePlan):
             self._events_to_profile.append(ev)
         return ev
 
+    def __str__(self):
+        return '<%s%s %s %s>' % (
+            self.name,
+            ": %s" % self.tag if self.tag else "",
+            self.gsize,
+            self.lsize,
+        )
+
     def __repr__(self):
         return '%s{%s%s %s %s}' % (
             self.__class__.__name__,

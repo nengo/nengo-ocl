@@ -418,12 +418,12 @@ class Simulator(nengo.Simulator):
             constant_bs, *args,
             beta=[op._float_beta for op in constant_bs],
             gamma=[op.gamma for op in constant_bs],
-            tag='DotInc-constant-beta-%d' % len(constant_bs))
+            tag='c-beta-%d' % len(constant_bs))
         vector_b_gemvs = self._sig_gemv(
             vector_bs, *args,
             beta=lambda op: self._YYB_views[op][2],
             gamma=[op.gamma for op in vector_bs],
-            tag='DotInc-vector-beta-%d' % len(vector_bs))
+            tag='v-beta-%d' % len(vector_bs))
         return constant_b_gemvs + vector_b_gemvs
 
     def _sig_gemv(self, ops, A_js_fn, X_js_fn, Y_fn, Y_in_fn=None,
@@ -976,7 +976,7 @@ class Simulator(nengo.Simulator):
     def print_plans(self):
         print(" Plans ".center(80, '-'))
         for plan in self._plans.plans:
-            print("%s" % plan)
+            print("%r" % plan)
             if hasattr(plan, 'description'):
                 print(indent(plan.description, 4))
 
@@ -1014,10 +1014,10 @@ class Simulator(nengo.Simulator):
 
         # print table
         print(" Profiling ".center(80, '-'))
-        print('%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
+        print('%8s|%10s|%10s|%10s|' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
 
         for r in table:
-            print('%i\t%2.3f\t%2.3f\t%2.3f\t%s' % r)
+            print('%8d|%10.3f|%10.3f|%10.3f| %s' % r)
 
         # totals totals
         print('-' * 80)
