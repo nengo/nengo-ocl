@@ -18,6 +18,23 @@ def get_mwgs(queue, cap=256):
     return min(queue.device.max_work_group_size, cap)
 
 
+def blockify_ij(max_size, ra):
+    """Blockify a single matrix or vector using the offset method"""
+    sizes = []
+    inds = []
+    offsets = []
+    for i in range(len(ra)):
+        size = ra.sizes[i]
+        for offset in range(0, size, max_size):
+            inds.append(i)
+            sizes.append(min(size - offset, max_size))
+            offsets.append(offset)
+
+    return (np.array(sizes, dtype=np.int32),
+            np.array(inds, dtype=np.int32),
+            np.array(offsets, dtype=np.int32))
+
+
 def blockify_matrices(max_size, ras):
     # NOTE: must be contiguous
     ras = list(ras)
@@ -381,8 +398,7 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
 
 def plan_elementwise_inc(queue, A, X, Y, tag=None):
     """Implements an element-wise increment Y += A * X"""
-    N = len(X)
-    assert len(Y) == N and len(A) == N
+    assert len(Y) == len(X) == len(A)
 
     for arr in [A, X, Y]:
         assert (arr.stride1s == 1).all()
@@ -416,6 +432,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
 
         ////////// MAIN FUNCTION //////////
         __kernel void elementwise_inc(
+            __global const int *offsets,
             __global const int *Ashape0s,
             __global const int *Ashape1s,
             __global const int *Astride0s,
@@ -433,62 +450,60 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             __global ${Ytype} *Ydata
         )
         {
-            const int ij = get_global_id(0);
             const int n = get_global_id(1);
-
-            const int Yshape1 = Yshape1s[n];
-            if (ij >= Yshape0s[n] * Yshape1)
-                return;
+            const int ij = get_global_id(0) + offsets[n];
 
             __global const ${Atype} *a = Adata + Astarts[n];
             __global const ${Xtype} *x = Xdata + Xstarts[n];
             __global ${Ytype} *y = Ydata + Ystarts[n];
 
-            const int Ashape0 = Ashape0s[n];
-            const int Ashape1 = Ashape1s[n];
-            const int Astride0 = Astride0s[n];
-            const int Xshape0 = Xshape0s[n];
-            const int Xshape1 = Xshape1s[n];
-            const int Xstride0 = Xstride0s[n];
             const int Ystride0 = Ystride0s[n];
+            const int Yshape0 = Yshape0s[n];
+            const int Yshape1 = Yshape1s[n];
+            const int i = ij / Yshape1;
+            const int j = ij % Yshape1;
 
-            int i = ij / Yshape1;
-            int j = ij % Yshape1;
+            ${Atype} aa = get_element(
+                a, Ashape0s[n], Ashape1s[n], Astride0s[n], i, j);
+            ${Xtype} xx = get_element(
+                x, Xshape0s[n], Xshape1s[n], Xstride0s[n], i, j);
 
-            ${Atype} aa = get_element(a, Ashape0, Ashape1, Astride0, i, j);
-            ${Xtype} xx = get_element(x, Xshape0, Xshape1, Xstride0, i, j);
-            y[i * Ystride0 + j] += aa * xx;
+            if (i < Yshape0)
+                y[i*Ystride0 + j] += aa * xx;
         }
         """
+
+    # --- blockify
+    lsize0 = get_mwgs(queue, cap=256)
+    sizes, inds, offsets = blockify_ij(lsize0, Y)
 
     textconf = dict(Atype=A.ctype, Xtype=X.ctype, Ytype=Y.ctype)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
-        A.cl_shape0s,
-        A.cl_shape1s,
-        A.cl_stride0s,
-        A.cl_starts,
+        to_device(queue, offsets),
+        to_device(queue, A.shape0s[inds]),
+        to_device(queue, A.shape1s[inds]),
+        to_device(queue, A.stride0s[inds]),
+        to_device(queue, A.starts[inds]),
         A.cl_buf,
-        X.cl_shape0s,
-        X.cl_shape1s,
-        X.cl_stride0s,
-        X.cl_starts,
+        to_device(queue, X.shape0s[inds]),
+        to_device(queue, X.shape1s[inds]),
+        to_device(queue, X.stride0s[inds]),
+        to_device(queue, X.starts[inds]),
         X.cl_buf,
-        Y.cl_shape0s,
-        Y.cl_shape1s,
-        Y.cl_stride0s,
-        Y.cl_starts,
+        to_device(queue, Y.shape0s[inds]),
+        to_device(queue, Y.shape1s[inds]),
+        to_device(queue, Y.stride0s[inds]),
+        to_device(queue, Y.starts[inds]),
         Y.cl_buf,
     )
     _fn = cl.Program(queue.context, text).build().elementwise_inc
     _fn.set_args(*[arr.data for arr in full_args])
 
-    mn = Y.sizes.max()
-    gsize = (mn, N)
-    lsize = None
+    gsize = (lsize0, len(sizes))
     plan = Plan(
-        queue, _fn, gsize, lsize=lsize, name="cl_elementwise_inc", tag=tag)
+        queue, _fn, gsize, lsize=None, name="cl_elementwise_inc", tag=tag)
     plan.full_args = full_args     # prevent garbage-collection
     plan.flops_per_call = 2 * Y.sizes.sum()
     plan.bw_per_call = A.nbytes + X.nbytes + Y.nbytes
