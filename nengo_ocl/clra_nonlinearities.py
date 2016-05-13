@@ -148,11 +148,11 @@ def plan_reset(queue, Y, values, tag=None):
         """
 
     n_per_item = 1
-    local_i = 16
-    local_j = get_mwgs(queue, cap=256) // local_i
-    # local_i = min(256, Y.sizes.max())
+    lsize0 = 16
+    lsize1 = get_mwgs(queue, cap=256) // lsize0
+    # lsize0 = min(256, Y.sizes.max())
 
-    Ysizes, Yinds, Ystarts = blockify_matrix(local_i, Y)
+    Ysizes, Yinds, Ystarts = blockify_matrix(lsize0, Y)
     clYsizes = to_device(queue, Ysizes)
     clYstarts = to_device(queue, Ystarts)
     values = values.get()
@@ -160,10 +160,10 @@ def plan_reset(queue, Y, values, tag=None):
 
     N = len(Ysizes)
     NN = -(-N // n_per_item)  # ceiling division
-    lsize = (local_i, local_j)
-    gsize = (local_i, round_up(NN, local_j))
+    lsize = (lsize0, lsize1)
+    gsize = (lsize0, round_up(NN, lsize1))
     # lsize = None
-    # gsize = (local_i, NN)
+    # gsize = (lsize0, NN)
 
     textconf = dict(Ytype=Y.ctype, N=N, n_per_item=n_per_item)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
@@ -231,17 +231,17 @@ def plan_copy(queue, A, B, incs, tag=None):
         }
         """
 
-    local_i = 16
-    local_j = get_mwgs(queue) // local_i
-    # local_i = min(256, A.sizes.max())
+    lsize0 = 16
+    lsize1 = get_mwgs(queue) // lsize0
+    # lsize0 = min(256, A.sizes.max())
 
-    sizes, inds, [Astarts, Bstarts] = blockify_vectors(local_i, [A, B])
+    sizes, inds, [Astarts, Bstarts] = blockify_vectors(lsize0, [A, B])
 
     N = len(sizes)
-    lsize = (local_i, local_j)
-    gsize = (local_i, round_up(N, local_j))
+    lsize = (lsize0, lsize1)
+    gsize = (lsize0, round_up(N, lsize1))
     # lsize = None
-    # gsize = (local_i, N)
+    # gsize = (lsize0, N)
 
     textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N, inc=None)
 
@@ -333,15 +333,15 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
         }
         """
 
-    local_i = 16
-    local_j = get_mwgs(queue) // local_i
+    lsize0 = 16
+    lsize1 = get_mwgs(queue) // lsize0
 
     sizes, inds, [AIstarts, BIstarts] = blockify_vectors(
-        local_i, [Ainds, Binds])
+        lsize0, [Ainds, Binds])
 
     N = len(sizes)
-    lsize = (local_i, local_j)
-    gsize = (local_i, round_up(N, local_j))
+    lsize = (lsize0, lsize1)
+    gsize = (lsize0, round_up(N, lsize1))
 
     textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N, inc=None)
 
