@@ -55,7 +55,7 @@ class PythonPlan(BasePlan):
 
 class Plan(BasePlan):
 
-    def __init__(self, queue, kern, gsize, lsize, **kwargs):
+    def __init__(self, queue, kern, gsize, lsize=None, **kwargs):
         super(Plan, self).__init__(**kwargs)
         self.queue = queue
         self.kern = kern

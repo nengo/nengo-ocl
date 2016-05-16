@@ -519,7 +519,6 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
 
         y[n+1] + a[0] y[n] + ... + a[i] y[n-i] = b[0] x[n] + ... + b[j] x[n-j]
     """
-    N = len(X)
     assert len(X) == len(Y) == len(A) == len(B) == len(Xbuf) == len(Ybuf)
 
     # X, Y
@@ -544,6 +543,7 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     text = """
         ////////// MAIN FUNCTION //////////
         __kernel void linearfilter(
+            __global const int *offsets,
             __global const int *shape0s,
             __global const int *shape1s,
             __global const int *Xstride0s,
@@ -568,8 +568,8 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
             __global const int *Ybufpos
         )
         {
-            const int ij = get_global_id(0);
             const int k = get_global_id(1);
+            const int ij = get_global_id(0) + offsets[k];
 
             const int shape0 = shape0s[k];
             const int shape1 = shape1s[k];
@@ -654,27 +654,35 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     assert nb_max >= 1
     uses_buf = na_max > 1 or nb_max > 1
 
-    max_len = X.sizes.max()
-    lsize0 = min(max(max_len, na_max, nb_max), get_mwgs(queue))
-    assert na_max <= lsize0 and nb_max <= lsize0
-
-    Xbufpos = to_device(queue, np.zeros(N if uses_buf else 0, dtype='int32'))
-    Ybufpos = to_device(queue, np.zeros(N if uses_buf else 0, dtype='int32'))
-
     textconf = dict(
         Xtype=X.ctype, Ytype=Y.ctype, Atype=A.ctype, Btype=B.ctype,
         na_max=na_max, nb_max=nb_max, uses_buf=uses_buf,
     )
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
+    max_len = X.sizes.max()
+    lsize0 = min(max(max_len, na_max, nb_max), get_mwgs(queue))
+    assert na_max <= lsize0 and nb_max <= lsize0
+
+    sizes, inds, offsets = blockify_ij(lsize0, X)
+    n = len(sizes)
+
+    Xbufpos = to_device(queue, np.zeros(n if uses_buf else 0, dtype='int32'))
+    Ybufpos = to_device(queue, np.zeros(n if uses_buf else 0, dtype='int32'))
+
     full_args = (
-        X.cl_shape0s, X.cl_shape1s,
-        X.cl_stride0s, X.cl_stride1s, X.cl_starts, X.cl_buf,
-        Y.cl_stride0s, Y.cl_stride1s, Y.cl_starts, Y.cl_buf,
-        A.cl_shape0s, A.cl_starts, A.cl_buf,
-        B.cl_shape0s, B.cl_starts, B.cl_buf,
-        Xbuf.cl_starts, Xbuf.cl_buf,
-        Ybuf.cl_starts, Ybuf.cl_buf,
+        to_device(queue, offsets),
+        to_device(queue, X.shape0s[inds]), to_device(queue, X.shape1s[inds]),
+        to_device(queue, X.stride0s[inds]), to_device(queue, X.stride1s[inds]),
+        to_device(queue, X.starts[inds]), X.cl_buf,
+        to_device(queue, Y.stride0s[inds]), to_device(queue, Y.stride1s[inds]),
+        to_device(queue, Y.starts[inds]), Y.cl_buf,
+        to_device(queue, A.shape0s[inds]), to_device(queue, A.starts[inds]),
+        A.cl_buf,
+        to_device(queue, B.shape0s[inds]), to_device(queue, B.starts[inds]),
+        B.cl_buf,
+        to_device(queue, Xbuf.starts[inds]), Xbuf.cl_buf,
+        to_device(queue, Ybuf.starts[inds]), Ybuf.cl_buf,
         Xbufpos, Ybufpos,
     )
 
@@ -688,7 +696,7 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     _fn.set_args(*[arr.data for arr in full_args])
 
     lsize = (lsize0, 1)
-    gsize = (round_up(max_len, lsize0), N)
+    gsize = (lsize0, n)
     plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_linearfilter", tag=tag)
     plan.full_args = full_args     # prevent garbage-collection
@@ -702,9 +710,12 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
         return [plan]
     else:
         inc = program.linearfilter_inc
-        inc_args = (A.cl_shape0s, B.cl_shape0s, Xbufpos, Ybufpos)
+        inc_args = (
+            to_device(queue, A.shape0s[inds]),
+            to_device(queue, B.shape0s[inds]),
+            Xbufpos, Ybufpos)
         inc.set_args(*[arr.data for arr in inc_args])
-        inc_plan = Plan(queue, inc, (N,), lsize=None, name="cl_linearfilter_inc")
+        inc_plan = Plan(queue, inc, gsize=(n,), name="cl_linearfilter_inc")
         inc_plan.full_args = inc_args     # prevent garbage-collection
 
         return [plan, inc_plan]
