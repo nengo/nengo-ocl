@@ -750,9 +750,6 @@ class Simulator(nengo.Simulator):
         return process_plans + step_plans
 
     def _plan_LinearFilter(self, ops):
-        for op in ops:
-            if op.input.ndim != 1:
-                raise NotImplementedError("Can only filter vectors")
         steps = [op.process.make_step(op.input.shape, op.output.shape,
                                       self.model.dt, rng=None) for op in ops]
         A = self.RaggedArray([f.den for f in steps], dtype=np.float32)
@@ -1108,12 +1105,6 @@ class Simulator(nengo.Simulator):
 
 
 Simulator.unsupported.extend([
-    # learning rules
-    ('nengo/tests/test_learning_rules.py:test_dt_dependence*',
-     "Filtering matrices (i.e. learned transform) not implemented"),
-    ('nengo/tests/test_learning_rules.py:test_reset*',
-     "Filtering matrices not implemented"),
-
     # neuron types
     ('nengo/tests/test_neurons.py:test_izhikevich',
      "Izhikevich neurons not implemented"),
