@@ -29,7 +29,7 @@ from nengo_ocl.clra_nonlinearities import (
     plan_direct, plan_lif, plan_lif_rate,
     plan_probes, plan_linearfilter, plan_elementwise_inc,
     create_rngs, init_rngs, get_dist_enums_params, plan_whitenoise,
-    plan_presentinput, plan_conv2d, plan_pool2d)
+    plan_presentinput, plan_conv2d, plan_pool2d, plan_voja)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.planners import greedy_planner
 from nengo_ocl.ast_conversion import OCL_Function
@@ -787,6 +787,17 @@ class Simulator(nengo.Simulator):
     def plan_SimOja(self, ops):
         raise NotImplementedError("Oja's learning rule")
 
+    def plan_SimVoja(self, ops):
+        pre = self.all_data[[self.sidx[op.pre_decoded] for op in ops]]
+        post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
+        encoders = self.all_data[[self.sidx[op.scaled_encoders] for op in ops]]
+        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        learning_signal = self.all_data[[self.sidx[op.learning_signal] for op in ops]]
+        scale = self.RaggedArray([op.scale for op in ops], dtype=np.float32)
+        alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
+        return [plan_voja(self.queue, pre, post, encoders, delta,
+                          learning_signal, scale, alpha)]
+
     def plan_probes(self):
         if len(self.model.probes) == 0:
             self._max_steps_between_probes = self.n_prealloc_probes
@@ -1026,8 +1037,6 @@ Simulator.unsupported.extend([
      "Filtering matrices (i.e. learned transform) not implemented"),
     ('nengo?tests?test_learning_rules*test_reset*',
      "Filtering matrices not implemented"),
-    ('nengo?tests?test_learning_rules*test_voja_*',
-     "VOja learning rule not implemented"),
 
     # neuron types
     ('nengo?tests?test_neurons*test_izhikevich',

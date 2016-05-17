@@ -1667,3 +1667,98 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
     rval.flops_per_call = X.size
     rval.bw_per_call = X.nbytes + Y.nbytes
     return rval
+
+
+def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
+    assert (len(pre) == len(post) == len(enc) == len(delta) ==
+            len(learn) == alpha.size == len(scale))
+    N = len(pre)
+
+    for arr in (learn,):  # scalars
+        assert (arr.shape0s == 1).all()
+        assert (arr.shape1s == 1).all()
+    for arr in (pre, post, scale):  # vectors
+        assert (arr.shape1s == 1).all()
+    for arr in (enc, delta):  # matrices
+        assert (arr.stride1s == 1).all()
+
+    for i in range(N):
+        assert pre.shape0s[i] == enc.shape1s[i] == delta.shape1s[i]
+        assert post.shape0s[i] == enc.shape0s[i] == delta.shape0s[i]
+
+    assert (pre.ctype == post.ctype == enc.ctype == delta.ctype ==
+            learn.ctype == scale.ctype == alpha.ctype)
+
+    text = """
+    __kernel void voja(
+        __global const int *shape0s,
+        __global const int *shape1s,
+        __global const int *pre_stride0s,
+        __global const int *pre_starts,
+        __global const ${type} *pre_data,
+        __global const int *post_stride0s,
+        __global const int *post_starts,
+        __global const ${type} *post_data,
+        __global const int *enc_stride0s,
+        __global const int *enc_starts,
+        __global const ${type} *enc_data,
+        __global const int *delta_stride0s,
+        __global const int *delta_starts,
+        __global ${type} *delta_data,
+        __global const int *learn_starts,
+        __global const ${type} *learn_data,
+        __global const int *scale_stride0s,
+        __global const int *scale_starts,
+        __global const ${type} *scale_data,
+        __global const ${type} *alphas
+    )
+    {
+        const int ij = get_global_id(0);
+        const int k = get_global_id(1);
+
+        const int shape0 = shape0s[k];
+        const int shape1 = shape1s[k];
+        const int i = ij / shape1;
+        const int j = ij % shape1;
+
+        __global ${type} *delta = delta_data + delta_starts[k];
+        const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
+        const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
+        const ${type} enc = enc_data[enc_starts[k] + i*enc_stride0s[k] + j];
+        const ${type} learn = learn_data[learn_starts[k]];
+        const ${type} scale = scale_data[scale_starts[k] +
+                                         i*scale_stride0s[k]];
+        const ${type} alpha = alphas[k];
+
+        if (i < shape0) {
+            delta[i*delta_stride0s[k] + j] =
+                alpha * learn * post * (scale * pre - enc);
+        }
+    }
+    """
+
+    textconf = dict(type=pre.ctype)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        delta.cl_shape0s, delta.cl_shape1s,
+        pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
+        post.cl_stride0s, post.cl_starts, post.cl_buf,
+        enc.cl_stride0s, enc.cl_starts, enc.cl_buf,
+        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        learn.cl_starts, learn.cl_buf,
+        scale.cl_stride0s, scale.cl_starts, scale.cl_buf,
+        alpha,
+    )
+    _fn = cl.Program(queue.context, text).build().voja
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    lsize = None
+    gsize = (delta.sizes.max(), N)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_voja", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    # rval.flops_per_call = X.size
+    rval.bw_per_call = (
+        pre.nbytes + post.nbytes + enc.nbytes + delta.nbytes + learn.nbytes +
+        scale.nbytes + alpha.nbytes)
+    return rval
