@@ -29,7 +29,7 @@ from nengo_ocl.clra_nonlinearities import (
     plan_direct, plan_lif, plan_lif_rate,
     plan_probes, plan_linearfilter, plan_elementwise_inc,
     create_rngs, init_rngs, get_dist_enums_params, plan_whitenoise,
-    plan_presentinput, plan_conv2d, plan_pool2d, plan_voja)
+    plan_presentinput, plan_conv2d, plan_pool2d, plan_bcm, plan_oja, plan_voja)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.planners import greedy_planner
 from nengo_ocl.ast_conversion import OCL_Function
@@ -782,10 +782,21 @@ class Simulator(nengo.Simulator):
         return plans
 
     def plan_SimBCM(self, ops):
-        raise NotImplementedError("BCM learning rule")
+        pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
+        post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
+        theta = self.all_data[[self.sidx[op.theta] for op in ops]]
+        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
+        return [plan_bcm(self.queue, pre, post, theta, delta, alpha)]
 
     def plan_SimOja(self, ops):
-        raise NotImplementedError("Oja's learning rule")
+        pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
+        post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
+        weights = self.all_data[[self.sidx[op.weights] for op in ops]]
+        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
+        beta = self.Array([op.beta for op in ops])
+        return [plan_oja(self.queue, pre, post, weights, delta, alpha, beta)]
 
     def plan_SimVoja(self, ops):
         pre = self.all_data[[self.sidx[op.pre_decoded] for op in ops]]
@@ -1031,8 +1042,6 @@ class Simulator(nengo.Simulator):
 
 Simulator.unsupported.extend([
     # learning rules
-    ('nengo?tests?test_learning_rules*test_unsupervised*',
-     "Unsupervised learning rules not implemented"),
     ('nengo?tests?test_learning_rules*test_dt_dependence*',
      "Filtering matrices (i.e. learned transform) not implemented"),
     ('nengo?tests?test_learning_rules*test_reset*',

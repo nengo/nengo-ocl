@@ -1669,6 +1669,168 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
     return rval
 
 
+def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
+    assert len(pre) == len(post) == len(theta) == len(delta) == alpha.size
+    N = len(pre)
+
+    for arr in (pre, post, theta):  # vectors
+        assert (arr.shape1s == 1).all()
+    for arr in (delta,):  # matrices
+        assert (arr.stride1s == 1).all()
+
+    assert (pre.shape0s == delta.shape1s).all()
+    assert (post.shape0s == theta.shape0s == delta.shape0s).all()
+
+    assert (pre.ctype == post.ctype == theta.ctype == delta.ctype ==
+            alpha.ctype)
+
+    text = """
+    __kernel void bcm(
+        __global const int *shape0s,
+        __global const int *shape1s,
+        __global const int *pre_stride0s,
+        __global const int *pre_starts,
+        __global const ${type} *pre_data,
+        __global const int *post_stride0s,
+        __global const int *post_starts,
+        __global const ${type} *post_data,
+        __global const int *theta_stride0s,
+        __global const int *theta_starts,
+        __global const ${type} *theta_data,
+        __global const int *delta_stride0s,
+        __global const int *delta_starts,
+        __global ${type} *delta_data,
+        __global const ${type} *alphas
+    )
+    {
+        const int ij = get_global_id(0);
+        const int k = get_global_id(1);
+
+        const int shape0 = shape0s[k];
+        const int shape1 = shape1s[k];
+        const int i = ij / shape1;
+        const int j = ij % shape1;
+
+        __global ${type} *delta = delta_data + delta_starts[k];
+        const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
+        const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
+        const ${type} theta = theta_data[theta_starts[k] + i*theta_stride0s[k]];
+        const ${type} alpha = alphas[k];
+
+        if (i < shape0) {
+            delta[i*delta_stride0s[k] + j] =
+                alpha * post * (post - theta) * pre;
+        }
+    }
+    """
+
+    textconf = dict(type=pre.ctype)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        delta.cl_shape0s, delta.cl_shape1s,
+        pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
+        post.cl_stride0s, post.cl_starts, post.cl_buf,
+        theta.cl_stride0s, theta.cl_starts, theta.cl_buf,
+        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        alpha,
+    )
+    _fn = cl.Program(queue.context, text).build().bcm
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    lsize = None
+    gsize = (delta.sizes.max(), N)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_bcm", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    rval.flops_per_call = 4 * delta.sizes.sum()
+    rval.bw_per_call = (pre.nbytes + post.nbytes + theta.nbytes +
+                        delta.nbytes + alpha.nbytes)
+    return rval
+
+
+def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
+    assert (len(pre) == len(post) == len(weights) == len(delta) ==
+            alpha.size == beta.size)
+    N = len(pre)
+
+    for arr in (pre, post):  # vectors
+        assert (arr.shape1s == 1).all()
+    for arr in (delta, weights):  # matrices
+        assert (arr.stride1s == 1).all()
+
+    assert (pre.shape0s == weights.shape1s == delta.shape1s).all()
+    assert (post.shape0s == weights.shape0s == delta.shape0s).all()
+
+    assert (pre.ctype == post.ctype == weights.ctype == delta.ctype ==
+            alpha.ctype == beta.ctype)
+
+    text = """
+    __kernel void oja(
+        __global const int *shape0s,
+        __global const int *shape1s,
+        __global const int *pre_stride0s,
+        __global const int *pre_starts,
+        __global const ${type} *pre_data,
+        __global const int *post_stride0s,
+        __global const int *post_starts,
+        __global const ${type} *post_data,
+        __global const int *weights_stride0s,
+        __global const int *weights_starts,
+        __global const ${type} *weights_data,
+        __global const int *delta_stride0s,
+        __global const int *delta_starts,
+        __global ${type} *delta_data,
+        __global const ${type} *alphas,
+        __global const ${type} *betas
+    )
+    {
+        const int ij = get_global_id(0);
+        const int k = get_global_id(1);
+
+        const int shape0 = shape0s[k];
+        const int shape1 = shape1s[k];
+        const int i = ij / shape1;
+        const int j = ij % shape1;
+
+        __global ${type} *delta = delta_data + delta_starts[k];
+        const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
+        const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
+        const ${type} weight = weights_data[
+            weights_starts[k] + i*weights_stride0s[k] + j];
+        const ${type} alpha = alphas[k];
+        const ${type} beta = betas[k];
+
+        if (i < shape0) {
+            delta[i*delta_stride0s[k] + j] =
+                alpha * post * (pre - beta * weight * post);
+        }
+    }
+    """
+
+    textconf = dict(type=pre.ctype)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        delta.cl_shape0s, delta.cl_shape1s,
+        pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
+        post.cl_stride0s, post.cl_starts, post.cl_buf,
+        weights.cl_stride0s, weights.cl_starts, weights.cl_buf,
+        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        alpha, beta,
+    )
+    _fn = cl.Program(queue.context, text).build().oja
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    lsize = None
+    gsize = (delta.sizes.max(), N)
+    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_oja", tag=tag)
+    rval.full_args = full_args     # prevent garbage-collection
+    rval.flops_per_call = 6 * delta.sizes.sum()
+    rval.bw_per_call = (pre.nbytes + post.nbytes + weights.nbytes +
+                        delta.nbytes + alpha.nbytes + beta.nbytes)
+    return rval
+
+
 def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
     assert (len(pre) == len(post) == len(enc) == len(delta) ==
             len(learn) == alpha.size == len(scale))
@@ -1682,9 +1844,8 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
     for arr in (enc, delta):  # matrices
         assert (arr.stride1s == 1).all()
 
-    for i in range(N):
-        assert pre.shape0s[i] == enc.shape1s[i] == delta.shape1s[i]
-        assert post.shape0s[i] == enc.shape0s[i] == delta.shape0s[i]
+    assert (pre.shape0s == enc.shape1s == delta.shape1s).all()
+    assert (post.shape0s == enc.shape0s == delta.shape0s).all()
 
     assert (pre.ctype == post.ctype == enc.ctype == delta.ctype ==
             learn.ctype == scale.ctype == alpha.ctype)
@@ -1757,8 +1918,7 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
     gsize = (delta.sizes.max(), N)
     rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_voja", tag=tag)
     rval.full_args = full_args     # prevent garbage-collection
-    # rval.flops_per_call = X.size
-    rval.bw_per_call = (
-        pre.nbytes + post.nbytes + enc.nbytes + delta.nbytes + learn.nbytes +
-        scale.nbytes + alpha.nbytes)
+    rval.flops_per_call = 5 * delta.sizes.sum()
+    rval.bw_per_call = (pre.nbytes + post.nbytes + enc.nbytes + delta.nbytes +
+                        learn.nbytes + scale.nbytes + alpha.nbytes)
     return rval
