@@ -31,13 +31,13 @@ def flops_from_geometry(geometry, items):
     flops = 0
     for ii in items:
         gi = geometry[ii]
-        for dotinfo in gi['dots']:
+        for dotinfo in gi.dots:
             # -- for every value of A, we
             #    (1) mult with some x
             #    (2) add to a resulting inner-product
-            flops += dotinfo['a_shape1'] * gi['y_len'] * 2
+            flops += dotinfo.a_shape1 * gi.y_len * 2
         # XXX Generously assuming alpha & beta in use
-        flops += gi['y_len'] * 3
+        flops += gi.y_len * 3
     return flops
 
 
@@ -46,11 +46,11 @@ def bw_from_geometry(geometry, items):
     elemsize = 4
     for ii in items:
         gi = geometry[ii]
-        for dotinfo in gi['dots']:
+        for dotinfo in gi.dots:
             # -- load A
-            n_bytes += elemsize * dotinfo['a_shape1'] * gi['y_len']
+            n_bytes += elemsize * dotinfo.a_shape1 * gi.y_len
             # -- load X
-            n_bytes += elemsize * dotinfo['a_shape1']
+            n_bytes += elemsize * dotinfo.a_shape1
 
         # -- load alpha scalar, beta scalar
         #    XXX: Account for a possible full vector read
@@ -58,19 +58,32 @@ def bw_from_geometry(geometry, items):
         n_bytes += 2 * elemsize
 
         # -- load Y_in
-        n_bytes += elemsize * gi['y_len']
+        n_bytes += elemsize * gi.y_len
 
         # -- write Y_out
-        n_bytes += elemsize * gi['y_len']
+        n_bytes += elemsize * gi.y_len
     return n_bytes
 
+class Dot(object):
 
-class DotSignature(object):
+    def __init__(self, j, x_j, a_j, x_start, a_start, a_stride0, a_shape1):
+        self.j = j
+        self.x_j = x_j
+        self.a_j = a_j
+        self.x_start = x_start
+        self.a_start = a_start
+        self.a_stride0 = a_stride0
+        self.a_shape1 = a_shape1   # Columns of A
 
-    def __init__(self, dct):
-        self.y_len = dct['y_len']
-        self.Ax_dims = tuple(
-            [(d['a_shape1'], d['a_stride0']) for d in dct['dots']])
+class GeometryEntry(object):
+
+    def __init__(self, y_len, y_start, y_in_start, dots):
+        self.y_len = y_len         # = Rows of A
+        self.y_start = y_start
+        self.y_in_start = y_in_start
+        assert all(isinstance(dot, Dot) for dot in dots)
+        self.dots = dots
+        self.Ax_dims = ((d.a_shape1, d.a_stride0) for d in dots)
 
     def __eq__(self, other):
         return type(self) == type(other) \
@@ -89,6 +102,63 @@ class DotSignature(object):
             ', '.join(('(%s x d=%s,s=%s)' % (counts[(d, s)], d, s))
                       for (d, s) in counts))
 
+
+class Geometry(object):
+    """The geometry of a gemv_prog."""
+
+    def __init__(self, A_starts, X_starts, Y_starts, Y_in_starts, A_stride0s,
+                 A_shape1s, Y_shape0s, X_js=None, A_js=None):
+        self._dbbs = []
+        for bb in range(len(Y_shape0s)):
+            dots = []
+            if X_js:
+                x_js_i = X_js[bb]
+                A_js_i = A_js[bb]
+                assert len(x_js_i) == len(A_js_i)
+                for jj, (xj, aj) in enumerate(zip(x_js_i, A_js_i)):
+                    assert xj.size == 1 and aj.size == 1
+                    xj, aj = xj[0], aj[0]  # to ignore numpy DeprecationWarning
+                    dots.append(Dot(jj, xj, aj, X_starts[xj], A_starts[aj],
+                                    A_stride0s[aj], A_shape1s[aj]))
+            self._dbbs.append(GeometryEntry(Y_shape0s[bb],
+                                            Y_starts[bb],
+                                            Y_in_starts[bb],
+                                            dots))
+
+    def __getitem__(self, key):
+        return self._dbbs[key]
+
+    def __str__(self):
+        return self.summary()
+
+    def summary(self, items=None):
+        if items is None:
+            gg = self._dbbs
+        else:
+            gg = [self._dbbs[i] for i in items]
+
+        outputs = len(gg)
+        dots = np.array([len(g.dots) for g in gg])
+        shape0s = np.array([g.y_len for g in gg])
+        shape1s = np.hstack([[d.a_shape1 for d in g.dots] for g in gg])
+        return ("outputs: %d; dots: %0.1f [%d, %d]; "
+                "shape: %0.1f [%d, %d] x %0.1f [%d, %d]"
+                % (outputs, dots.mean(), dots.min(), dots.max(),
+                   shape0s.mean(), shape0s.min(), shape0s.max(),
+                   shape1s.mean(), shape1s.min(), shape1s.max()))
+
+    def print_summary(self, items=None, full=False):
+        print('geometry_summary: tag=%s' % self.tag)
+        if items is None:
+            gg = self._dbbs
+        else:
+            gg = map(self._dbbs.__getitem__, items)
+
+        counts = defaultdict(lambda: 0)
+        for dsi in gg:
+            counts[dsi] += 1
+        for dsi, count in sorted(counts.iteritems(), key=lambda x: x[1]):
+            print('  %6s\t%s' % (count, dsi))
 
 class gemv_prog(object):
 
@@ -118,76 +188,14 @@ class gemv_prog(object):
         self.geometry = self._geometry()
         self.plans = self.choose_plans()
 
-    def geometry_summary(self, items=None):
-        if items is None:
-            gg = self.geometry
-        else:
-            gg = [self.geometry[i] for i in items]
-
-        outputs = len(gg)
-        dots = np.array([len(g['dots']) for g in gg])
-        shape0s = np.array([g['y_len'] for g in gg])
-        shape1s = np.hstack([[d['a_shape1'] for d in g['dots']] for g in gg])
-        return ("outputs: %d; dots: %0.1f [%d, %d]; "
-                "shape: %0.1f [%d, %d] x %0.1f [%d, %d]"
-                % (outputs, dots.mean(), dots.min(), dots.max(),
-                   shape0s.mean(), shape0s.min(), shape0s.max(),
-                   shape1s.mean(), shape1s.min(), shape1s.max()))
-
-    def print_geometry_summary(self, items=None, full=False):
-        print('geometry_summary: tag=%s' % self.tag)
-        if items is None:
-            gg = self.geometry
-        else:
-            gg = map(self.geometry.__getitem__, items)
-
-        ds = map(DotSignature, gg)
-        counts = defaultdict(lambda: 0)
-        for dsi in ds:
-            counts[dsi] += 1
-        for dsi in sorted(counts):
-            print('  %6s\t%s' % (counts[dsi], dsi))
-
     def _geometry(self):
-        A_starts = self.A.starts
-        X_starts = self.X.starts
-        Y_starts = self.Y.starts
-        Y_in_starts = self.Y_in.starts
-        A_stride0s = self.A.stride0s
-        A_shape1s = self.A.shape1s
-        Y_shape0s = self.Y.shape0s
-
-        rval = []
-        for bb in range(len(Y_shape0s)):
-            dbb = {
-                'y_len': Y_shape0s[bb],
-                'dots': [],
-                'y_start': Y_starts[bb],
-                'y_in_start': Y_in_starts[bb],
-            }
-            if self.X_js:
-                x_js_i = self.X_js[bb]
-                A_js_i = self.A_js[bb]
-                assert len(x_js_i) == len(A_js_i)
-                for jj, (xj, aj) in enumerate(zip(x_js_i, A_js_i)):
-                    assert xj.size == 1 and aj.size == 1
-                    xj, aj = xj[0], aj[0]  # to ignore numpy DeprecationWarning
-                    dbb['dots'].append({
-                        'j': jj,
-                        'x_j': xj,
-                        'a_j': aj,
-                        'x_start': X_starts[xj],
-                        'a_start': A_starts[aj],
-                        'a_stride0': A_stride0s[aj],
-                        'a_shape1': A_shape1s[aj],
-                    })
-            rval.append(dbb)
-
-        return rval
+        return Geometry(self.A.starts, self.X.starts, self.Y.starts,
+                        self.Y_in.starts, self.A.stride0s, self.A.shape1s,
+                        self.Y.shape0s, self.X_js, self.A_js)
 
     def cl_geometry_and_textconf(self, items, padding=4):
         p = self
-        max_n_dots = max(len(p.geometry[ii]['dots']) for ii in items)
+        max_n_dots = max(len(p.geometry[ii].dots) for ii in items)
         n_structure_vars = 4 * max_n_dots + 5
         structure_vars_stride = int(
             padding * np.ceil(float(n_structure_vars) / padding))
@@ -257,10 +265,8 @@ def ref_impl(p, items):
     if 0:
         if len(items) < 10:
             print('Falling back on reference implementation')
-            p.print_geometry_summary(items, full=True)
         else:
             print('Falling back on reference implementation')
-            p.print_geometry_summary(items)
 
     assert all(s == 1 for s in p.A.stride1s)
     assert all(s == 1 for s in p.X.stride1s)
@@ -369,7 +375,7 @@ def ref_impl(p, items):
         Template(text, output_encoding='ascii').render(**p.__dict__))
 
     gsize = (
-        max(p.geometry[ii]['y_len'] for ii in items),
+        max(p.geometry[ii].y_len for ii in items),
         len(items))
     lsize = None
     fn = cl.Program(p.queue.context, text).build().gemv_ref
@@ -446,11 +452,11 @@ def reduce_impl(p, items,
     assert p.float_gamma is not None
 
     cl_gstructure, textconf = p.cl_geometry_and_textconf(items)
-    max_n_dots = max([len(p.geometry[ii]['dots']) for ii in items])
-    max_reduce_len = max(max([gg['a_shape1']
-                              for gg in p.geometry[ii]['dots']])
+    max_n_dots = max([len(p.geometry[ii].dots) for ii in items])
+    max_reduce_len = max(max([gg.a_shape1
+                              for gg in p.geometry[ii].dots])
                          for ii in items)
-    max_y_len = max([p.geometry[ii]['y_len'] for ii in items])
+    max_y_len = max([p.geometry[ii].y_len for ii in items])
 
     # segment means the piece of Y written by a work-group
     # group_size is the number of values that we're reducing over
@@ -637,7 +643,7 @@ def reduce_impl(p, items,
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     rval.full_args = full_args  # prevent GC the args
-    rval.description = p.geometry_summary(items)
+    rval.description = p.geometry.summary(items)
     return rval
 
 
@@ -683,7 +689,7 @@ def many_dots_impl(p, items):
     # min_n_dots = min(A_js_shape0s)
     max_n_dots = max(A_js_shape0s)
 
-    max_y_len = max(p.geometry[ii]['y_len'] for ii in items)
+    max_y_len = max(p.geometry[ii].y_len for ii in items)
     MAX_SEGMENT_SIZE = 16  # tricky to tune?
 
     segment_size = min(
@@ -822,7 +828,7 @@ def many_dots_impl(p, items):
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     rval.full_args = full_args  # prevent GC the args
-    rval.description = p.geometry_summary(items)
+    rval.description = p.geometry.summary(items)
     return rval
 
 
@@ -1027,7 +1033,7 @@ def block_impl(p, items):
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     plan.full_args = full_args  # prevent GC the args
-    plan.description = p.geometry_summary(items)
+    plan.description = p.geometry.summary(items)
     plan.Ybuf = clYbuf
 
     # --- Reduce kernel
@@ -1118,7 +1124,7 @@ def block_impl(p, items):
                        name='clra_gemv.block_impl_reduce', tag=p.tag)
     plan_reduce.full_args = full_args_reduce  # prevent GC of the args
     plan_reduce.bw_per_call = bw_reduce
-    # plan_reduce.description = p.geometry_summary(items)
+    # plan_reduce.description = p.geometry.summary(items)
 
     return [plan, plan_reduce]
 
@@ -1153,9 +1159,9 @@ class plan_ragged_gather_gemv(gemv_prog):
 
         long_dots = [
             ii for ii in remaining_items
-            if len(self.geometry[ii]['dots']) <= 2
-            and max([0] + [dct['a_shape1']
-                           for dct in self.geometry[ii]['dots']]) > 16]
+            if len(self.geometry[ii].dots) <= 2
+            and max([0] + [dct.a_shape1
+                           for dct in self.geometry[ii].dots]) > 16]
         if long_dots:
             try:
                 long_plan = reduce_impl(self, long_dots)
@@ -1169,7 +1175,7 @@ class plan_ragged_gather_gemv(gemv_prog):
 
         # many_dots = [ii
             # for ii in remaining_items
-            # if len(self.geometry[ii]['dots']) > 3]
+            # if len(self.geometry[ii].dots) > 3]
         many_dots = remaining_items
         if many_dots:
             try:
