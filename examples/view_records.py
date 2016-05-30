@@ -1,12 +1,15 @@
 #!/usr/bin/env python
 import sys
-import cPickle
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 from collections import OrderedDict
 
 by_name = OrderedDict()
 
 for recfile in sys.argv[1:]:
-    records = cPickle.load(open(recfile))
+    records = pickle.load(open(recfile, 'rb'))
     for rec in records:
         rec['filename'] = recfile
         by_name.setdefault(rec['name'], []).append(rec)
