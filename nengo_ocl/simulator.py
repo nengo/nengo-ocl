@@ -308,11 +308,16 @@ class Simulator(nengo.Simulator):
         self.ocl_only = ocl_only
 
         # --- Nengo build
-        with Timer() as nengo_timer:
+        if model is None or model.decoder_cache is None:
+            cache = get_default_decoder_cache()
+        else:
+            cache = model.decoder_cache
+
+        with cache, Timer() as nengo_timer:
             if model is None:
                 self.model = Model(dt=float(dt),
                                    label="%s, dt=%f" % (network, dt),
-                                   decoder_cache=get_default_decoder_cache())
+                                   decoder_cache=cache)
             else:
                 self.model = model
 
