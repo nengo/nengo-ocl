@@ -1534,7 +1534,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     return plan
 
 
-def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
+def plan_pool2d(queue, X, Y, shape, pool_size, strides, tag=None):
     for ary in [X, Y]:
         # assert that arrays are contiguous
         assert len(ary.shape) in [1, 2]
@@ -1573,8 +1573,8 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
         for (int kij = tij; kij < ${nipatch * njpatch}; kij += lsize) {
             const int ki = kij / ${njpatch};
             const int kj = kij % ${njpatch};
-            const int ii = i0*${st} + ki;
-            const int jj = j0*${st} + kj;
+            const int ii = i0*${sti} + ki;
+            const int jj = j0*${stj} + kj;
             if (ii >= 0 && ii < ${nxi} && jj >= 0 && jj < ${nxj})
                 patch[ki][kj] = xc[ii*${nxj} + jj];
             else
@@ -1586,9 +1586,9 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
         ${type} out = 0;
         int n = 0;
         ${type} xij;
-        for (int ii = 0; ii < ${s}; ii++) {
-        for (int jj = 0; jj < ${s}; jj++) {
-            xij = patch[ti*${st} + ii][tj*${st} + jj];
+        for (int ii = 0; ii < ${si}; ii++) {
+        for (int jj = 0; jj < ${sj}; jj++) {
+            xij = patch[ti*${sti} + ii][tj*${stj} + jj];
             if (!isnan(xij)) {
                 out += xij;
                 n++;
@@ -1601,6 +1601,8 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
     }
     """
     nc, nyi, nyj, nxi, nxj = shape
+    si, sj = pool_size
+    sti, stj = strides
 
     max_group = get_mwgs(queue, cap=64)
     assert max_group >= 32
@@ -1609,13 +1611,13 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
     lsize = (lsize0, lsize1, 1)
     gsize = (round_up(nyj, lsize[0]), round_up(nyi, lsize[1]), nc)
 
-    njpatch = lsize[0]*stride + size - 1
-    nipatch = lsize[1]*stride + size - 1
+    njpatch = lsize[0]*sti + si - 1
+    nipatch = lsize[1]*stj + sj - 1
     assert nipatch*njpatch <= queue.device.local_mem_size / X.dtype.itemsize
 
     textconf = dict(
         type=X.ctype, Xstart=X.start, Ystart=Y.start,
-        nxi=nxi, nxj=nxj, nyi=nyi, nyj=nyj, s=size, st=stride,
+        nxi=nxi, nxj=nxj, nyi=nyi, nyj=nyj, si=si, sj=sj, sti=sti, stj=stj,
         nipatch=nipatch, njpatch=njpatch)
 
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))

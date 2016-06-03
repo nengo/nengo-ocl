@@ -781,7 +781,7 @@ class Simulator(nengo.Simulator):
             B = self.Array((np.zeros(p.shape_out) + b).ravel())
             plans.append(plan_conv2d(
                 self.queue, X, Y, F, B, p.shape_in, p.shape_out,
-                kernel_shape, conv, p.padding, p.stride))
+                kernel_shape, conv, p.padding, p.strides))
 
         return plans
 
@@ -794,7 +794,7 @@ class Simulator(nengo.Simulator):
             Y = self.all_data.getitem_device(self.sidx[op.output])
             shape = p.shape_out + p.shape_in[1:]
             plans.append(plan_pool2d(
-                self.queue, X, Y, shape, p.size, p.stride))
+                self.queue, X, Y, shape, p.pool_size, p.strides))
 
         return plans
 
