@@ -115,9 +115,9 @@ def plan_timeupdate(queue, step, time, dt):
 
     gsize = (1,)
     lsize = None
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_timeupdate")
-    rval.full_args = full_args     # prevent garbage-collection
-    return rval
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_timeupdate")
+    plan.full_args = full_args     # prevent garbage-collection
+    return plan
 
 
 def plan_reset(queue, Y, values, tag=None):
@@ -148,11 +148,11 @@ def plan_reset(queue, Y, values, tag=None):
         """
 
     n_per_item = 1
-    local_i = 16
-    local_j = get_mwgs(queue, cap=256) // local_i
-    # local_i = min(256, Y.sizes.max())
+    lsize0 = 16
+    lsize1 = get_mwgs(queue, cap=256) // lsize0
+    # lsize0 = min(256, Y.sizes.max())
 
-    Ysizes, Yinds, Ystarts = blockify_matrix(local_i, Y)
+    Ysizes, Yinds, Ystarts = blockify_matrix(lsize0, Y)
     clYsizes = to_device(queue, Ysizes)
     clYstarts = to_device(queue, Ystarts)
     values = values.get()
@@ -160,10 +160,10 @@ def plan_reset(queue, Y, values, tag=None):
 
     N = len(Ysizes)
     NN = -(-N // n_per_item)  # ceiling division
-    lsize = (local_i, local_j)
-    gsize = (local_i, round_up(NN, local_j))
+    lsize = (lsize0, lsize1)
+    gsize = (lsize0, round_up(NN, lsize1))
     # lsize = None
-    # gsize = (local_i, NN)
+    # gsize = (lsize0, NN)
 
     textconf = dict(Ytype=Y.ctype, N=N, n_per_item=n_per_item)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
@@ -177,14 +177,14 @@ def plan_reset(queue, Y, values, tag=None):
     _fn = cl.Program(queue.context, text).build().reset
     _fn.set_args(*[arr.data for arr in full_args])
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = (
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.bw_per_call = (
         Y.nbytes + values.nbytes + clYsizes.nbytes + clYstarts.nbytes)
-    rval.description = (
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_copy(queue, A, B, incs, tag=None):
@@ -231,17 +231,17 @@ def plan_copy(queue, A, B, incs, tag=None):
         }
         """
 
-    local_i = 16
-    local_j = get_mwgs(queue) // local_i
-    # local_i = min(256, A.sizes.max())
+    lsize0 = 16
+    lsize1 = get_mwgs(queue) // lsize0
+    # lsize0 = min(256, A.sizes.max())
 
-    sizes, inds, [Astarts, Bstarts] = blockify_vectors(local_i, [A, B])
+    sizes, inds, [Astarts, Bstarts] = blockify_vectors(lsize0, [A, B])
 
     N = len(sizes)
-    lsize = (local_i, local_j)
-    gsize = (local_i, round_up(N, local_j))
+    lsize = (lsize0, lsize1)
+    gsize = (lsize0, round_up(N, lsize1))
     # lsize = None
-    # gsize = (local_i, N)
+    # gsize = (lsize0, N)
 
     textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N, inc=None)
 
@@ -265,13 +265,13 @@ def plan_copy(queue, A, B, incs, tag=None):
     _fn = cl.Program(queue.context, text).build().copy
     _fn.set_args(*[arr.data for arr in full_args])
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_copy", tag=tag)
-    rval.full_args = tuple(full_args)  # prevent garbage-collection
-    rval.bw_per_call = A.nbytes + B.nbytes
-    rval.description = (
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_copy", tag=tag)
+    plan.full_args = tuple(full_args)  # prevent garbage-collection
+    plan.bw_per_call = A.nbytes + B.nbytes
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(A), A.sizes.sum(), A.sizes.mean(), A.sizes.min(), A.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
@@ -333,15 +333,15 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
         }
         """
 
-    local_i = 16
-    local_j = get_mwgs(queue) // local_i
+    lsize0 = 16
+    lsize1 = get_mwgs(queue) // lsize0
 
     sizes, inds, [AIstarts, BIstarts] = blockify_vectors(
-        local_i, [Ainds, Binds])
+        lsize0, [Ainds, Binds])
 
     N = len(sizes)
-    lsize = (local_i, local_j)
-    gsize = (local_i, round_up(N, local_j))
+    lsize = (lsize0, lsize1)
+    gsize = (lsize0, round_up(N, lsize1))
 
     textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N, inc=None)
 
@@ -369,14 +369,14 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     _fn = cl.Program(queue.context, text).build().slicedcopy
     _fn.set_args(*[arr.data for arr in full_args])
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
-    rval.full_args = tuple(full_args)  # prevent garbage-collection
-    rval.bw_per_call = 2 * (Ainds.nbytes + Ainds.sizes.sum()*A.dtype.itemsize)
-    rval.description = (
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
+    plan.full_args = tuple(full_args)  # prevent garbage-collection
+    plan.bw_per_call = 2 * (Ainds.nbytes + Ainds.sizes.sum()*A.dtype.itemsize)
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Ainds), Ainds.sizes.sum(),
          Ainds.sizes.mean(), Ainds.sizes.min(), Ainds.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_elementwise_inc(queue, A, X, Y, tag=None):
@@ -489,14 +489,15 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     gsize = (mn, N)
     # lsize = (mn, 1)
     lsize = None
-    rval = Plan(
+    plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_elementwise_inc", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = A.nbytes + X.nbytes + Y.nbytes
-    rval.description = (
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.flops_per_call = 2 * Y.sizes.sum()
+    plan.bw_per_call = A.nbytes + X.nbytes + Y.nbytes
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
@@ -647,15 +648,15 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     max_len = min(max(X.shape0s), get_mwgs(queue))
     gsize = (max_len, N)
     lsize = (max_len, 1)
-    rval = Plan(
+    plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_linearfilter", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.bw_per_call = (
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.bw_per_call = (
         X.nbytes + Y.nbytes + A.nbytes + B.nbytes + Xbuf.nbytes + Ybuf.nbytes)
-    rval.description = (
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_probes(queue, periods, X, Y, tag=None):
@@ -760,16 +761,16 @@ def plan_probes(queue, periods, X, Y, tag=None):
     max_len = min(max(X.shape0s), get_mwgs(queue))
     gsize = (max_len, N,)
     lsize = (max_len, 1)
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_probes", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.cl_bufpositions = cl_bufpositions
-    rval.Y = Y
-    rval.bw_per_call = (2*X.nbytes + cl_periods.nbytes +
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_probes", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.cl_bufpositions = cl_bufpositions
+    plan.Y = Y
+    plan.bw_per_call = (2*X.nbytes + cl_periods.nbytes +
                         cl_countdowns.nbytes + cl_bufpositions.nbytes)
-    rval.description = (
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(X), X.sizes.sum(), X.sizes.mean(), X.sizes.min(), X.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
@@ -832,13 +833,13 @@ ${code}
     _fn.set_args(*[arr.data for arr in full_args])
 
     gsize = (N,)
-    rval = Plan(queue, _fn, gsize, lsize=None, name="cl_direct", tag=tag)
-    rval.full_args = tuple(full_args)  # prevent garbage-collection
-    rval.description = (
+    plan = Plan(queue, _fn, gsize, lsize=None, name="cl_direct", tag=tag)
+    plan.full_args = tuple(full_args)  # prevent garbage-collection
+    plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(output), output.sizes.sum(),
          output.sizes.mean(), output.sizes.min(), output.sizes.max()))
-    return rval
+    return plan
 
 
 def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
@@ -1118,13 +1119,13 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
     _fn = getattr(fns, fn_name)
     _fn.set_args(*[arr.data for arr in full_args])
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name=name, tag=tag)
-    rval.full_args = tuple(full_args)  # prevent garbage-collection
-    rval.bw_per_call = bw_per_call
-    rval.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name=name, tag=tag)
+    plan.full_args = tuple(full_args)  # prevent garbage-collection
+    plan.bw_per_call = bw_per_call
+    plan.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
                         (gsize[1], input0.sizes.sum(), input0.sizes.mean(),
                          input0.sizes.min(), input0.sizes.max()))
-    return rval
+    return plan
 
 
 def create_rngs(queue, n):
@@ -1315,9 +1316,9 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
     max_len = min(min(rngs.shape0s), max(Y.shape0s))
     gsize = (max_len, N)
     lsize = (max_len, 1)
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitenoise", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    return rval
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitenoise", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    return plan
 
 
 def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
@@ -1396,10 +1397,10 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     max_len = min(max(Y.shape0s), get_mwgs(queue))
     gsize = (max_len, N)
     lsize = (max_len, 1)
-    rval = Plan(
+    plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_presentinput", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    return rval
+    plan.full_args = full_args     # prevent garbage-collection
+    return plan
 
 
 def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
@@ -1434,6 +1435,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     {
         const int j = get_global_id(0);
         const int i = get_global_id(1);
+        const int k = get_global_id(2);
         const int ij = i*${nyj} + j;
 
         const int tj = get_local_id(0);
@@ -1446,33 +1448,22 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
         const int i0 = (i - ti)*${sti} - ${pi};
         __local ${type} patch[${nipatch}][${njpatch}];
     % if conv:
-        __local ${type} filters[${nf*si*sj}];
+        __local ${type} filter[${si*sj}];
     % else:
         f += ij;
     % endif
         x += ${xstart};
         y += ${ystart};
 
-    % if conv or nf_per >= nf:
-        ${type} outs[${nf}];
-        for (int k = 0; k < ${nf}; k++)
-            outs[k] = b[k*${nyi*nyj} + ij];
-    % else:
-        const int k0 = get_global_id(2);
-        const int ksize = get_global_size(2);
-
-        ${type} outs[${nf_per}];
-        for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
-            outs[k] = (kk < ${nf}) ? b[kk*${nyi*nyj} + ij] : 0;
-    % endif
+        ${type} out = b[k*${nyi*nyj} + ij];
 
         for (int c = 0; c < ${nc}; c++) {
 
             // load image section
             __global const ${type} *xc = &x[c * ${nxi * nxj}];
-            for (int k = tij; k < ${npatch}; k += lsize) {
-                const int ki = k / ${njpatch};
-                const int kj = k % ${njpatch};
+            for (int kij = tij; kij < ${npatch}; kij += lsize) {
+                const int ki = kij / ${njpatch};
+                const int kj = kij % ${njpatch};
                 const int ii = i0 + ki;
                 const int jj = j0 + kj;
                 if (ii >= 0 && ii < ${nxi} && jj >= 0 && jj < ${nxj})
@@ -1483,49 +1474,27 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
 
     % if conv:
             // load filters
-            __global const ${type} *fc = f + c*${si*sj}*${nf};
-            for (int k = tij; k < ${si*sj} * ${nf}; k += lsize) {
-                filters[k] = fc[k];
+            __global const ${type} *fc = f + k*${nc*si*sj} + c*${si*sj};
+            for (int kij = tij; kij < ${si*sj}; kij += lsize) {
+                filter[kij] = fc[kij];
             }
     % endif
-
             barrier(CLK_LOCAL_MEM_FENCE);
 
-            for (int ii = 0; ii < ${si}; ii++) {
-            for (int jj = 0; jj < ${sj}; jj++) {
-                const ${type} xcij = patch[${sti}*ti+ii][${stj}*tj+jj];
+            for (int ii = 0; ii < ${si}; ii++)
+            for (int jj = 0; jj < ${sj}; jj++)
     % if conv:
-                __local const ${type} *fcij = &filters[(ii*${sj} + jj)*${nf}];
+                out += filter[ii*${sj}+jj] * patch[${sti}*ti+ii][${stj}*tj+jj];
     % else:
-                __global const ${type} *fcij =
-                    &f[(c*${si*sj} + ii*${sj} + jj)*${nf}*${nyi*nyj}];
+                out += f[((k*${nc} + c)*${si*sj} + ii*${sj} + jj)*${nyi*nyj}]
+                       * patch[${sti}*ti+ii][${stj}*tj+jj];
     % endif
-
-    % if conv:
-                for (int k = 0; k < ${nf}; k++)
-                    outs[k] += fcij[k] * xcij;
-    % elif nf_per >= nf:
-                for (int k = 0; k < ${nf}; k++)
-                    outs[k] += fcij[k*${nyi*nyj}] * xcij;
-    % else:
-                for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
-                    outs[k] += (kk < ${nf}) ? fcij[kk*${nyi*nyj}] * xcij : 0;
-    % endif
-            }
-            }
 
             barrier(CLK_LOCAL_MEM_FENCE);
         }
 
-        if (i < ${nyi} && j < ${nyj}) {
-    % if conv or nf_per >= nf:
-            for (int k = 0; k < ${nf}; k++)
-                y[k*${nyi*nyj} + ij] = outs[k];
-    % else:
-            for (int k = 0, kk = k0; k < ${nf_per}; k++, kk += ksize)
-                if (kk < ${nf})  y[kk*${nyi*nyj} + ij] = outs[k];
-    % endif
-        }
+        if (i < ${nyi} && j < ${nyj})
+            y[k*${nyi*nyj} + ij] = out;
     }
     """
 
@@ -1534,29 +1503,25 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     si, sj = kernel_shape
     pi, pj = padding
     sti, stj = strides
-    nf_per = 16
 
-    max_group = get_mwgs(queue, cap=128)
+    max_group = get_mwgs(queue, cap=256)
     assert max_group >= 32
     lsize0 = min(nyj, 32)
     lsize1 = min(max_group // lsize0, nyi)
-    lsize = (lsize0, lsize1)
-    gsize = (round_up(nyj, lsize[0]), round_up(nyi, lsize[1]))
-    if not conv and nf_per < nf:
-        lsize = lsize + (1,)
-        gsize = gsize + (int(np.ceil(nf / nf_per)),)
+    lsize = (lsize0, lsize1, 1)
+    gsize = (round_up(nyj, lsize[0]), round_up(nyi, lsize[1]), nf)
 
     njpatch = (lsize[0] - 1) * stj + sj
     nipatch = (lsize[1] - 1) * sti + si
     npatch = nipatch * njpatch
 
     assert np.prod(lsize) <= queue.device.max_work_group_size
-    assert (npatch*X.dtype.itemsize + conv*nf*si*sj*filters.dtype.itemsize
+    assert (npatch*X.dtype.itemsize + conv*si*sj*filters.dtype.itemsize
             <= queue.device.local_mem_size)
 
     textconf = dict(
         type=X.ctype, conv=conv, nf=nf, nxi=nxi, nxj=nxj, nyi=nyi, nyj=nyj,
-        nc=nc, si=si, sj=sj, pi=pi, pj=pj, sti=sti, stj=stj, nf_per=nf_per,
+        nc=nc, si=si, sj=sj, pi=pi, pj=pj, sti=sti, stj=stj,
         nipatch=nipatch, njpatch=njpatch, npatch=npatch,
         xstart=X.start, ystart=Y.start)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
@@ -1565,11 +1530,13 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     _fn = cl.Program(queue.context, text).build().conv2d
     _fn.set_args(*full_args)
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2d", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.flops_per_call = 2 * nyi * nyj * nf * nc * si * sj
-    rval.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
-    return rval
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2d", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.flops_per_call = 2 * nyi * nyj * nf * nc * si * sj
+    plan.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
+    plan.description = "shape_in=%s, shape_out=%s, kernel=%s, conv=%s" % (
+        shape_in, shape_out, kernel_shape, conv)
+    return plan
 
 
 def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
@@ -1608,9 +1575,9 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
 
         // load image patch
         __global const ${type} *xc = &x[c * ${nxi * nxj}];
-        for (int k = tij; k < ${nipatch * njpatch}; k += lsize) {
-            const int ki = k / ${njpatch};
-            const int kj = k % ${njpatch};
+        for (int kij = tij; kij < ${nipatch * njpatch}; kij += lsize) {
+            const int ki = kij / ${njpatch};
+            const int kj = kij % ${njpatch};
             const int ii = i0*${st} + ki;
             const int jj = j0*${st} + kj;
             if (ii >= 0 && ii < ${nxi} && jj >= 0 && jj < ${nxj})
@@ -1662,8 +1629,263 @@ def plan_pool2d(queue, X, Y, shape, size, stride, tag=None):
     _fn = cl.Program(queue.context, text).build().pool2d
     _fn.set_args(*full_args)
 
-    rval = Plan(queue, _fn, gsize, lsize=lsize, name="cl_pool2d", tag=tag)
-    rval.full_args = full_args     # prevent garbage-collection
-    rval.flops_per_call = X.size
-    rval.bw_per_call = X.nbytes + Y.nbytes
-    return rval
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_pool2d", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.flops_per_call = X.size
+    plan.bw_per_call = X.nbytes + Y.nbytes
+    return plan
+
+
+def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
+    assert len(pre) == len(post) == len(theta) == len(delta) == alpha.size
+    N = len(pre)
+
+    for arr in (pre, post, theta):  # vectors
+        assert (arr.shape1s == 1).all()
+    for arr in (delta,):  # matrices
+        assert (arr.stride1s == 1).all()
+
+    assert (pre.shape0s == delta.shape1s).all()
+    assert (post.shape0s == theta.shape0s == delta.shape0s).all()
+
+    assert (pre.ctype == post.ctype == theta.ctype == delta.ctype ==
+            alpha.ctype)
+
+    text = """
+    __kernel void bcm(
+        __global const int *shape0s,
+        __global const int *shape1s,
+        __global const int *pre_stride0s,
+        __global const int *pre_starts,
+        __global const ${type} *pre_data,
+        __global const int *post_stride0s,
+        __global const int *post_starts,
+        __global const ${type} *post_data,
+        __global const int *theta_stride0s,
+        __global const int *theta_starts,
+        __global const ${type} *theta_data,
+        __global const int *delta_stride0s,
+        __global const int *delta_starts,
+        __global ${type} *delta_data,
+        __global const ${type} *alphas
+    )
+    {
+        const int ij = get_global_id(0);
+        const int k = get_global_id(1);
+
+        const int shape0 = shape0s[k];
+        const int shape1 = shape1s[k];
+        const int i = ij / shape1;
+        const int j = ij % shape1;
+
+        __global ${type} *delta = delta_data + delta_starts[k];
+        const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
+        const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
+        const ${type} theta = theta_data[theta_starts[k] + i*theta_stride0s[k]];
+        const ${type} alpha = alphas[k];
+
+        if (i < shape0) {
+            delta[i*delta_stride0s[k] + j] =
+                alpha * post * (post - theta) * pre;
+        }
+    }
+    """
+
+    textconf = dict(type=pre.ctype)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        delta.cl_shape0s, delta.cl_shape1s,
+        pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
+        post.cl_stride0s, post.cl_starts, post.cl_buf,
+        theta.cl_stride0s, theta.cl_starts, theta.cl_buf,
+        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        alpha,
+    )
+    _fn = cl.Program(queue.context, text).build().bcm
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    lsize = None
+    gsize = (delta.sizes.max(), N)
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_bcm", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.flops_per_call = 4 * delta.sizes.sum()
+    plan.bw_per_call = (pre.nbytes + post.nbytes + theta.nbytes +
+                        delta.nbytes + alpha.nbytes)
+    return plan
+
+
+def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
+    assert (len(pre) == len(post) == len(weights) == len(delta) ==
+            alpha.size == beta.size)
+    N = len(pre)
+
+    for arr in (pre, post):  # vectors
+        assert (arr.shape1s == 1).all()
+    for arr in (delta, weights):  # matrices
+        assert (arr.stride1s == 1).all()
+
+    assert (pre.shape0s == weights.shape1s == delta.shape1s).all()
+    assert (post.shape0s == weights.shape0s == delta.shape0s).all()
+
+    assert (pre.ctype == post.ctype == weights.ctype == delta.ctype ==
+            alpha.ctype == beta.ctype)
+
+    text = """
+    __kernel void oja(
+        __global const int *shape0s,
+        __global const int *shape1s,
+        __global const int *pre_stride0s,
+        __global const int *pre_starts,
+        __global const ${type} *pre_data,
+        __global const int *post_stride0s,
+        __global const int *post_starts,
+        __global const ${type} *post_data,
+        __global const int *weights_stride0s,
+        __global const int *weights_starts,
+        __global const ${type} *weights_data,
+        __global const int *delta_stride0s,
+        __global const int *delta_starts,
+        __global ${type} *delta_data,
+        __global const ${type} *alphas,
+        __global const ${type} *betas
+    )
+    {
+        const int ij = get_global_id(0);
+        const int k = get_global_id(1);
+
+        const int shape0 = shape0s[k];
+        const int shape1 = shape1s[k];
+        const int i = ij / shape1;
+        const int j = ij % shape1;
+
+        __global ${type} *delta = delta_data + delta_starts[k];
+        const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
+        const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
+        const ${type} weight = weights_data[
+            weights_starts[k] + i*weights_stride0s[k] + j];
+        const ${type} alpha = alphas[k];
+        const ${type} beta = betas[k];
+
+        if (i < shape0) {
+            delta[i*delta_stride0s[k] + j] =
+                alpha * post * (pre - beta * weight * post);
+        }
+    }
+    """
+
+    textconf = dict(type=pre.ctype)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        delta.cl_shape0s, delta.cl_shape1s,
+        pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
+        post.cl_stride0s, post.cl_starts, post.cl_buf,
+        weights.cl_stride0s, weights.cl_starts, weights.cl_buf,
+        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        alpha, beta,
+    )
+    _fn = cl.Program(queue.context, text).build().oja
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    lsize = None
+    gsize = (delta.sizes.max(), N)
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_oja", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.flops_per_call = 6 * delta.sizes.sum()
+    plan.bw_per_call = (pre.nbytes + post.nbytes + weights.nbytes +
+                        delta.nbytes + alpha.nbytes + beta.nbytes)
+    return plan
+
+
+def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
+    assert (len(pre) == len(post) == len(enc) == len(delta) ==
+            len(learn) == alpha.size == len(scale))
+    N = len(pre)
+
+    for arr in (learn,):  # scalars
+        assert (arr.shape0s == 1).all()
+        assert (arr.shape1s == 1).all()
+    for arr in (pre, post, scale):  # vectors
+        assert (arr.shape1s == 1).all()
+    for arr in (enc, delta):  # matrices
+        assert (arr.stride1s == 1).all()
+
+    assert (pre.shape0s == enc.shape1s == delta.shape1s).all()
+    assert (post.shape0s == enc.shape0s == delta.shape0s).all()
+
+    assert (pre.ctype == post.ctype == enc.ctype == delta.ctype ==
+            learn.ctype == scale.ctype == alpha.ctype)
+
+    text = """
+    __kernel void voja(
+        __global const int *shape0s,
+        __global const int *shape1s,
+        __global const int *pre_stride0s,
+        __global const int *pre_starts,
+        __global const ${type} *pre_data,
+        __global const int *post_stride0s,
+        __global const int *post_starts,
+        __global const ${type} *post_data,
+        __global const int *enc_stride0s,
+        __global const int *enc_starts,
+        __global const ${type} *enc_data,
+        __global const int *delta_stride0s,
+        __global const int *delta_starts,
+        __global ${type} *delta_data,
+        __global const int *learn_starts,
+        __global const ${type} *learn_data,
+        __global const int *scale_stride0s,
+        __global const int *scale_starts,
+        __global const ${type} *scale_data,
+        __global const ${type} *alphas
+    )
+    {
+        const int ij = get_global_id(0);
+        const int k = get_global_id(1);
+
+        const int shape0 = shape0s[k];
+        const int shape1 = shape1s[k];
+        const int i = ij / shape1;
+        const int j = ij % shape1;
+
+        __global ${type} *delta = delta_data + delta_starts[k];
+        const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
+        const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
+        const ${type} enc = enc_data[enc_starts[k] + i*enc_stride0s[k] + j];
+        const ${type} learn = learn_data[learn_starts[k]];
+        const ${type} scale = scale_data[scale_starts[k] +
+                                         i*scale_stride0s[k]];
+        const ${type} alpha = alphas[k];
+
+        if (i < shape0) {
+            delta[i*delta_stride0s[k] + j] =
+                alpha * learn * post * (scale * pre - enc);
+        }
+    }
+    """
+
+    textconf = dict(type=pre.ctype)
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    full_args = (
+        delta.cl_shape0s, delta.cl_shape1s,
+        pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
+        post.cl_stride0s, post.cl_starts, post.cl_buf,
+        enc.cl_stride0s, enc.cl_starts, enc.cl_buf,
+        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        learn.cl_starts, learn.cl_buf,
+        scale.cl_stride0s, scale.cl_starts, scale.cl_buf,
+        alpha,
+    )
+    _fn = cl.Program(queue.context, text).build().voja
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    lsize = None
+    gsize = (delta.sizes.max(), N)
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_voja", tag=tag)
+    plan.full_args = full_args     # prevent garbage-collection
+    plan.flops_per_call = 5 * delta.sizes.sum()
+    plan.bw_per_call = (pre.nbytes + post.nbytes + enc.nbytes + delta.nbytes +
+                        learn.nbytes + scale.nbytes + alpha.nbytes)
+    return plan

@@ -29,7 +29,7 @@ from nengo_ocl.clra_nonlinearities import (
     plan_direct, plan_lif, plan_lif_rate,
     plan_probes, plan_linearfilter, plan_elementwise_inc,
     create_rngs, init_rngs, get_dist_enums_params, plan_whitenoise,
-    plan_presentinput, plan_conv2d, plan_pool2d)
+    plan_presentinput, plan_conv2d, plan_pool2d, plan_bcm, plan_oja, plan_voja)
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.planners import greedy_planner
 from nengo_ocl.ast_conversion import OCL_Function
@@ -418,12 +418,12 @@ class Simulator(nengo.Simulator):
             constant_bs, *args,
             beta=[op._float_beta for op in constant_bs],
             gamma=[op.gamma for op in constant_bs],
-            tag='DotInc-constant-beta-%d' % len(constant_bs))
+            tag='c-beta-%d' % len(constant_bs))
         vector_b_gemvs = self._sig_gemv(
             vector_bs, *args,
             beta=lambda op: self._YYB_views[op][2],
             gamma=[op.gamma for op in vector_bs],
-            tag='DotInc-vector-beta-%d' % len(vector_bs))
+            tag='v-beta-%d' % len(vector_bs))
         return constant_b_gemvs + vector_b_gemvs
 
     def _sig_gemv(self, ops, A_js_fn, X_js_fn, Y_fn, Y_in_fn=None,
@@ -754,17 +754,16 @@ class Simulator(nengo.Simulator):
             p, f, b = op.process, op.process.filters, op.process.biases
             assert f.ndim in [4, 6]
             conv = (f.ndim == 4)
+            kernel_shape = f.shape[-2:]
             X = self.all_data.getitem_device(self.sidx[op.input])
             Y = self.all_data.getitem_device(self.sidx[op.output])
-            f = np.array(np.transpose(
-                f, (1, 2, 3, 0) if conv else (3, 4, 5, 0, 1, 2)), order='C')
-            F = self.Array(f.ravel())
+            ftrans = np.asarray(np.transpose(
+                f, (0, 1, 2, 3) if conv else (0, 3, 4, 5, 1, 2)), order='C')
+            F = self.Array(ftrans.ravel())
             B = self.Array((np.zeros(p.shape_out) + b).ravel())
             plans.append(plan_conv2d(
                 self.queue, X, Y, F, B, p.shape_in, p.shape_out,
-                p.filters.shape[-2:], conv, p.padding, p.stride,
-                tag="shape_in=%s, shape_out=%s, kernel=%s, conv=%s" % (
-                    p.shape_in, p.shape_out, f.shape[-2:], conv)))
+                kernel_shape, conv, p.padding, p.stride))
 
         return plans
 
@@ -782,10 +781,32 @@ class Simulator(nengo.Simulator):
         return plans
 
     def plan_SimBCM(self, ops):
-        raise NotImplementedError("BCM learning rule")
+        pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
+        post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
+        theta = self.all_data[[self.sidx[op.theta] for op in ops]]
+        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
+        return [plan_bcm(self.queue, pre, post, theta, delta, alpha)]
 
     def plan_SimOja(self, ops):
-        raise NotImplementedError("Oja's learning rule")
+        pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
+        post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
+        weights = self.all_data[[self.sidx[op.weights] for op in ops]]
+        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
+        beta = self.Array([op.beta for op in ops])
+        return [plan_oja(self.queue, pre, post, weights, delta, alpha, beta)]
+
+    def plan_SimVoja(self, ops):
+        pre = self.all_data[[self.sidx[op.pre_decoded] for op in ops]]
+        post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
+        encoders = self.all_data[[self.sidx[op.scaled_encoders] for op in ops]]
+        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        learning_signal = self.all_data[[self.sidx[op.learning_signal] for op in ops]]
+        scale = self.RaggedArray([op.scale for op in ops], dtype=np.float32)
+        alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
+        return [plan_voja(self.queue, pre, post, encoders, delta,
+                          learning_signal, scale, alpha)]
 
     def plan_probes(self):
         if len(self.model.probes) == 0:
@@ -955,7 +976,7 @@ class Simulator(nengo.Simulator):
     def print_plans(self):
         print(" Plans ".center(80, '-'))
         for plan in self._plans.plans:
-            print("%s" % plan)
+            print("%r" % plan)
             if hasattr(plan, 'description'):
                 print(indent(plan.description, 4))
 
@@ -993,10 +1014,10 @@ class Simulator(nengo.Simulator):
 
         # print table
         print(" Profiling ".center(80, '-'))
-        print('%s\t%s\t%s\t%s' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
+        print('%8s|%10s|%10s|%10s|' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
 
         for r in table:
-            print('%i\t%2.3f\t%2.3f\t%2.3f\t%s' % r)
+            print('%8d|%10.3f|%10.3f|%10.3f| %s' % r)
 
         # totals totals
         print('-' * 80)
@@ -1020,14 +1041,10 @@ class Simulator(nengo.Simulator):
 
 Simulator.unsupported.extend([
     # learning rules
-    ('nengo?tests?test_learning_rules*test_unsupervised*',
-     "Unsupervised learning rules not implemented"),
     ('nengo?tests?test_learning_rules*test_dt_dependence*',
      "Filtering matrices (i.e. learned transform) not implemented"),
     ('nengo?tests?test_learning_rules*test_reset*',
      "Filtering matrices not implemented"),
-    ('nengo?tests?test_learning_rules*test_voja_*',
-     "VOja learning rule not implemented"),
 
     # neuron types
     ('nengo?tests?test_neurons*test_izhikevich',

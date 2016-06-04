@@ -20,5 +20,6 @@ Please keep this list sorted alphabetically by first name.
 - Bryan Tripp <bptripp@uwaterloo.ca>
 - Eric Hunsberger <erichuns@gmail.com>
 - Ménélik Vero <menelik.vero@tum.de>
+- Shaun Ren <shaun.ren@linux.com>
 - Trevor Bekolay <tbekolay@gmail.com>
 - Xuan Choo <xchoo.mainframe@gmail.com>
