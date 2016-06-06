@@ -18,6 +18,10 @@ Release History
    - Bugfixes
    - Documentation
 
+1.0.1 (unreleased)
+==================
+
+
 1.0.0 (June 6, 2016)
 ====================
 
