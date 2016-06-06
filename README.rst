@@ -73,17 +73,9 @@ Developer Installation
 ----------------------
 
 First, ``pip install nengo``.
-For best performance, make sure a fast version of Numpy is installed
+For best performance, first make sure a fast version of Numpy is installed
 by following the instructions in the
 `Nengo README <http://github.com/nengo/nengo/blob/master/README.rst>`_.
-Currently, ``nengo_ocl`` is compatible with Nengo 2.0.x,
-supporting most features.
-
-Once Nengo is installed, install the remaining dependencies:
-
-.. code-block:: bash
-
-   pip install networkx mako pyopencl
 
 This repository can then be installed with:
 
@@ -95,6 +87,8 @@ This repository can then be installed with:
 
 If you’re using a ``virtualenv`` (recommended!)
 then you can omit the ``--user`` flag.
+Check the output to make sure everything installed correctly.
+Some dependencies (e.g. ``pyopencl``) may require manual installation.
 
 Installing OpenCL
 =================

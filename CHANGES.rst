@@ -18,10 +18,11 @@ Release History
    - Bugfixes
    - Documentation
 
-1.0.0 (unreleased)
-==================
+1.0.0 (June 6, 2016)
+====================
 
-Release in support of Nengo 2.1.0.
+Release in support of Nengo 2.1.0. Since Nengo no longer supports Python 2.6,
+we now support Python 2.7+ and 3.3+.
 
 **Features**
 
