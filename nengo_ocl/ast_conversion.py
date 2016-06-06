@@ -409,10 +409,7 @@ class FuncExp(Expression):
                 raise NotImplementedError(
                     "'%s' function is not supported" % (fn.__name__))
 
-            try:
-                argcount = converter.func_code.co_argcount
-            except AttributeError:
-                argcount = converter.__code__.co_argcount
+            argcount = converter.__code__.co_argcount
             if argcount != len(args):
                 raise NotImplementedError(
                     "'%s' function is not supported for %d arguments"
@@ -845,7 +842,7 @@ class OCL_Function(object):
         try:
             globals_dict = fn.func_globals
             closure_dict = (
-                dict(zip(fn.func_code.co_freevars,
+                dict(zip(fn.__code__.co_freevars,
                          [c.cell_contents for c in fn.func_closure]))
                 if fn.func_closure is not None else {})
         except AttributeError:

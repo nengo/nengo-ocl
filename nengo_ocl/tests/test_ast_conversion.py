@@ -241,7 +241,7 @@ def test_functions(Simulator, n_points=10):
 
     dfuncs = ast_conversion.direct_funcs
     ifuncs = ast_conversion.indirect_funcs
-    functions = dfuncs.keys() + ifuncs.keys()
+    functions = list(dfuncs.keys()) + list(ifuncs.keys())
     functions = [f for f in functions if f not in ignore]
     all_passed = True
     for fn in functions:
@@ -257,7 +257,7 @@ def test_functions(Simulator, n_points=10):
                 lambda_fn = ifuncs[fn]
                 while lambda_fn.__name__ != '<lambda>':
                     lambda_fn = ifuncs[lambda_fn]
-                dims = lambda_fn.func_code.co_argcount
+                dims = lambda_fn.__code__.co_argcount
 
                 if dims == 1:
                     def wrapper(x):
