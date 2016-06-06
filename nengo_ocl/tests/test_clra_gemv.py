@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 import pyopencl as cl
-import pyopencl.array  # noqa: F401
+import pytest
 
 from nengo.utils.compat import range
 from nengo.utils.stdlib import Timer
@@ -247,15 +247,8 @@ def test_one_short_segment_many_longer_dots(ctx, planner):
             X_js=[range(ND)])
 
 
+@pytest.mark.slow
 def test_speed(ctx, rng):
-    try:
-        import pyopencl_blas
-    except ImportError:
-        pyopencl_blas = None
-
-    # enable_out_of_order = (
-    #     cl.command_queue_properties.OUT_OF_ORDER_EXEC_MODE_ENABLE)
-
     k = 300
     # k = 100
     # k = 32
@@ -288,53 +281,31 @@ def test_speed(ctx, rng):
     A_js = RA(ajs, dtype=np.int32)
     X_js = RA(xjs, dtype=np.int32)
 
-    # -- run cl computation
-    prog = plan_ragged_gather_gemv(
-        queue, alpha, clA, A_js, clX, X_js, beta, clY)
-    plans = prog.choose_plans()
+    # For bandwidth and load computations
+    total_mem_gb = 1e-9 * np.dtype('float32').itemsize * (
+        sum(m*n + 2*m + n for m, n in zip(ms, ns)) + 3)
+    total_gflops = 1e-9 * sum(m*(2*n-1) + 4*m for m, n in zip(ms, ns))
 
-    print('')
-    print('-' * 5 + ' Plans ' + '-' * 45)
-    for plan in plans:
-        print(plan)
+    # -- run cl computation a few times
+    ntrials = 3
+    times = []
+    for i in range(ntrials):
+        prog = plan_ragged_gather_gemv(
+            queue, alpha, clA, A_js, clX, X_js, beta, clY)
+        plans = prog.choose_plans()
 
-    with Timer() as timer:
-        for plan in plans:
-            plan()
-    print("nengo_ocl: %0.3f" % timer.duration)
+        if i == 0:
+            print('')
+            print('-' * 5 + ' Plans ' + '-' * 45)
+            for plan in plans:
+                print(plan)
 
-    # -- speed test in ocl blas
-    if pyopencl_blas:
-        pyopencl_blas.setup()
-
-        def array(a):
-            cla = cl.array.Array(queue, a.shape, a.dtype)
-            cla.set(a)
-            return cla
-
-        clAs = [array(a) for a in aa]
-        clXs = [array(x.ravel()) for x in xx]
-        clYs = [array(y.ravel()) for y in yy]
-
-        queues = [cl.CommandQueue(ctx) for _ in range(k)]
-        # queues = [cl.CommandQueue(ctx, properties=enable_out_of_order)
-        #           for _ in range(k)]
-
-        queue.finish()
         with Timer() as timer:
-            if 0:
-                # use a single queue
-                for A, X, Y in zip(clAs, clXs, clYs):
-                    pyopencl_blas.gemv(queue, A, X, Y)
-                queue.finish()
-            else:
-                # use multiple parallel queues
-                events = []
-                for i, [A, X, Y] in enumerate(zip(clAs, clXs, clYs)):
-                    q = queues[i % len(queues)]
-                    e = pyopencl_blas.gemv(q, A, X, Y)
-                    events.append(e)
-                for q in queues:
-                    q.flush()
-                cl.wait_for_events(events)
-        print("clBLAS: %0.3f" % timer.duration)
+            for plan in plans:
+                plan()
+
+        times.append(timer.duration)
+
+    t = np.min(times)
+    print("nengo_ocl: %0.3f s, bandwidth: %.1f GB/s, load: %.1f GFlops"
+              % (t, total_mem_gb / t, total_gflops / t))
