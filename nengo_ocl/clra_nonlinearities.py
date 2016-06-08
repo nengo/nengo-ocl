@@ -1132,11 +1132,12 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         # blockify to help with heterogeneous sizes
 
         # find best block size
-        block_sizes = [32, 64, 128, 256, 512, 1024]
+        block_sizes = [16, 32, 64, 128, 256, 512, 1024]
         N = np.inf
         for block_size_i in block_sizes:
             sizes_i, inds_i, _ = blockify_vector(block_size_i, input0)
             if len(sizes_i) < N:
+                N = len(sizes_i)
                 block_size = block_size_i
                 sizes = sizes_i
                 inds = inds_i
