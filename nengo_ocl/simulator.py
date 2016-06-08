@@ -1086,4 +1086,9 @@ Simulator.unsupported.extend([
     # synapses
     ('nengo/tests/test_synapses.py:test_triangle',
      "Only linear filters implemented"),
+
+    # specific to nengo.Simulator (functionality does not need testing)
+    ('nengo/tests/test_processes.py:test_time', "Specific to nengo.Simulator"),
+    ('nengo/tests/test_builder.py:test_commonsig_readonly',
+     "Specific to nengo.Simulator"),
 ])
