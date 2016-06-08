@@ -1060,30 +1060,30 @@ class Simulator(nengo.Simulator):
 
 Simulator.unsupported.extend([
     # learning rules
-    ('nengo?tests?test_learning_rules*test_dt_dependence*',
+    ('nengo/tests/test_learning_rules.py:test_dt_dependence*',
      "Filtering matrices (i.e. learned transform) not implemented"),
-    ('nengo?tests?test_learning_rules*test_reset*',
+    ('nengo/tests/test_learning_rules.py:test_reset*',
      "Filtering matrices not implemented"),
 
     # neuron types
-    ('nengo?tests?test_neurons*test_izhikevich',
+    ('nengo/tests/test_neurons.py:test_izhikevich',
      "Izhikevich neurons not implemented"),
-    ('nengo?tests?test_neurons*test_lif_min_voltage*',
+    ('nengo/tests/test_neurons.py:test_lif_min_voltage*',
      "Min voltage not implemented"),
 
     # nodes
-    ('nengo?tests?test_node*test_none',
+    ('nengo/tests/test_node.py:test_none',
      "No error if nodes output None"),
 
     # processes
-    ('nengo?tests?test_processes*test_brownnoise',
+    ('nengo/tests/test_processes.py:test_brownnoise',
      "Filtered noise processes not yet implemented"),
-    ('nengo?tests?test_ensemble*test_noise_copies_ok*',
+    ('nengo/tests/test_ensemble.py:test_noise_copies_ok*',
      "Filtered noise processes not yet implemented"),
-    ('nengo?tests?test_simulator*test_noise_copies_ok',
+    ('nengo/tests/test_simulator.py:test_noise_copies_ok',
      "Filtered noise processes not yet implemented"),
 
     # synapses
-    ('nengo?tests?test_synapses*test_triangle',
+    ('nengo/tests/test_synapses.py:test_triangle',
      "Only linear filters implemented"),
 ])
