@@ -25,9 +25,9 @@ def blockify_matrices(max_size, ras):
     N = len(ra0)
     for ra in ras:
         assert len(ra) == N
-        assert np.all(ra.shape1s == ra0.shape1s)
-        assert np.all(ra.shape0s == ra0.shape0s)
-        assert np.all(ra.shape1s == ra.stride0s), "not contiguous"
+        assert (ra.shape1s == ra0.shape1s).all()
+        assert (ra.shape0s == ra0.shape0s).all()
+        assert (ra.shape1s == ra.stride0s).all(), "not contiguous"
 
     sizes = []
     inds = []
@@ -59,8 +59,8 @@ def blockify_vectors(max_size, ras):
     N = len(ra0) if ra0 is not None else 0
     for ra in ras:
         assert len(ra) == N
-        assert np.all(ra.shape1s == 1)
-        assert np.all(ra.shape0s == ra0.shape0s)
+        assert (ra.shape1s == 1).all()
+        assert (ra.shape0s == ra0.shape0s).all()
 
     sizes = []
     inds = []
@@ -123,8 +123,8 @@ def plan_timeupdate(queue, step, time, dt):
 def plan_reset(queue, Y, values, tag=None):
     assert len(Y) == len(values)
 
-    assert np.all(Y.stride0s == Y.shape1s)
-    assert np.all(Y.stride1s == 1)
+    assert (Y.stride0s == Y.shape1s).all()
+    assert (Y.stride1s == 1).all()
     assert Y.ctype == values.ctype
 
     text = """
@@ -1228,16 +1228,12 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
     assert dist_enums.ctype == 'int'
     assert scale.ctype == inc.ctype == 'int'
 
-    for i in range(N):
-        for arr in [Y, dist_enums, dist_params]:
-            assert arr.stride1s[i] == 1
+    for arr in [Y, dist_enums, dist_params]:
+        assert (arr.shape1s == 1).all()
+        assert (arr.stride0s == 1).all()
+        assert (arr.stride1s == 1).all()
 
-        assert Y.shape1s[i] == 1
-        assert Y.stride0s[i] == 1
-        assert Y.stride1s[i] == 1
-
-        assert dist_enums.shape0s[i] == dist_enums.shape1s[i] == 1
-        assert dist_params.shape1s[i] == 1
+    assert (dist_enums.shape0s == 1).all()
 
     text = """
         ${dist_header}
@@ -1326,17 +1322,16 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     assert len(Y) == len(t) == len(signals)
     assert pres_t is None or pres_t.shape == (N,)
 
-    for i in range(N):
-        for arr in [Y, t, signals]:
-            assert arr.stride1s[i] == 1
+    for arr in [Y, t, signals]:
+        assert (arr.stride1s == 1).all()
 
-        assert Y.shape1s[i] == 1
-        assert Y.stride0s[i] == Y.stride1s[i] == 1
+    assert (Y.shape1s == 1).all()
+    assert (Y.stride0s == 1).all()
 
-        assert t.shape0s[i] == t.shape1s[i] == 1
+    assert (t.shape0s == 1).all()
+    assert (t.shape1s == 1).all()
 
-        assert Y.shape0s[i] == signals.shape1s[i]
-        assert signals.stride1s[i] == 1
+    assert (Y.shape0s == signals.shape1s).all()
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -1645,8 +1640,9 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
     for arr in (delta,):  # matrices
         assert (arr.stride1s == 1).all()
 
+    assert (post.shape0s == delta.shape0s).all()
     assert (pre.shape0s == delta.shape1s).all()
-    assert (post.shape0s == theta.shape0s == delta.shape0s).all()
+    assert (post.shape0s == theta.shape0s).all()
 
     assert (pre.ctype == post.ctype == theta.ctype == delta.ctype ==
             alpha.ctype)
@@ -1726,8 +1722,10 @@ def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
     for arr in (delta, weights):  # matrices
         assert (arr.stride1s == 1).all()
 
-    assert (pre.shape0s == weights.shape1s == delta.shape1s).all()
-    assert (post.shape0s == weights.shape0s == delta.shape0s).all()
+    assert (post.shape0s == weights.shape0s).all()
+    assert (pre.shape0s == weights.shape1s).all()
+    assert (weights.shape0s == delta.shape0s).all()
+    assert (weights.shape1s == delta.shape1s).all()
 
     assert (pre.ctype == post.ctype == weights.ctype == delta.ctype ==
             alpha.ctype == beta.ctype)
@@ -1812,8 +1810,10 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
     for arr in (enc, delta):  # matrices
         assert (arr.stride1s == 1).all()
 
-    assert (pre.shape0s == enc.shape1s == delta.shape1s).all()
-    assert (post.shape0s == enc.shape0s == delta.shape0s).all()
+    assert (post.shape0s == enc.shape0s).all()
+    assert (pre.shape0s == enc.shape1s).all()
+    assert (enc.shape0s == delta.shape0s).all()
+    assert (enc.shape1s == delta.shape1s).all()
 
     assert (pre.ctype == post.ctype == enc.ctype == delta.ctype ==
             learn.ctype == scale.ctype == alpha.ctype)
