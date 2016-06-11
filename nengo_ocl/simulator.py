@@ -1043,7 +1043,7 @@ class Simulator(nengo.Simulator):
         print('%8s|%10s|%10s|%10s|' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
 
         for r in table:
-            print('%8d|%10.3f|%10.3f|%10.3f| %s' % r)
+            print('%8d|%10.5f|%10.3f|%10.3f| %s' % r)
 
         # totals totals
         print('-' * 80)
