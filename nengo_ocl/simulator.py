@@ -882,7 +882,7 @@ class Simulator(nengo.Simulator):
                 N -= B
                 progress.step(n=B)
 
-        if self.profiling > 1:
+        if self.profiling:
             self.print_profiling()
 
     def reset(self, seed=None):
