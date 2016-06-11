@@ -527,7 +527,7 @@ class Simulator(object):
                 N -= B
                 progress.step(n=B)
 
-        if self.profiling > 1:
+        if self.profiling:
             self.print_profiling()
 
     def step(self):
@@ -1082,11 +1082,11 @@ class Simulator(object):
         print('%8s|%10s|%10s|%10s|' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
 
         for r in table:
-            print('%8d|%10.3f|%10.3f|%10.3f| %s' % r)
+            print('%8d|%10.5f|%10.3f|%10.3f| %s' % r)
 
         # totals totals
         print('-' * 80)
-        col = lambda c: np.asarray(map(lambda x: x[c], table))
+        col = lambda c: np.asarray([x[c] for x in table])
         times = col(1)
 
         def wmean(x):
