@@ -1047,7 +1047,7 @@ class Simulator(nengo.Simulator):
 
         # totals totals
         print('-' * 80)
-        col = lambda c: np.asarray(map(lambda x: x[c], table))
+        col = lambda c: np.asarray([x[c] for x in table])
         times = col(1)
 
         def wmean(x):
