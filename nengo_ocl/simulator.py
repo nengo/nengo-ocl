@@ -262,6 +262,26 @@ class ViewBuilder(object):
 
 
 class Simulator(nengo.Simulator):
+    """Simulator for running Nengo models in OpenCL.
+
+    Parameters
+    ----------
+    network, dt, seed, model
+        These parameters are the same as in ``nengo.Simulator``.
+    context : pyopencl.Context (optional)
+        OpenCL context specifying which device(s) to run on.
+    n_prealloc_probes : int (optional)
+        Number of timesteps to buffer when probing. Larger numbers mean less
+        data transfer with the device (faster), but use more device memory.
+    profiling : boolean (optional)
+        If ``True``, ``print_profiling()`` will show profiling information.
+        By default, will check the environment variable ``NENGO_OCL_PROFILING``
+    if_python_code : 'none' | 'warn' | 'error'
+        How the simulator should react if a Python function cannot be converted
+        to OpenCL code.
+    planner : callable
+        A function to plan operator order. See ``nengo_ocl.planners``.
+    """
 
     unsupported = []
 
@@ -272,7 +292,7 @@ class Simulator(nengo.Simulator):
         return CLRaggedArray.from_arrays(self.queue, listofarrays, **kwargs)
 
     def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
-                 n_prealloc_probes=32, profiling=None, ocl_only=False,
+                 n_prealloc_probes=32, profiling=None, if_python_code='none',
                  planner=greedy_planner):
         # --- create these first since they are used in __del__
         self.closed = False
@@ -304,7 +324,11 @@ class Simulator(nengo.Simulator):
             self.queue = cl.CommandQueue(context)
 
         self.n_prealloc_probes = n_prealloc_probes
-        self.ocl_only = ocl_only
+
+        if if_python_code not in ['none', 'warn', 'error']:
+            raise ValueError("%r not a valid value for `if_python_code`"
+                             % if_python_code)
+        self.if_python_code = if_python_code
 
         # --- Nengo build
         with Timer() as nengo_timer:
@@ -505,94 +529,114 @@ class Simulator(nengo.Simulator):
         return [plan_elementwise_inc(self.queue, A, X, Y)]
 
     def plan_SimPyFunc(self, ops):
-        # TODO: test with a hybrid program (Python and OCL)
-
-        # group nonlinearities
-        unique_ops = OrderedDict()
-        for op in ops:
-            # assert op.n_args in (1, 2), op.n_args
-            op_key = (op.fn, op.t is not None, op.x is not None)
-            if op_key not in unique_ops:
-                unique_ops[op_key] = {'in': [], 'out': []}
-            unique_ops[op_key]['in'].append(op.x)
-            unique_ops[op_key]['out'].append(op.output)
-
-        # make plans
+        groups = groupby(ops, lambda op: op.fn)
         plans = []
-        for (fn, t_in, x_in), signals in iteritems(unique_ops):
-            fn_name = (fn.__name__ if inspect.isfunction(fn) else
-                       fn.__class__.__name__)
-            if fn_name == "<lambda>":
-                fn_name += "%d" % len(plans)
+        for fn, group in groups:
+            assert all(op.fn is fn for op in group)
+            plans.extend(self._plan_python_fn(fn,
+                                              [op.t for op in group],
+                                              [op.x for op in group],
+                                              [op.output for op in group]))
+        return plans
 
-            # check signal input and output shape (implicitly checks
-            # for indexing errors)
-            vector_dims = lambda shape, dim: len(
-                shape) == 1 and shape[0] == dim
-            unit_stride = lambda es: len(es) == 1 and es[0] == 1
+    def _plan_python_fn(self, fn, ts, xs, ys):
+        assert len(ts) == len(xs) == len(ys)
+        assert all(t is None for t in ts) or all(t is not None for t in ts)
+        assert all(x is None for x in xs) or all(x is not None for x in xs)
+        assert all(y is None for y in ys) or all(y is not None for y in ys)
+        if ts[0] is not None:
+            assert all(t is self.model.time for t in ts)
 
-            if x_in:
-                in_dim = signals['in'][0].size
-                for sig_in in signals['in']:
-                    assert sig_in.size == in_dim
-                    assert vector_dims(sig_in.shape, in_dim)
-                    assert unit_stride(sig_in.elemstrides)
-            else:
-                in_dim = None
+        signal_size = lambda sig: sig.size if sig is not None else None
+
+        fn_name = fn.__name__ if inspect.isfunction(fn) else type(fn).__name__
+
+        # group by number of x dims
+        signals = zip(ts, xs, ys)
+        groups = groupby(signals, lambda s: signal_size(s[1]))
+
+        # --- try to turn Python function into OCL code
+        plans = []
+        unplanned_signals = []
+        for x_dim, group in groups:
+            tt, xx, yy = zip(*group)
 
             # if any functions have no output, must do them in Python
-            if any(s is None for s in signals['out']):
-                assert all(s is None for s in signals['out'])
-                warnings.warn(
-                    "Function '%s' could not be converted to OCL since it has "
-                    "no outputs." % (fn_name), RuntimeWarning)
-                plans.append(self._plan_pythonfn(
-                    fn, t_in, signals, fn_name=fn_name))
+            y_dim = signal_size(yy[0])
+            if y_dim is None:
+                self._found_python_code(
+                    "Function %r could not be converted to OCL "
+                    "since it has no outputs." % (fn_name))
+                unplanned_signals.extend(zip(tt, xx, yy))
                 continue
 
-            out_dim = signals['out'][0].size
-            for sig_out in signals['out']:
-                assert sig_out.size == out_dim
-                assert vector_dims(sig_out.shape, out_dim)
-                assert unit_stride(sig_out.elemstrides)
-
             # try to get OCL code
-            try:
-                in_dims = [1] if t_in else []
-                in_dims += [in_dim] if x_in else []
-                ocl_fn = OCL_Function(fn, in_dims=in_dims, out_dim=out_dim)
-                input_names = ocl_fn.translator.arg_names
-                inputs = []
-                if t_in:  # append time
-                    inputs.append(self.all_data[
-                        [self.sidx[self.model.time] for i in signals['out']]])
-                if x_in:  # append x
-                    inputs.append(self.all_data[
-                        [self.sidx[i] for i in signals['in']]])
-                output = self.all_data[[self.sidx[i] for i in signals['out']]]
-                plan = plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
-                                   input_names, inputs, output, tag=fn_name)
-                plans.append(plan)
-            except Exception as e:
-                if self.ocl_only:
-                    raise
+            if self.if_python_code == 'error':
+                plans.append(self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name))
+            else:
+                try:
+                    plans.append(self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name))
+                except Exception as e:
+                    self._found_python_code(
+                        "Function %r could not be converted to OCL due to %s%s"
+                        % (fn_name, type(e).__name__, e.args))
+                    unplanned_signals.extend(zip(tt, xx, yy))
 
-                warnings.warn(
-                    "Function '%s' could not be converted to OCL due to %s%s"
-                    % (fn_name, e.__class__.__name__, e.args), RuntimeWarning)
-
-                # not successfully translated to OCL, so do it in Python
-                plans.append(self._plan_pythonfn(
-                    fn, t_in, signals, fn_name=fn_name))
+        # --- do remaining unplanned signals in Python
+        if len(unplanned_signals) > 0:
+            tt, xx, yy = zip(*unplanned_signals)
+            plans.append(self._plan_fn_in_python(fn, tt, xx, yy, fn_name))
 
         return plans
 
-    def _plan_pythonfn(self, fn, t_in, signals, fn_name=""):
+    def _found_python_code(self, message):
+        if self.if_python_code == 'error':
+            raise RuntimeError(message)
+        elif self.if_python_code == 'warn':
+            warnings.warn(message, RuntimeWarning)
+
+    def _plan_fn_in_ocl(self, fn, tt, xx, yy, fn_name):
+        signal_size = lambda sig: sig.size if sig is not None else None
+        vector_dims = lambda shape, dim: len(shape) == 1 and shape[0] == dim
+        unit_stride = lambda es: len(es) == 1 and es[0] == 1
+
+        t_in = tt[0] is not None
+        x_in = xx[0] is not None
+        x_dim = signal_size(xx[0])
+        y_dim = signal_size(yy[0])
+        assert x_dim != 0 and y_dim != 0  # should either be None or > 0
+        assert all(signal_size(x) == x_dim for x in xx)
+        assert all(signal_size(y) == y_dim for y in yy)
+
+        # check signal input and output shape (implicitly checks
+        # for indexing errors)
+        if x_in:
+            assert all(vector_dims(x.shape, x_dim) for x in xx)
+            assert all(unit_stride(x.elemstrides) for x in xx)
+
+        assert all(vector_dims(y.shape, y_dim) for y in yy)
+        assert all(unit_stride(y.elemstrides) for y in yy)
+
+        # try to get OCL code
+        in_dims = ([1] if t_in else []) + ([x_dim] if x_in else [])
+        ocl_fn = OCL_Function(fn, in_dims=in_dims, out_dim=y_dim)
+        input_names = ocl_fn.translator.arg_names
+        inputs = []
+        if t_in:  # append time
+            inputs.append(self.all_data[[self.sidx[t] for t in tt]])
+        if x_in:  # append x
+            inputs.append(self.all_data[[self.sidx[x] for x in xx]])
+        output = self.all_data[[self.sidx[y] for y in yy]]
+
+        return plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
+                           input_names, inputs, output, tag=fn_name)
+
+    def _plan_fn_in_python(self, fn, tt, xx, yy, fn_name):
+        t_in = tt[0] is not None
         t_idx = self.sidx[self.model.time]
-        in_idx = [self.sidx[s] if s else None for s in signals['in']]
-        out_idx = [self.sidx[s] if s else None for s in signals['out']]
-        assert len(in_idx) == len(out_idx)
-        ix_iy = list(zip(in_idx, out_idx))
+        x_idx = [self.sidx[x] if x is not None else None for x in xx]
+        y_idx = [self.sidx[y] if y is not None else None for y in yy]
+        ix_iy = list(zip(x_idx, y_idx))
 
         def step():
             t = float(self.all_data[t_idx][0, 0] if t_in else 0)
@@ -610,7 +654,7 @@ class Simulator(nengo.Simulator):
                         y = y[:, None]
                     self.all_data[iy] = y
 
-        return PythonPlan(step, name='py_function', tag=fn_name)
+        return PythonPlan(step, name='python_fn', tag=fn_name)
 
     def plan_SimNeurons(self, all_ops):
         groups = groupby(all_ops, lambda op: op.neurons.__class__)
@@ -683,9 +727,9 @@ class Simulator(nengo.Simulator):
                               N=N, tau_n=tau_n, inc_n=inc_n)]
 
     def plan_SimProcess(self, all_ops):
-        class_groups = groupby(all_ops, lambda op: op.process.__class__)
+        class_groups = groupby(all_ops, lambda op: type(op.process))
         plan_groups = defaultdict(list)
-
+        step_plans = []
         for process_class, ops in class_groups:
             for cls in process_class.__mro__:
                 attrname = '_plan_' + cls.__name__
@@ -693,11 +737,17 @@ class Simulator(nengo.Simulator):
                     plan_groups[attrname].extend(ops)
                     break
             else:
-                raise NotImplementedError("Unsupported process type '%s'"
-                                          % process_class.__name__)
+                for op in ops:
+                    shape = lambda s: s.shape if s is not None else (0,)
+                    fn = op.process.make_step(
+                        shape(op.input), shape(op.output), self.model.dt,
+                        rng=op.process.get_rng(self.rng))
+                    step_plans.extend(self._plan_python_fn(
+                        fn, [op.t], [op.input], [op.output]))
 
-        return [p for attr, ops in iteritems(plan_groups)
-                for p in getattr(self, attr)(ops)]
+        process_plans = [p for attr, ops in iteritems(plan_groups)
+                         for p in getattr(self, attr)(ops)]
+        return process_plans + step_plans
 
     def _plan_LinearFilter(self, ops):
         for op in ops:
@@ -1087,7 +1137,6 @@ Simulator.unsupported.extend([
      "Only linear filters implemented"),
 
     # specific to nengo.Simulator (functionality does not need testing)
-    ('nengo/tests/test_processes.py:test_time', "Specific to nengo.Simulator"),
     ('nengo/tests/test_builder.py:test_commonsig_readonly',
      "Specific to nengo.Simulator"),
 ])

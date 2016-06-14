@@ -19,7 +19,7 @@ ctx = cl.create_some_context()
 
 def OclSimulator(*args, **kwargs):
     return nengo_ocl.Simulator(
-        *args, context=ctx, ocl_only=True, **kwargs)
+        *args, context=ctx, if_python_code='error', **kwargs)
 
 
 def pytest_funcarg__Simulator(request):
