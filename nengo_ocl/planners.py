@@ -1,8 +1,16 @@
 from collections import defaultdict
 
 from nengo.builder.operator import Operator
+from nengo.builder.processes import SimProcess
 from nengo.utils.compat import iteritems
 from nengo.utils.simulator import operator_depencency_graph
+
+
+def get_group(op):
+    if isinstance(op, SimProcess):
+        return type(op.process)
+    else:
+        return type(op)
 
 
 def greedy_planner(operators):
@@ -26,18 +34,19 @@ def greedy_planner(operators):
     # available ops are ready to be scheduled (all predecessors scheduled)
     available = defaultdict(set)
     for op in (op for op, dep in iteritems(predecessors_of) if not dep):
-        available[type(op)].add(op)
+        available[get_group(op)].add(op)
 
-    rval = []
+    groups = []
     while len(predecessors_of) > 0:
         if len(available) == 0:
             raise ValueError("Cycles in the op graph")
 
-        chosen_type = sorted(available.items(), key=lambda x: len(x[1]))[-1][0]
-        candidates = available[chosen_type]
+        sorted_groups = sorted(available.items(), key=lambda x: len(x[1]))
+        chosen_group = sorted_groups[-1][0]
+        candidates = available[chosen_group]
 
         # --- greedily pick non-overlapping ops
-        chosen = []
+        chosen_ops = []
         base_sets = defaultdict(set)
         base_incs = defaultdict(set)
         base_updates = defaultdict(set)
@@ -57,7 +66,7 @@ def greedy_planner(operators):
         for op in candidates:
             if not overlaps(op):
                 # add op
-                chosen.append(op)
+                chosen_ops.append(op)
                 for s in op.sets:
                     base_sets[s.base].add(s)
                 for s in op.incs:
@@ -66,23 +75,24 @@ def greedy_planner(operators):
                     base_updates[s.base].add(s)
 
         # --- schedule ops
-        assert chosen
-        rval.append((chosen_type, chosen))
+        assert chosen_ops
+        groups.append((chosen_group, chosen_ops))
 
         # --- update predecessors and successors of unsheduled ops
-        available[chosen_type].difference_update(chosen)
-        if not available[chosen_type]:
-            del available[chosen_type]
+        available[chosen_group].difference_update(chosen_ops)
+        if not available[chosen_group]:
+            del available[chosen_group]
 
-        for op in chosen:
+        for op in chosen_ops:
             for op2 in successors_of[op]:
                 preds = predecessors_of[op2]
                 preds.remove(op)
                 if len(preds) == 0:
-                    available[type(op2)].add(op2)
+                    available[get_group(op2)].add(op2)
             del predecessors_of[op]
             del successors_of[op]
 
+    rval = [(type(ops[0]), ops) for _, ops in groups]
     assert len(operators) == sum(len(p[1]) for p in rval)
     # print('greedy_planner: Program len:', len(rval))
     return rval
