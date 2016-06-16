@@ -1,16 +1,45 @@
 from collections import defaultdict
 
+import nengo.builder.neurons
+import nengo.builder.operator
 from nengo.builder.operator import Operator
 from nengo.builder.processes import SimProcess
 from nengo.utils.compat import iteritems
 from nengo.utils.simulator import operator_depencency_graph
 
+from nengo_ocl.operators import MultiDotInc
 
-def get_group(op):
+
+def _get_group(op):
     if isinstance(op, SimProcess):
         return type(op.process)
     else:
         return type(op)
+
+
+# Precedence roughly reflects how long we expect operators to take. Since
+# things like DotInc are more costly, we try to postpone them so that hopefully
+# more operators of the same type can be grouped in.
+_group_precedence = {
+    nengo.builder.operator.TimeUpdate: -100,
+    nengo.builder.operator.PreserveValue: -90,
+    nengo.builder.operator.Reset: -80,
+    nengo.builder.operator.Copy: -70,
+    nengo.builder.operator.SlicedCopy: -60,
+    nengo.synapses.Synapse: 80,
+    nengo.builder.neurons.SimNeurons: 90,
+    MultiDotInc: 100,
+}
+
+
+def _get_precedence(group):
+    assert isinstance(group, type)
+
+    for cls in group.__mro__:
+        if cls in _group_precedence:
+            return _group_precedence[cls]
+
+    return 0
 
 
 def greedy_planner(operators):
@@ -34,16 +63,20 @@ def greedy_planner(operators):
     # available ops are ready to be scheduled (all predecessors scheduled)
     available = defaultdict(set)
     for op in (op for op, dep in iteritems(predecessors_of) if not dep):
-        available[get_group(op)].add(op)
+        available[_get_group(op)].add(op)
 
     groups = []
     while len(predecessors_of) > 0:
         if len(available) == 0:
             raise ValueError("Cycles in the op graph")
 
-        sorted_groups = sorted(available.items(), key=lambda x: len(x[1]))
-        chosen_group = sorted_groups[-1][0]
-        candidates = available[chosen_group]
+        # --- Choose group with largest size
+        # Break ties by looking at group precedence.
+        group_sizes = [(group, len(ops)) for group, ops in available.items()]
+        max_size = max(size for _, size in group_sizes)
+        candidate_groups = [
+            group for group, size in group_sizes if size == max_size]
+        chosen_group = sorted(candidate_groups, key=_get_precedence)[0]
 
         # --- greedily pick non-overlapping ops
         chosen_ops = []
@@ -63,7 +96,7 @@ def greedy_planner(operators):
                     return True
             return False
 
-        for op in candidates:
+        for op in available[chosen_group]:
             if not overlaps(op):
                 # add op
                 chosen_ops.append(op)
@@ -88,7 +121,7 @@ def greedy_planner(operators):
                 preds = predecessors_of[op2]
                 preds.remove(op)
                 if len(preds) == 0:
-                    available[get_group(op2)].add(op2)
+                    available[_get_group(op2)].add(op2)
             del predecessors_of[op]
             del successors_of[op]
 
