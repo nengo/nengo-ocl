@@ -33,8 +33,10 @@ class RaggedArray(object):
     in the same underlying buffer.
     """
 
-    def __init__(self, arrays, names=None, dtype=None, align=False):
-        arrays = [np.asarray(a) for a in arrays]
+    def __init__(self, arrays, names=None, dtype=None, align=False, order='C'):
+        assert order in 'CF'
+
+        arrays = [np.asarray(a, order=order) for a in arrays]
         assert len(arrays) > 0
         assert all(a.ndim <= 2 for a in arrays)
 
@@ -55,12 +57,13 @@ class RaggedArray(object):
         self.starts = starts
         self.shape0s = [a.shape[0] if a.ndim > 0 else 1 for a in arrays]
         self.shape1s = [a.shape[1] if a.ndim > 1 else 1 for a in arrays]
-        self.stride0s = [a.shape[1] if a.ndim == 2 else 1 for a in arrays]
-        self.stride1s = [1 for a in arrays]
+        self.stride0s = [a.strides[0] // a.itemsize for a in arrays]
+        self.stride1s = [a.strides[1] // a.itemsize
+                         if a.ndim > 1 else 1 for a in arrays]
 
         buf = np.zeros(starts[-1] + arrays[-1].size, dtype=dtype)
         for a, s in zip(arrays, starts):
-            buf[s:s+a.size] = a.ravel()
+            buf[s:s+a.size] = a.ravel(order=order)
 
         self.buf = buf
         self.names = names
