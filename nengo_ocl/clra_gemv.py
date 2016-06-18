@@ -838,23 +838,23 @@ def many_dots_impl(p, items):
 def block_impl(p, items):
 
     if p.clra_alpha is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: clra_alpha not supported')
     if p.clra_gamma is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: clra_gamma not supported')
     if p.clra_beta is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: clra_beta not supported')
     if p.cl_alpha is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: cl_alpha not supported')
     if p.cl_beta is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: cl_beta not supported')
     if p.cl_gamma is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: cl_gamma not supported')
     if not all(s == 1 for s in p.A.stride1s):
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: A must be in row-major')
 
     if p.A_js is None:
         # -- easy probably, but not done
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: A_js cannot be None')
 
     # --- blocking
     # We want to group the dot products into blocks, so that each workgroup
