@@ -83,7 +83,7 @@ class GeometryEntry(object):
         self.y_in_start = y_in_start
         assert all(isinstance(dot, Dot) for dot in dots)
         self.dots = dots
-        self.Ax_dims = ((d.a_shape1, d.a_stride0) for d in dots)
+        self.Ax_dims = [(d.a_shape1, d.a_stride0) for d in dots]
 
     def __eq__(self, other):
         return type(self) == type(other) \
@@ -99,8 +99,8 @@ class GeometryEntry(object):
             counts[dim_stride] += 1
         return 'yd=%s <- %s' % (
             self.y_len,
-            ', '.join(('(%s x d=%s,s=%s)' % (counts[(d, s)], d, s))
-                      for (d, s) in counts))
+            ', '.join(('(%s x n=%s,stride=%s)' % (counts[(n, s)], n, s))
+                      for (n, s) in counts))
 
 
 class Geometry(object):
