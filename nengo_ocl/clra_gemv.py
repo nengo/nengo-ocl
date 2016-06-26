@@ -73,12 +73,12 @@ class Dot(object):
         self.x_start = x_start
         self.a_start = a_start
         self.a_stride0 = a_stride0
-        self.a_shape1 = a_shape1
+        self.a_shape1 = a_shape1   # Columns of A
 
 class GeometryEntry(object):
 
     def __init__(self, y_len, y_start, y_in_start, dots):
-        self.y_len = y_len
+        self.y_len = y_len         # = Rows of A
         self.y_start = y_start
         self.y_in_start = y_in_start
         assert all(isinstance(dot, Dot) for dot in dots)
