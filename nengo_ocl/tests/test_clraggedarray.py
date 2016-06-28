@@ -8,8 +8,7 @@ from nengo_ocl import raggedarray as ra
 from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 
-
-ctx = cl.create_some_context()
+from .conftest import ctx
 
 
 def make_random_ra(n, d, low=20, high=40, rng=None):

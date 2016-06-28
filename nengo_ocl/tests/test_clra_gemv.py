@@ -13,8 +13,8 @@ from nengo_ocl.clra_gemv import (
     plan_reduce_gemv, plan_many_dots_gemv, plan_block_gemv,
     plan_ragged_gather_gemv)
 
+from .conftest import ctx
 
-ctx = cl.create_some_context()
 logger = logging.getLogger(__name__)
 RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
 

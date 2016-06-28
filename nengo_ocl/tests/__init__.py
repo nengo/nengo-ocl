@@ -1,1 +1,1 @@
-from .test_nengo import Simulator
+from .conftest import OclSimulator

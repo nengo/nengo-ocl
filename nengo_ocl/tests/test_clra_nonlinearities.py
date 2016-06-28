@@ -15,8 +15,8 @@ from nengo_ocl.clra_nonlinearities import (
     plan_lif, plan_lif_rate, plan_elementwise_inc, plan_reset, plan_slicedcopy,
     plan_linearfilter)
 
+from .conftest import ctx
 
-ctx = cl.create_some_context()
 logger = logging.getLogger(__name__)
 RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
 
