@@ -26,7 +26,7 @@ def allclose_tol(*args, **kwargs):
 
 nengo_dir = os.path.dirname(nengo.__file__)
 modules = find_modules(nengo_dir, prefix='nengo')
-tests = load_functions(modules, arg_pattern='^Simulator$')
+tests = load_functions(modules, arg_pattern='^(Ref)?Simulator$')
 
 nengo.tests.test_synapses.allclose = allclose_tol  # looser tolerances
 
@@ -40,7 +40,7 @@ except ImportError:
 else:
     nengo_extras_dir = os.path.dirname(nengo_extras.__file__)
     modules = find_modules(nengo_extras_dir, prefix='nengo_extras')
-    tests = load_functions(modules, arg_pattern='^Simulator$')
+    tests = load_functions(modules, arg_pattern='^(Ref)?Simulator$')
     locals().update(tests)
 
 
