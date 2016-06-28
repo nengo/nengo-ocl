@@ -325,6 +325,8 @@ class Simulator(nengo.Simulator):
                 # Build the network into the model
                 self.model.build(network)
 
+            cache.shrink()
+
         logger.info("Nengo build in %0.3f s" % nengo_timer.duration)
 
         # --- operators
