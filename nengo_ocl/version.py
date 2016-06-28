@@ -14,5 +14,5 @@ version = "{v}{dev}".format(v='.'.join(str(v) for v in version_info),
                             dev=('.dev%d' % dev) if dev is not None else '')
 
 # --- latest Nengo version at time of release
-latest_nengo_version_info = (2, 1, 0)  # (major, minor, patch)
+latest_nengo_version_info = (2, 1, 2)  # (major, minor, patch)
 latest_nengo_version = '.'.join(str(v) for v in latest_nengo_version_info)
