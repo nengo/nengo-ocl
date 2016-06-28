@@ -57,17 +57,18 @@ class Plan(BasePlan):
 
     def __init__(self, queue, kern, gsize, lsize, **kwargs):
         super(Plan, self).__init__(**kwargs)
-        gsize = tuple(int(s) for s in gsize)
-        assert 0 not in gsize, gsize
-        if lsize is not None:
-            lsize = tuple(int(s) for s in lsize)
-            assert len(lsize) > 0
-            assert 0 not in lsize, lsize
         self.queue = queue
         self.kern = kern
-        self.gsize = gsize
-        self.lsize = lsize
+        self.gsize = self._format_size(gsize)
+        self.lsize = self._format_size(lsize) if lsize is not None else None
         self._events_to_profile = []
+
+    def _format_size(self, size):
+        assert size is not None
+        size = tuple(int(s) for s in size)
+        assert len(size) > 0
+        assert all(s > 0 for s in size)
+        return size
 
     def __call__(self, profiling=False):
         ev = self.enqueue(profiling=profiling)

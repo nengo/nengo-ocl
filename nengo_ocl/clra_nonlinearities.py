@@ -1173,7 +1173,7 @@ def init_rngs(queue, rngs, seeds):
     args = (cl_seeds, rngs.cl_starts, rngs.cl_buf)
 
     rng_items = rngs.shape0s[0]
-    gsize = (rng_items, len(rngs))
+    gsize = (int(rng_items), len(rngs))
     lsize = None
     e = _init_rng_kernel(queue, gsize, lsize, *[arr.data for arr in args])
     e.wait()
