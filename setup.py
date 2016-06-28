@@ -40,7 +40,7 @@ setup(
     long_description=read('README.rst', 'CHANGES.rst'),
     zip_safe=False,
     install_requires=[
-        'nengo',
+        'nengo>=%s' % version_module.latest_nengo_version,
         'mako',
         'pyopencl',
     ],

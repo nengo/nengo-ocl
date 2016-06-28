@@ -279,11 +279,10 @@ class Simulator(nengo.Simulator):
         self.model = None
 
         # --- check version
-        if nengo.version.version_info[:2] != latest_nengo_version_info[:2]:
+        if nengo.version.version_info < latest_nengo_version_info:
             raise ValueError(
-                "This simulator only supports Nengo %s.x (got %s)" %
-                ('.'.join(str(i) for i in latest_nengo_version_info[:2]),
-                 nengo.__version__))
+                "This simulator only supports Nengo %s (got %s)" %
+                (latest_nengo_version, nengo.__version__))
         elif nengo.version.version_info > latest_nengo_version_info:
             warnings.warn("This version of `nengo_ocl` has not been tested "
                           "with your `nengo` version (%s). The latest fully "
