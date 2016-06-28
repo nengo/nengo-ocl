@@ -14,4 +14,5 @@ class OclSimulator(nengo_ocl.Simulator):
 
 
 TestConfig.Simulator = OclSimulator
+TestConfig.RefSimulator = OclSimulator
 TestConfig.neuron_types = [nengo.Direct, nengo.LIF, nengo.LIFRate]
