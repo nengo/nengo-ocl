@@ -1,1 +1,1 @@
-from nengo.conftest import plt, rng
+from nengo.conftest import plt, rng  # noqa: F401
