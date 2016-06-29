@@ -2,6 +2,7 @@
 import imp
 import io
 import os
+import sys
 
 try:
     from setuptools import setup
@@ -24,6 +25,16 @@ def read(*filenames, **kwargs):
 root = os.path.dirname(os.path.realpath(__file__))
 version_module = imp.load_source(
     'version', os.path.join(root, 'nengo_ocl', 'version.py'))
+testing = 'test' in sys.argv or 'pytest' in sys.argv
+
+# Don't mess with added options if any are passed
+sysargs_overridden = False
+
+if '--addopts' not in sys.argv:
+    # Enable nengo tests by default
+    old_sysargs = sys.argv[:]
+    sys.argv[:] = old_sysargs + ['--addopts', '--pyargs nengo']
+    sysargs_overridden = True
 
 setup(
     name="nengo_ocl",
@@ -39,6 +50,7 @@ setup(
                  "Neural Engineering Framework"),
     long_description=read('README.rst', 'CHANGES.rst'),
     zip_safe=False,
+    setup_requires=['pytest-runner'] if testing else [],
     install_requires=[
         'nengo>=%s' % version_module.latest_nengo_version,
         'mako',
@@ -59,3 +71,6 @@ setup(
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
     ]
 )
+
+if sysargs_overridden:
+    sys.argv[:] = old_sysargs
