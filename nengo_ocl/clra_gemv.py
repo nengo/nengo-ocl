@@ -193,7 +193,9 @@ class gemv_prog(object):
                         self.Y_in.starts, self.A.stride0s, self.A.shape1s,
                         self.Y.shape0s, self.X_js, self.A_js)
 
-    def cl_geometry_and_textconf(self, items, padding=4):
+    def cl_geometry_and_textconf(self, items, padding=4, stride=0):
+        assert isinstance(stride, int) and stride in [0,1]
+
         p = self
         max_n_dots = max(len(p.geometry[ii].dots) for ii in items)
         n_structure_vars = 4 * max_n_dots + 5
@@ -205,7 +207,7 @@ class gemv_prog(object):
         X_starts = p.X.starts
         Y_starts = p.Y.starts
         Y_in_starts = p.Y_in.starts
-        A_stride0s = p.A.stride0s
+        A_strides = [p.A.stride0s, p.A.stride1s][stride]
         A_shape1s = p.A.shape1s
         Y_shape0s = p.Y.shape0s
 
@@ -218,7 +220,7 @@ class gemv_prog(object):
                 xi, ai = xi[0], ai[0]  # to ignore numpy DeprecationWarning
                 gstructure[bbi, 0 * max_n_dots + ii] = X_starts[xi]
                 gstructure[bbi, 1 * max_n_dots + ii] = A_starts[ai]
-                gstructure[bbi, 2 * max_n_dots + ii] = A_stride0s[ai]
+                gstructure[bbi, 2 * max_n_dots + ii] = A_strides[ai]
                 gstructure[bbi, 3 * max_n_dots + ii] = A_shape1s[ai]
             # -- offset of output and input buffers
             gstructure[bbi, 4 * max_n_dots + 0] = Y_in_starts[bb]
@@ -235,7 +237,7 @@ class gemv_prog(object):
             'structure_vars_stride': structure_vars_stride,
             'x_starts': 'lstructure[0 * %s + ii]' % max_n_dots,
             'a_starts': 'lstructure[1 * %s + ii]' % max_n_dots,
-            'a_s0': 'lstructure[2 * %s + ii]' % max_n_dots,
+            'a_s%d' % stride: 'lstructure[2 * %s + ii]' % max_n_dots,
             'N_i': 'lstructure[3 * %s + ii]' % max_n_dots,
             'y_in_starts': 'lstructure[4 * %s + 0]' % max_n_dots,
             'y_offset': 'lstructure[4 * %s + 1]' % max_n_dots,
