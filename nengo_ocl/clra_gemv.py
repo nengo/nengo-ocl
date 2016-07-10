@@ -665,7 +665,7 @@ def many_dots_impl(p, items):
         raise NotImplementedError()
     if p.cl_gamma is not None:
         raise NotImplementedError()
-    if not all(s == 1 for s in p.A.stride1s):
+    if not all(s == 1 for s in p.A.stride0s):
         raise NotImplementedError()
 
     assert p.float_alpha is not None
@@ -675,7 +675,7 @@ def many_dots_impl(p, items):
         # -- easy probably, but not done
         raise NotImplementedError()
     A_js_shape0s = p.A_js.shape0s
-    cl_gstructure, textconf = p.cl_geometry_and_textconf(items)
+    cl_gstructure, textconf = p.cl_geometry_and_textconf(items, stride=1)
 
     # min_n_dots = min(A_js_shape0s)
     max_n_dots = max(A_js_shape0s)
@@ -707,13 +707,7 @@ def many_dots_impl(p, items):
         'segment_idx': 'segment_idx',
         'dot_block_idx': 'dot_block_idx',
     })
-    if 0:
-        for k, v in textconf.items():
-            print(k, v)
     textconf.update(p.__dict__)
-    #    print('float_gamma', textconf['float_gamma'])
-    #    print('cl_gamma', textconf['cl_gamma'])
-    #    print('clra_gamma', textconf['clra_gamma'])
 
     text = """
         __kernel void gemv_many_dots(
@@ -772,11 +766,13 @@ def many_dots_impl(p, items):
                      ii < ${n_dot_products};
                      ii += ${dot_block_size})
             {
-                for (int nn = 0; nn < ${N_i}; nn += 1)
+                const __global ${A.cl_buf.ctype}* a = A_data + ${a_starts}
+                                                      + get_global_id(0);
+                const __global ${X.cl_buf.ctype}* x = X_data + ${x_starts};
+                for (int nn = 0; nn < ${N_i}; nn++)
                 {
-                    y_sum_post[dot_block_idx][segment_idx]
-                    += A_data[${a_starts} + get_global_id(0) * ${a_s0} + nn]
-                       * X_data[${x_starts} + nn];
+                    y_sum_post[dot_block_idx][segment_idx] +=
+                        a[${a_s1} * nn] * x[nn];
                 }
             }
         }
@@ -837,8 +833,8 @@ def block_impl(p, items):
         raise NotImplementedError('block_impl: cl_beta not supported')
     if p.cl_gamma is not None:
         raise NotImplementedError('block_impl: cl_gamma not supported')
-    if not all(s == 1 for s in p.A.stride1s):
-        raise NotImplementedError('block_impl: A must be in row-major')
+    if not all(s == 1 for s in p.A.stride0s):
+        raise NotImplementedError('block_impl: A must be in column-major')
 
     if p.A_js is None:
         # -- easy probably, but not done
@@ -851,7 +847,7 @@ def block_impl(p, items):
     # region of this buffer, then reduce across the buffer in a separate kernel
 
     # block_y = 8
-    block_y = 32
+    block_y = 128
     # block_x = 32
     block_x = 128
 
@@ -918,7 +914,7 @@ def block_impl(p, items):
             bw_reduce += shape0i*(len(Ybufind_reduce) + 1) * p.Y.dtype.itemsize
 
     # --- create structure
-    gstructure = np.column_stack([shape0s, shape1s, Astride0s, Astride1s,
+    gstructure = np.column_stack([shape0s, shape1s, Astride1s,
                                   Astarts, Xstride0s, Xstarts, Ybufstarts])
     cl_gstructure = to_device(p.queue, gstructure.astype(np.int32))
 
@@ -930,7 +926,7 @@ def block_impl(p, items):
     lsize0_log2 = int(np.log2(lsize0))
     assert 2**lsize0_log2 == lsize0
 
-    lsize = (lsize0, block_y, 1)
+    lsize = (block_y, lsize0, 1)
     gsize = (lsize[0], lsize[1], gstructure.shape[0])
     assert np.prod(lsize) >= block_x
 
@@ -941,12 +937,11 @@ def block_impl(p, items):
         n_structure_vars=gstructure.shape[1],
         shape0='lstructure[0]',
         shape1='lstructure[1]',
-        Astride0='lstructure[2]',
-        Astride1='lstructure[3]',
-        Astart='lstructure[4]',
-        Xstride0='lstructure[5]',
-        Xstart='lstructure[6]',
-        Ybufstart='lstructure[7]',
+        Astride1='lstructure[2]',
+        Astart='lstructure[3]',
+        Xstride0='lstructure[4]',
+        Xstart='lstructure[5]',
+        Ybufstart='lstructure[6]',
         block_y=block_y,
         block_x=block_x,
         lsize0=lsize0,
@@ -969,9 +964,9 @@ def block_impl(p, items):
         __global ${Ybuf.ctype} *Ybufdata
         )
     {
-        const int j = get_global_id(0);
-        const int i = get_global_id(1);
-        const int n = get_global_id(2);
+        const int i = get_global_id(0);       // Row index
+        const int j = get_global_id(1);       // Column group index
+        const int item_i = get_global_id(2);
 
         // load structure
         __local int lstructure[${n_structure_vars}];
@@ -979,7 +974,7 @@ def block_impl(p, items):
             get_local_id(0) + get_local_id(1)*get_local_size(0);
         if (local_idx < ${n_structure_vars})
             lstructure[local_idx] = gstructure[
-                n * ${n_structure_vars} + local_idx];
+                item_i * ${n_structure_vars} + local_idx];
         barrier(CLK_LOCAL_MEM_FENCE);
 
         __global const ${X.ctype} *x = Xdata + ${Xstart};
@@ -991,25 +986,33 @@ def block_impl(p, items):
             xlocal[local_idx] = x[local_idx*${Xstride0}];
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        __local ${Ybuf.ctype} sums[${block_y}][${lsize0}];
-        sums[i][j] = 0;
+        __local ${Ybuf.ctype} sums[${lsize0}][${block_y}];
+        sums[j][i] = 0;
+
+        const int ncols = max(1, (int)(${shape1} / get_local_size(1)));
+        const int jj_max = j + 1 < get_local_size(1) ?
+                             min((j+1) * ncols, ${shape1}) : ${shape1};
+
+        __global const ${A.ctype} *Ai = Adata + ${Astart} + i;
 
         if (i < ${shape0}) {
-            __global const ${A.ctype} *Ai = Adata + ${Astart} + i*${Astride0};
-            for(int jj = j; jj < ${shape1}; jj += get_global_size(0)) {
-                sums[i][j] += Ai[jj*${Astride1}] * xlocal[jj];
+            for(int jj = j * ncols; jj < jj_max; jj++) {
+                sums[j][i] += Ai[jj*${Astride1}] * xlocal[jj];
             }
         }
         barrier(CLK_LOCAL_MEM_FENCE);
 
-    % for k in range(lsize0_log2 - 1, 0, -1):
-        if (j < ${2**k})
-            sums[i][j] += sums[i][${2**k} + j];
+    % for k in range(lsize0_log2 - 1, -1, -1):
         barrier(CLK_LOCAL_MEM_FENCE);
+        if (j < ${2**k}) {
+            sums[j][i] += sums[j + ${2**k}][i];
+        % if k == 0:
+            if (i < ${shape0}) {
+                ybuf[i] = ${float_alpha} * sums[j][i];
+            }
+       % endif
+       }
     % endfor
-
-        if (i < ${shape0} && j == 0)
-            ybuf[i] = ${float_alpha} * (sums[i][0] + sums[i][1]);
     }
     """
 
