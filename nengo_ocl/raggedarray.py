@@ -34,7 +34,7 @@ class RaggedArray(object):
     """
 
     def __init__(self, arrays, names=None, dtype=None, align=False, order='C'):
-        assert order in 'CF'
+        assert order in ('C','F')
 
         arrays = [np.asarray(a, order=order) for a in arrays]
         assert len(arrays) > 0
@@ -57,7 +57,8 @@ class RaggedArray(object):
         self.starts = starts
         self.shape0s = [a.shape[0] if a.ndim > 0 else 1 for a in arrays]
         self.shape1s = [a.shape[1] if a.ndim > 1 else 1 for a in arrays]
-        self.stride0s = [a.strides[0] // a.itemsize for a in arrays]
+        self.stride0s = [a.strides[0] // a.itemsize
+                         if a.ndim > 0 else 1 for a in arrays]
         self.stride1s = [a.strides[1] // a.itemsize
                          if a.ndim > 1 else 1 for a in arrays]
 
