@@ -69,6 +69,8 @@ class RaggedArray(object):
         self.buf = buf
         self.names = names
 
+        self.order = order
+
         self._sizes = None
 
     @classmethod
