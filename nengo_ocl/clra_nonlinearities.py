@@ -905,7 +905,7 @@ ${code}
 
 
 def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
-             inc_n=None, upsample=1, **kwargs):
+             inc_n=None, upsample=1, fastlif=False, **kwargs):
     adaptive = N is not None
     assert J.ctype == 'float'
     for array in [V, W, outS]:
@@ -922,41 +922,64 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
         parameters.update(dict(tau_n=tau_n, inc_n=inc_n))
 
     dt = float(dt)
-    textconf = dict(type=J.ctype, dt=dt, upsample=upsample, adaptive=adaptive,
-                    dtu=dt/upsample, dtu_inv=upsample/dt, dt_inv=1/dt)
+    textconf = dict(
+        type=J.ctype, dt=dt, upsample=upsample, adaptive=adaptive,
+        dtu=dt/upsample, dtu_inv=upsample/dt, dt_inv=1/dt, fastlif=fastlif)
     decs = """
         char spiked;
-        ${type} dV, overshoot;
+        ${type} dV;
+        const ${type} V_threshold = 1;
         const ${type} dtu = ${dtu}, dtu_inv = ${dtu_inv}, dt_inv = ${dt_inv};
 % if adaptive:
         const ${type} dt = ${dt};
 % endif
-        const ${type} V_threshold = 1;
+%if fastlif:
+        const ${type} delta_t = dtu;
+%else:
+        ${type} delta_t;
+%endif
         """
     # TODO: could precompute -expm1(-dtu / tau)
     text = """
         spiked = 0;
 
 % for ii in range(upsample):
+        W -= dtu;
+% if not fastlif:
+        delta_t = (W > dtu) ? 0 : (W < 0) ? dtu : dtu - W;
+% endif
 % if adaptive:
-        dV = -expm1(-dtu / tau) * (J - N - V);
+        dV = -expm1(-delta_t / tau) * (J - N - V);
 % else:
-        dV = -expm1(-dtu / tau) * (J - V);
+        dV = -expm1(-delta_t / tau) * (J - V);
 % endif
         V += dV;
-        W -= dtu;
 
+% if fastlif:
         if (V < 0 || W > dtu)
             V = 0;
         else if (W >= 0)
             V *= 1 - W * dtu_inv;
+% endif
 
         if (V > V_threshold) {
-            overshoot = dtu * (V - V_threshold) / dV;
+% if fastlif:
+            const ${type} overshoot = dtu * (V - V_threshold) / dV;
             W = ref - overshoot + dtu;
+% else:
+            const ${type} t_spike = dtu + tau * log1p(
+                -(V - V_threshold) / (J - V_threshold));
+            W = ref + t_spike;
+% endif
             V = 0;
             spiked = 1;
         }
+% if not fastlif:
+         else if (V < 0) {
+            V = 0;
+        }
+% endif
+
 % endfor
         outV = V;
         outW = W;
