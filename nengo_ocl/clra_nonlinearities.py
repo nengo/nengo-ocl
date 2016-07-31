@@ -44,7 +44,7 @@ def blockify_matrices(max_size, ras):
         assert len(ra) == N
         assert (ra.shape1s == ra0.shape1s).all()
         assert (ra.shape0s == ra0.shape0s).all()
-        assert (ra.shape1s == ra.stride0s).all(), "not contiguous"
+        assert ((ra.shape1s == 1) | (ra.shape0s == ra.stride1s)).all(), "not contiguous"
 
     sizes = []
     inds = []
@@ -140,8 +140,7 @@ def plan_timeupdate(queue, step, time, dt):
 def plan_reset(queue, Y, values, tag=None):
     assert len(Y) == len(values)
 
-    assert (Y.stride0s == Y.shape1s).all()
-    assert (Y.stride1s == 1).all()
+    assert (Y.stride0s == 1).all()
     assert Y.ctype == values.ctype
 
     text = """
@@ -208,8 +207,8 @@ def plan_copy(queue, X, Y, incs, tag=None):
     assert len(X) == len(Y)
     assert (X.shape0s == Y.shape0s).all()
     assert (X.shape1s == Y.shape1s).all()
-    assert (X.stride1s == 1).all()
-    assert (Y.stride1s == 1).all()
+    assert (X.stride0s == 1).all()
+    assert (Y.stride0s == 1).all()
     assert X.ctype == Y.ctype
 
     text = """
@@ -221,10 +220,10 @@ def plan_copy(queue, X, Y, incs, tag=None):
             __global const int *offsets,
             __global const int *shape0s,
             __global const int *shape1s,
-            __global const int *Xstride0s,
+            __global const int *Xstride1s,
             __global const int *Xstarts,
             __global const ${Xtype} *Xdata,
-            __global const int *Ystride0s,
+            __global const int *Ystride1s,
             __global const int *Ystarts,
             __global ${Ytype} *Ydata
         )
@@ -232,13 +231,13 @@ def plan_copy(queue, X, Y, incs, tag=None):
             const int n = get_global_id(1);
             const int ij = get_global_id(0) + offsets[n];
 
-            const int shape1 = shape1s[n];
-            const int i = ij / shape1;
-            const int j = ij % shape1;
-            const int xo = Xstarts[n] + i*Xstride0s[n] + j;
-            const int yo = Ystarts[n] + i*Ystride0s[n] + j;
+            const int shape0 = shape0s[n];
+            const int i = ij / shape0;
+            const int j = ij % shape0;
+            const int xo = Xstarts[n] + i + j*Xstride1s[n];
+            const int yo = Ystarts[n] + i + j*Ystride1s[n];
 
-            if (i < shape0s[n]) {
+            if (j < shape1s[n]) {
     % if inc is True:
                 Ydata[yo] += Xdata[xo];
     % elif inc is False:
@@ -263,10 +262,10 @@ def plan_copy(queue, X, Y, incs, tag=None):
         to_device(queue, offsets),
         to_device(queue, X.shape0s[inds]),
         to_device(queue, X.shape1s[inds]),
-        to_device(queue, X.stride0s[inds]),
+        to_device(queue, X.stride1s[inds]),
         to_device(queue, X.starts[inds]),
         X.cl_buf,
-        to_device(queue, Y.stride0s[inds]),
+        to_device(queue, Y.stride1s[inds]),
         to_device(queue, Y.starts[inds]),
         Y.cl_buf,
     ]
@@ -294,10 +293,9 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
     N = len(X)
     assert len(X) == len(Y) == len(Xinds) == len(Yinds)
 
-    for arr in [X, Y, Xinds, Yinds]:
+    for arr in (X, Y, Xinds, Yinds):
         assert (arr.shape1s == 1).all()
-        assert (arr.stride1s == 1).all()
-    for arr in [Xinds, Yinds]:
+    for arr in (Xinds, Yinds):
         assert (arr.stride0s == 1).all()
     assert (Xinds.shape0s == Yinds.shape0s).all()
 
@@ -400,14 +398,11 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     assert len(Y) == len(X) == len(A)
 
     for arr in [A, X, Y]:
-        assert (arr.stride1s == 1).all()
+        assert (arr.stride0s == 1).all()
     assert ((X.shape0s == 1) | (X.shape0s == Y.shape0s)).all()
     assert ((X.shape1s == 1) | (X.shape1s == Y.shape1s)).all()
     assert ((A.shape0s == 1) | (A.shape0s == Y.shape0s)).all()
     assert ((A.shape1s == 1) | (A.shape1s == Y.shape1s)).all()
-    assert (X.stride1s == 1).all()
-    assert (Y.stride1s == 1).all()
-    assert (A.stride1s == 1).all()
 
     assert X.ctype == Y.ctype
     assert A.ctype == Y.ctype
@@ -415,18 +410,18 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     text = """
         inline ${Ytype} get_element(
             __global const ${Ytype} *data,
-            const int shape0, const int shape1, const int stride0,
+            const int shape0, const int shape1, const int stride1,
             const int i, const int j
         )
         {
             if (shape0 == 1 && shape1 == 1)
                 return data[0];
             else if (shape0 == 1)
-                return data[j];
+                return data[j*stride1];
             else if (shape1 == 1)
-                return data[i * stride0];
+                return data[i];
             else
-                return data[i * stride0 + j];
+                return data[i + j*stride1];
         }
 
         ////////// MAIN FUNCTION //////////
@@ -434,17 +429,17 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             __global const int *offsets,
             __global const int *Ashape0s,
             __global const int *Ashape1s,
-            __global const int *Astride0s,
+            __global const int *Astride1s,
             __global const int *Astarts,
             __global const ${Atype} *Adata,
             __global const int *Xshape0s,
             __global const int *Xshape1s,
-            __global const int *Xstride0s,
+            __global const int *Xstride1s,
             __global const int *Xstarts,
             __global const ${Xtype} *Xdata,
             __global const int *Yshape0s,
             __global const int *Yshape1s,
-            __global const int *Ystride0s,
+            __global const int *Ystride1s,
             __global const int *Ystarts,
             __global ${Ytype} *Ydata
         )
@@ -456,19 +451,19 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             __global const ${Xtype} *x = Xdata + Xstarts[n];
             __global ${Ytype} *y = Ydata + Ystarts[n];
 
-            const int Ystride0 = Ystride0s[n];
+            const int Ystride1 = Ystride1s[n];
             const int Yshape0 = Yshape0s[n];
             const int Yshape1 = Yshape1s[n];
-            const int i = ij / Yshape1;
-            const int j = ij % Yshape1;
+            const int i = ij % Yshape0;
+            const int j = ij / Yshape0;
 
             ${Atype} aa = get_element(
-                a, Ashape0s[n], Ashape1s[n], Astride0s[n], i, j);
+                a, Ashape0s[n], Ashape1s[n], Astride1s[n], i, j);
             ${Xtype} xx = get_element(
-                x, Xshape0s[n], Xshape1s[n], Xstride0s[n], i, j);
+                x, Xshape0s[n], Xshape1s[n], Xstride1s[n], i, j);
 
-            if (i < Yshape0)
-                y[i*Ystride0 + j] += aa * xx;
+            if (j < Yshape1)
+                y[i + j*Ystride1] += aa * xx;
         }
         """
 
@@ -483,17 +478,17 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
         to_device(queue, offsets),
         to_device(queue, A.shape0s[inds]),
         to_device(queue, A.shape1s[inds]),
-        to_device(queue, A.stride0s[inds]),
+        to_device(queue, A.stride1s[inds]),
         to_device(queue, A.starts[inds]),
         A.cl_buf,
         to_device(queue, X.shape0s[inds]),
         to_device(queue, X.shape1s[inds]),
-        to_device(queue, X.stride0s[inds]),
+        to_device(queue, X.stride1s[inds]),
         to_device(queue, X.starts[inds]),
         X.cl_buf,
         to_device(queue, Y.shape0s[inds]),
         to_device(queue, Y.shape1s[inds]),
-        to_device(queue, Y.stride0s[inds]),
+        to_device(queue, Y.stride1s[inds]),
         to_device(queue, Y.starts[inds]),
         Y.cl_buf,
     )
@@ -526,8 +521,8 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
 
     # A, B, Xbuf, Ybuf
     for arr in [A, B, Xbuf, Ybuf]:  # contiguous
-        assert (arr.shape1s == arr.stride0s).all()
-        assert (arr.stride1s == 1).all()
+        assert (arr.shape0s == arr.stride1s).all()
+        assert (arr.stride0s == 1).all()
     for arr in [A, B]:  # vectors
         assert (arr.shape1s == 1).all()
     assert (B.shape0s >= 1).all()
@@ -572,8 +567,8 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
 
             const int shape0 = shape0s[k];
             const int shape1 = shape1s[k];
-            const int i = ij / shape1;
-            const int j = ij % shape1;
+            const int i = ij % shape0;
+            const int j = ij / shape0;
             const int xij = Xstarts[k] + i*Xstride0s[k] + j*Xstride1s[k];
             const int yij = Ystarts[k] + i*Ystride0s[k] + j*Ystride1s[k];
 
@@ -589,7 +584,7 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
                 b[ti] = (Bdata + Bstarts[k])[ti];
             barrier(CLK_LOCAL_MEM_FENCE);
 
-            if (i >= shape0)
+            if (j >= shape1)
                 return;
 
             if (na == 0 && nb == 1) {
@@ -733,14 +728,11 @@ def plan_probes(queue, periods, X, Y, tag=None):
     N = len(X)
 
     # N.B.  X[i].shape = (M, N)
-    #       Y[i].shape = (buf_len, M * N)
+    #       Y[i].shape = (M * N, buflen)
     for arr in [X, Y]:
-        assert (arr.stride1s == 1).all()
-    assert (X.shape0s * X.shape1s == Y.shape1s).all()
-    assert (X.stride0s == X.shape1s).all()
-    assert (X.stride1s == 1).all()
-    assert (Y.stride0s == Y.shape1s).all()
-    assert (Y.stride1s == 1).all()
+        assert (arr.stride0s == 1).all()
+    assert (X.shape0s * X.shape1s == Y.shape0s).all()
+    assert (Y.stride1s == Y.shape0s).all()
 
     periods = np.asarray(periods, dtype='float32')
     cl_periods = to_device(queue, periods)
@@ -843,7 +835,7 @@ def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
     for x in inputs:
         assert len(x) == len(output)
     for x in inputs + [output]:
-        assert (x.shape1s == 1).all() and (x.stride1s == 1).all()
+        assert (x.shape1s == 1).all() and (x.stride1s == x.shape0s).all()
         assert (x.stride0s == 1).all()
 
     input_types = [x.ctype for x in inputs]
@@ -1115,8 +1107,8 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         assert vname not in avars, "Name clash"
         assert len(v) == len(input0)
         assert (v.shape0s == input0.shape0s).all()
-        assert (v.stride0s == v.shape1s).all()  # rows contiguous
-        assert (v.stride1s == 1).all()  # columns contiguous
+        assert (v.stride0s == 1).all() # rows contiguous
+        assert (v.stride1s == 1).all() # columns contiguous
         assert (v.shape1s == 1).all()  # vectors only
 
         offset = '%(name)s_starts[gind1]' % {'name': vname}
@@ -1350,7 +1342,7 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
     for arr in [Y, dist_enums, dist_params]:
         assert (arr.shape1s == 1).all()
         assert (arr.stride0s == 1).all()
-        assert (arr.stride1s == 1).all()
+        assert (arr.stride1s == arr.shape0s).all()
 
     assert (dist_enums.shape0s == 1).all()
 

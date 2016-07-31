@@ -434,8 +434,10 @@ class Simulator(object):
                 # XXX: this syntax retrieves *ALL* of Y from the device
                 #      because the :n_buffered only works on the ndarray
                 #      *after* it has been transferred.
-                raw = plan.Y[i][:n_buffered]
-                shaped = raw.reshape((n_buffered,) + shape)
+                raw = plan.Y[i][:,:n_buffered]
+                shaped = raw.reshape(shape + (n_buffered,), order='F')
+                # Transpose to (n_buffered, shape).
+                shaped = shaped.transpose([len(shape)] + list(range(len(shape))))
                 self._probe_outputs[probe].extend(shaped)
         plan.cl_bufpositions.fill(0)
         self.queue.finish()
@@ -566,7 +568,7 @@ class Simulator(object):
             X = self.all_data[
                 [self.sidx[self.model.sig[p]['in']] for p in probes]]
             Y = self.RaggedArray(
-                [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
+                [np.zeros((self.model.sig[p]['in'].size, n_prealloc), order='F')
                  for p in probes], dtype=np.float32)
 
             cl_plan = plan_probes(self.queue, periods, X, Y)
