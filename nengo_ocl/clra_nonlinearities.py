@@ -1108,7 +1108,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         assert len(v) == len(input0)
         assert (v.shape0s == input0.shape0s).all()
         assert (v.stride0s == 1).all() # rows contiguous
-        assert (v.stride1s == 1).all() # columns contiguous
+        assert (v.stride1s == v.shape0s).all() # columns contiguous
         assert (v.shape1s == 1).all()  # vectors only
 
         offset = '%(name)s_starts[gind1]' % {'name': vname}

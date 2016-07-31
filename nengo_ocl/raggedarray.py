@@ -60,7 +60,9 @@ class RaggedArray(object):
         self.stride0s = [a.strides[0] // a.itemsize
                          if a.ndim > 0 else 1 for a in arrays]
         self.stride1s = [a.strides[1] // a.itemsize
-                         if a.ndim > 1 else 1 for a in arrays]
+                         if a.ndim > 1 else
+                         (max(a.shape[0], 1) if a.ndim > 0 and order == 'F' else 1)
+                         for a in arrays]
 
         buf = np.zeros(starts[-1] + arrays[-1].size, dtype=dtype)
         for a, s in zip(arrays, starts):

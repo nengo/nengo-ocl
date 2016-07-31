@@ -45,10 +45,11 @@ PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 class ViewBuilder(object):
 
-    def __init__(self, bases, rarray):
+    def __init__(self, bases, rarray, order='F'):
         self.sidx = {bb: ii for ii, bb in enumerate(bases)}
         assert len(bases) == len(self.sidx)
         self.rarray = rarray
+        self.order = order
 
         self.starts = []
         self.shape0s = []
@@ -76,8 +77,12 @@ class ViewBuilder(object):
         self.starts.append(self.rarray.starts[idx] + obj.elemoffset)
         self.shape0s.append(shape0)
         self.shape1s.append(shape1)
-        self.stride0s.append(obj.elemstrides[0] if shape0 > 1 else 1)
-        self.stride1s.append(obj.elemstrides[1] if shape1 > 1 else 1)
+        if self.order == 'F':
+            self.stride0s.append(1)
+            self.stride1s.append(shape0)
+        else:
+            self.stride0s.append(obj.elemstrides[0] if shape0 > 1 else 1)
+            self.stride1s.append(obj.elemstrides[1] if shape1 > 1 else 1)
         self.names.append(getattr(obj, 'name', ''))
         self.sidx[obj] = len(self.sidx)
 
