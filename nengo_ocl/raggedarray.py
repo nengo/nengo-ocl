@@ -33,7 +33,7 @@ class RaggedArray(object):
     in the same underlying buffer.
     """
 
-    def __init__(self, arrays, names=None, dtype=None, align=False, order='C'):
+    def __init__(self, arrays, names=None, dtype=None, align=False, order='F'):
         assert order in ('C','F')
 
         arrays = [np.asarray(a, order=order) for a in arrays]
