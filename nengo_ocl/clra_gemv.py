@@ -1,4 +1,5 @@
 from collections import defaultdict
+import math
 
 import numpy as np
 import pyopencl as cl
@@ -1123,7 +1124,7 @@ def block_impl(p, items):
     return [plan, plan_reduce]
 
 
-def one_thread_per_row_impl(p, num_items):
+def one_thread_per_row_impl(p, items):
     """Each thread computes the dot product over one row.
        The rows are grouped consecutively when y_len is small.
     """
@@ -1138,10 +1139,10 @@ def one_thread_per_row_impl(p, num_items):
     if p.cl_gamma is not None:
         raise NotImplementedError()
     if not all(s == 1 for s in p.A.stride0s):
-        raise NotImplementedError()
+        raise NotImplementedError('A must be in column major')
 
+    num_items = len(items)
     assert num_items > 0
-    items = range(num_items)
 
     assert p.float_alpha is not None
     assert p.float_gamma is not None
@@ -1352,3 +1353,84 @@ class plan_ragged_gather_gemv(gemv_prog):
 class plan_one_thread_per_row_gemv(gemv_prog):
     def choose_plans(self):
         return [one_thread_per_row_impl(self, len(self.Y))]
+
+class plan_pretuned_gemv(gemv_prog):
+    PLANS = (one_thread_per_row_impl, reduce_impl, many_dots_impl, block_impl)
+
+    # Tuning grid obtained on a NVIDIA GTX 970.
+    # The indices correspond to functions in PLANS above.
+    TUNING_GRID = np.array(
+        [  [[ 0, 0, 0, 0, 1, 2, 0]
+          , [ 0, 1, 1, 1, 1, 2, 0]
+          , [ 1, 1, 1, 1, 1, 0, 0]
+          , [ 0, 1, 1, 1, 1, 1, 0]
+          , [ 1, 1, 1, 1, 1, 1, 1]
+          , [ 3, 3, 3, 1, 1, 1, 1]
+          , [ 3, 3, 3, 3, 1, 1, 1]]
+         ,
+           [[ 1, 0, 2, 0, 1, 0, 0]
+          , [ 2, 0, 2, 0, 0, 0, 0]
+          , [ 1, 1, 1, 0, 1, 0, 0]
+          , [ 1, 1, 1, 1, 1, 0, 1]
+          , [ 1, 1, 1, 2, 1, 0, 1]
+          , [ 3, 3, 3, 3, 1, 1, 1]
+          , [ 3, 3, 3, 3, 2, 0, 2]]
+         ,
+           [[ 0, 0, 0, 1, 1, 0, 0]
+          , [ 2, 2, 2, 0, 2, 0, 0]
+          , [ 1, 0, 0, 2, 1, 0, 0]
+          , [ 1, 0, 1, 0, 0, 0, 1]
+          , [ 1, 1, 1, 1, 1, 0, 1]
+          , [ 3, 3, 3, 3, 1, 0, 1]
+          , [ 3, 3, 3, 3, 2, 0, 2]]
+         ,
+           [[ 1, 0, 0, 0, 0, 0, 0]
+          , [ 1, 2, 0, 0, 0, 0, 0]
+          , [ 0, 0, 0, 1, 0, 0, 0]
+          , [ 2, 1, 0, 0, 0, 0, 0]
+          , [ 1, 1, 0, 0, 0, 0, 0]
+          , [ 3, 3, 3, 1, 0, 3, 0]
+          , [ 3, 3, 3, 3, 0, 3, 0]]
+         ,
+           [[ 1, 2, 0, 0, 0, 0, 0]
+          , [ 2, 0, 0, 1, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 2, 0, 1, 0, 0, 0, 0]
+          , [ 1, 1, 1, 0, 0, 0, 0]
+          , [ 3, 3, 1, 0, 0, 0, 0]
+          , [ 3, 3, 3, 0, 0, 0, 0]]
+         ,
+           [[ 0, 0, 0, 0, 0, 0, 0]
+          , [ 2, 0, 0, 0, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 3, 3, 0, 3, 0, 0, 0]
+          , [ 3, 3, 0, 0, 0, 0, 0]]
+         ,
+           [[ 2, 0, 0, 0, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 0, 0, 0, 0, 0, 0, 0]
+          , [ 0, 0, 0, 0, 0, 0, 0]
+          , [ 0, 0, 0, 3, 0, 0, 0]
+          , [ 3, 0, 0, 0, 0, 0, 0]
+          , [ 3, 0, 0, 0, 0, 0, 0]]]
+        , dtype='uint8')
+    LOG_BASE = 4
+
+    def choose_plans(self):
+        items = range(len(self.Y))
+        m, n, k = 1, 1, 1
+        for ii in items:
+            m = max(m, self.geometry[ii].y_len)
+            n = max(n, max(d.a_shape1 for d in self.geometry[ii].dots))
+            k = max(k, len(self.geometry[ii].dots))
+        logm, logn, logk = [
+            min(int(round(math.log(x, plan_pretuned_gemv.LOG_BASE))),
+                plan_pretuned_gemv.TUNING_GRID.shape[i] - 1)
+            for i,x in enumerate((m,n,k))]
+
+        ind = plan_pretuned_gemv.TUNING_GRID[logm, logn, logk]
+        plan = plan_pretuned_gemv.PLANS[ind](self, range(len(self.Y)))
+
+        return plan if isinstance(plan, list) else [plan]

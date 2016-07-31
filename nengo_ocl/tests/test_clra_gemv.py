@@ -10,7 +10,7 @@ from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 from nengo_ocl.clra_gemv import (
     plan_reduce_gemv, plan_many_dots_gemv, plan_block_gemv,
-    plan_ragged_gather_gemv)
+    plan_ragged_gather_gemv, plan_one_thread_per_row_gemv)
 
 logger = logging.getLogger(__name__)
 RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
@@ -21,7 +21,7 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize(
             "planner", [
                 plan_reduce_gemv, plan_many_dots_gemv, plan_block_gemv,
-                plan_ragged_gather_gemv])
+                plan_ragged_gather_gemv, plan_one_thread_per_row_gemv])
 
 
 def allclose(raA, raB):
