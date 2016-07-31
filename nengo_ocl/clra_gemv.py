@@ -1355,7 +1355,7 @@ class plan_ragged_gather_gemv(gemv_prog):
 
 class plan_one_thread_per_row_gemv(gemv_prog):
     def choose_plans(self):
-        return [one_thread_per_row_impl(self, len(self.Y))]
+        return [one_thread_per_row_impl(self, range(len(self.Y)))]
 
 class plan_pretuned_gemv(gemv_prog):
     PLANS = (one_thread_per_row_impl, reduce_impl, many_dots_impl, block_impl)

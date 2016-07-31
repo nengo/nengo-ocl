@@ -24,7 +24,7 @@ from nengo.utils.stdlib import groupby
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
-from nengo_ocl.clra_gemv import plan_block_gemv
+from nengo_ocl.clra_gemv import plan_pretuned_gemv, plan_one_thread_per_row_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_reset, plan_copy, plan_slicedcopy,
     plan_direct, plan_lif, plan_lif_rate,
@@ -471,7 +471,7 @@ class Simulator(nengo.Simulator):
         if callable(beta):
             beta = RaggedArray([sidx[beta(o)] for o in ops], dtype=np.float32)
 
-        rval = plan_block_gemv(
+        rval = plan_one_thread_per_row_gemv(
             self.queue, alpha, all_data, A_js, all_data, X_js, beta, Y,
             Y_in=Y_in, gamma=gamma, tag=tag)
         return rval.plans
