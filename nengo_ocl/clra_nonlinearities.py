@@ -842,7 +842,87 @@ ${code}
     return plan
 
 
+
 def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
+             inc_n=None, upsample=1, **kwargs):
+    adaptive = N is not None
+    assert J.ctype == 'float'
+    for array in [V, W, outS]:
+        assert V.ctype == J.ctype
+
+    inputs = dict(J=J, V=V, W=W)
+    outputs = dict(outV=V, outW=W, outS=outS)
+    parameters = dict(tau=tau, ref=ref)
+    if adaptive:
+        assert all(ary is not None for ary in [N, tau_n, inc_n])
+        assert N.ctype == J.ctype
+        inputs.update(dict(N=N))
+        outputs.update(dict(outN=N))
+        parameters.update(dict(tau_n=tau_n, inc_n=inc_n))
+
+    dt = float(dt)
+    textconf = dict(type=J.ctype, dt=dt, upsample=upsample, adaptive=adaptive,
+                    dtu=dt/upsample, dtu_inv=upsample/dt, dt_inv=1/dt)
+    decs = """
+        char spiked;
+        ${type} dV, overshoot;
+        const ${type} dtu = ${dtu}, dtu_inv = ${dtu_inv}, dt_inv = ${dt_inv};
+% if adaptive:
+        const ${type} dt = ${dt};
+% endif
+        const ${type} V_threshold = 1;
+        int b1,b2,b3,b4;
+
+        """
+    # TODO: could precompute -expm1(-dtu / tau)
+    text = """
+        spiked = 0;
+
+% for ii in range(upsample):
+% if adaptive:
+        dV = -expm1(-dtu / tau) * (J - N - V);
+% else:
+        dV = -expm1(-dtu / tau) * (J - V);
+% endif
+        V += dV;
+        W -= dtu;
+        b1 = signbit(-V);
+        //W >= 0
+        b2 = abs(signbit(W) - 1);
+
+        //W > dtu
+        b3 = signbit(-W + dtu);
+        //W <= dtu
+        b4 = abs(b3 - 1);
+        V = (b1 * b4) * V;
+
+        //(W > dtu OR V > 0) OR  (W <= dtu AND W >= 0 AND V > 0)
+        //OR ELSE => V
+        V = (b2)*(V * (1 - W * dtu_inv))
+            + (abs(b2 - 1)) * V;
+
+	    b1 = signbit(-V + V_threshold);
+        b2 = abs(b1 - 1);
+        spiked = min((char)b1 + spiked, 1);
+        overshoot = b1 * (dtu * (V - V_threshold)/dV) + b2 * overshoot;
+        W =  b1* (ref - overshoot + dtu) + b2 * W;
+        V *= b2;
+
+% endfor
+        outV = V;
+        outW = W;
+       	outS =spiked * dt_inv;
+% if adaptive:
+        outN = N + (dt / tau_n) * (inc_n * outS - N);
+% endif
+        """
+    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    cl_name = "cl_alif" if adaptive else "cl_lif"
+    return _plan_template(
+        queue, cl_name, text, declares=decs,
+        inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
+def plan_lif_old(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
              inc_n=None, upsample=1, **kwargs):
     adaptive = N is not None
     assert J.ctype == 'float'
@@ -874,7 +954,6 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
     # TODO: could precompute -expm1(-dtu / tau)
     text = """
         spiked = 0;
-
 % for ii in range(upsample):
 % if adaptive:
         dV = -expm1(-dtu / tau) * (J - N - V);
@@ -883,12 +962,10 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
 % endif
         V += dV;
         W -= dtu;
-
         if (V < 0 || W > dtu)
             V = 0;
         else if (W >= 0)
             V *= 1 - W * dtu_inv;
-
         if (V > V_threshold) {
             overshoot = dtu * (V - V_threshold) / dV;
             W = ref - overshoot + dtu;
@@ -905,7 +982,7 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
         """
     decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
-    cl_name = "cl_alif" if adaptive else "cl_lif"
+    cl_name = "cl_alif_old" if adaptive else "cl_lif_old"
     return _plan_template(
         queue, cl_name, text, declares=decs,
         inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)

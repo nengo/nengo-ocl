@@ -12,7 +12,7 @@ from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA, to_device
 
 from nengo_ocl.clra_nonlinearities import (
-    plan_lif, plan_lif_rate, plan_elementwise_inc, plan_reset, plan_slicedcopy,
+    plan_lif, plan_lif_old, plan_lif_rate, plan_elementwise_inc, plan_reset, plan_slicedcopy,
     plan_linearfilter)
 
 
@@ -95,9 +95,9 @@ def test_lif_speed(rng, heterogeneous):
     ref = 2e-3
     tau = 20e-3
 
-    n_iters = 10
+    n_iters = 1000
     if heterogeneous:
-        n_neurons = [1.0e5] * 50 + [1e3] * 5000
+        n_neurons = [1.0e5] * 50 + [1e3] * 500
     else:
         n_neurons = [1.1e5] * 50
     n_neurons = list(map(int, n_neurons))
@@ -127,8 +127,17 @@ def test_lif_speed(rng, heterogeneous):
 
         print("plan %d: blockify = %s, dur = %0.3f"
               % (i, blockify, timer.duration))
+    print "Original LIF impl"
+    for i, blockify in enumerate([False, True]):
+        plan = plan_lif_old(queue, dt, clJ, clV, clW, clOS, ref, tau,
+                        blockify=blockify)
 
+        with Timer() as timer:
+            for j in range(n_iters):
+                plan()
 
+        print("plan %d: blockify = %s, dur = %0.3f"
+              % (i, blockify, timer.duration))
 @pytest.mark.parametrize("blockify", [False, True])
 def test_lif_rate(blockify):
     """Test the `lif_rate` nonlinearity"""
@@ -312,4 +321,5 @@ def test_linearfilter(n_per_kind, rng):
 
 
 if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+   test_lif_speed(np.random.RandomState(1234567890),True)
+   #pytest.main([__file__, '-v'])
