@@ -1,4 +1,5 @@
 from collections import defaultdict
+import math
 
 import numpy as np
 import pyopencl as cl
@@ -31,13 +32,13 @@ def flops_from_geometry(geometry, items):
     flops = 0
     for ii in items:
         gi = geometry[ii]
-        for dotinfo in gi['dots']:
+        for dotinfo in gi.dots:
             # -- for every value of A, we
             #    (1) mult with some x
             #    (2) add to a resulting inner-product
-            flops += dotinfo['a_shape1'] * gi['y_len'] * 2
+            flops += dotinfo.a_shape1 * gi.y_len * 2
         # XXX Generously assuming alpha & beta in use
-        flops += gi['y_len'] * 3
+        flops += gi.y_len * 3
     return flops
 
 
@@ -46,11 +47,11 @@ def bw_from_geometry(geometry, items):
     elemsize = 4
     for ii in items:
         gi = geometry[ii]
-        for dotinfo in gi['dots']:
+        for dotinfo in gi.dots:
             # -- load A
-            n_bytes += elemsize * dotinfo['a_shape1'] * gi['y_len']
+            n_bytes += elemsize * dotinfo.a_shape1 * gi.y_len
             # -- load X
-            n_bytes += elemsize * dotinfo['a_shape1']
+            n_bytes += elemsize * dotinfo.a_shape1
 
         # -- load alpha scalar, beta scalar
         #    XXX: Account for a possible full vector read
@@ -58,19 +59,32 @@ def bw_from_geometry(geometry, items):
         n_bytes += 2 * elemsize
 
         # -- load Y_in
-        n_bytes += elemsize * gi['y_len']
+        n_bytes += elemsize * gi.y_len
 
         # -- write Y_out
-        n_bytes += elemsize * gi['y_len']
+        n_bytes += elemsize * gi.y_len
     return n_bytes
 
+class Dot(object):
 
-class DotSignature(object):
+    def __init__(self, j, x_j, a_j, x_start, a_start, a_stride0, a_shape1):
+        self.j = j
+        self.x_j = x_j
+        self.a_j = a_j
+        self.x_start = x_start
+        self.a_start = a_start
+        self.a_stride0 = a_stride0
+        self.a_shape1 = a_shape1   # Columns of A
 
-    def __init__(self, dct):
-        self.y_len = dct['y_len']
-        self.Ax_dims = tuple(
-            [(d['a_shape1'], d['a_stride0']) for d in dct['dots']])
+class GeometryEntry(object):
+
+    def __init__(self, y_len, y_start, y_in_start, dots):
+        self.y_len = y_len         # = Rows of A
+        self.y_start = y_start
+        self.y_in_start = y_in_start
+        assert all(isinstance(dot, Dot) for dot in dots)
+        self.dots = dots
+        self.Ax_dims = [(d.a_shape1, d.a_stride0) for d in dots]
 
     def __eq__(self, other):
         return type(self) == type(other) \
@@ -86,9 +100,66 @@ class DotSignature(object):
             counts[dim_stride] += 1
         return 'yd=%s <- %s' % (
             self.y_len,
-            ', '.join(('(%s x d=%s,s=%s)' % (counts[(d, s)], d, s))
-                      for (d, s) in counts))
+            ', '.join(('(%s x n=%s,stride=%s)' % (counts[(n, s)], n, s))
+                      for (n, s) in counts))
 
+
+class Geometry(object):
+    """The geometry of a gemv_prog."""
+
+    def __init__(self, A_starts, X_starts, Y_starts, Y_in_starts, A_stride0s,
+                 A_shape1s, Y_shape0s, X_js=None, A_js=None):
+        self._dbbs = []
+        for bb in range(len(Y_shape0s)):
+            dots = []
+            if X_js:
+                x_js_i = X_js[bb]
+                A_js_i = A_js[bb]
+                assert len(x_js_i) == len(A_js_i)
+                for jj, (xj, aj) in enumerate(zip(x_js_i, A_js_i)):
+                    assert xj.size == 1 and aj.size == 1
+                    xj, aj = xj[0], aj[0]  # to ignore numpy DeprecationWarning
+                    dots.append(Dot(jj, xj, aj, X_starts[xj], A_starts[aj],
+                                    A_stride0s[aj], A_shape1s[aj]))
+            self._dbbs.append(GeometryEntry(Y_shape0s[bb],
+                                            Y_starts[bb],
+                                            Y_in_starts[bb],
+                                            dots))
+
+    def __getitem__(self, key):
+        return self._dbbs[key]
+
+    def __str__(self):
+        return self.summary()
+
+    def summary(self, items=None):
+        if items is None:
+            gg = self._dbbs
+        else:
+            gg = [self._dbbs[i] for i in items]
+
+        outputs = len(gg)
+        dots = np.array([len(g.dots) for g in gg])
+        shape0s = np.array([g.y_len for g in gg])
+        shape1s = np.hstack([[d.a_shape1 for d in g.dots] for g in gg])
+        return ("outputs: %d; dots: %0.1f [%d, %d]; "
+                "shape: %0.1f [%d, %d] x %0.1f [%d, %d]"
+                % (outputs, dots.mean(), dots.min(), dots.max(),
+                   shape0s.mean(), shape0s.min(), shape0s.max(),
+                   shape1s.mean(), shape1s.min(), shape1s.max()))
+
+    def print_summary(self, items=None, full=False):
+        print('geometry_summary: tag=%s' % self.tag)
+        if items is None:
+            gg = self._dbbs
+        else:
+            gg = map(self._dbbs.__getitem__, items)
+
+        counts = defaultdict(lambda: 0)
+        for dsi in gg:
+            counts[dsi] += 1
+        for dsi, count in sorted(counts.iteritems(), key=lambda x: x[1]):
+            print('  %6s\t%s' % (count, dsi))
 
 class gemv_prog(object):
 
@@ -118,76 +189,16 @@ class gemv_prog(object):
         self.geometry = self._geometry()
         self.plans = self.choose_plans()
 
-    def geometry_summary(self, items=None):
-        if items is None:
-            gg = self.geometry
-        else:
-            gg = [self.geometry[i] for i in items]
-
-        outputs = len(gg)
-        dots = np.array([len(g['dots']) for g in gg])
-        shape0s = np.array([g['y_len'] for g in gg])
-        shape1s = np.hstack([[d['a_shape1'] for d in g['dots']] for g in gg])
-        return ("outputs: %d; dots: %0.1f [%d, %d]; "
-                "shape: %0.1f [%d, %d] x %0.1f [%d, %d]"
-                % (outputs, dots.mean(), dots.min(), dots.max(),
-                   shape0s.mean(), shape0s.min(), shape0s.max(),
-                   shape1s.mean(), shape1s.min(), shape1s.max()))
-
-    def print_geometry_summary(self, items=None, full=False):
-        print('geometry_summary: tag=%s' % self.tag)
-        if items is None:
-            gg = self.geometry
-        else:
-            gg = map(self.geometry.__getitem__, items)
-
-        ds = map(DotSignature, gg)
-        counts = defaultdict(lambda: 0)
-        for dsi in ds:
-            counts[dsi] += 1
-        for dsi in sorted(counts):
-            print('  %6s\t%s' % (counts[dsi], dsi))
-
     def _geometry(self):
-        A_starts = self.A.starts
-        X_starts = self.X.starts
-        Y_starts = self.Y.starts
-        Y_in_starts = self.Y_in.starts
-        A_stride0s = self.A.stride0s
-        A_shape1s = self.A.shape1s
-        Y_shape0s = self.Y.shape0s
+        return Geometry(self.A.starts, self.X.starts, self.Y.starts,
+                        self.Y_in.starts, self.A.stride0s, self.A.shape1s,
+                        self.Y.shape0s, self.X_js, self.A_js)
 
-        rval = []
-        for bb in range(len(Y_shape0s)):
-            dbb = {
-                'y_len': Y_shape0s[bb],
-                'dots': [],
-                'y_start': Y_starts[bb],
-                'y_in_start': Y_in_starts[bb],
-            }
-            if self.X_js:
-                x_js_i = self.X_js[bb]
-                A_js_i = self.A_js[bb]
-                assert len(x_js_i) == len(A_js_i)
-                for jj, (xj, aj) in enumerate(zip(x_js_i, A_js_i)):
-                    assert xj.size == 1 and aj.size == 1
-                    xj, aj = xj[0], aj[0]  # to ignore numpy DeprecationWarning
-                    dbb['dots'].append({
-                        'j': jj,
-                        'x_j': xj,
-                        'a_j': aj,
-                        'x_start': X_starts[xj],
-                        'a_start': A_starts[aj],
-                        'a_stride0': A_stride0s[aj],
-                        'a_shape1': A_shape1s[aj],
-                    })
-            rval.append(dbb)
+    def cl_geometry_and_textconf(self, items, padding=4, stride=0):
+        assert isinstance(stride, int) and stride in [0,1]
 
-        return rval
-
-    def cl_geometry_and_textconf(self, items, padding=4):
         p = self
-        max_n_dots = max(len(p.geometry[ii]['dots']) for ii in items)
+        max_n_dots = max(len(p.geometry[ii].dots) for ii in items)
         n_structure_vars = 4 * max_n_dots + 5
         structure_vars_stride = int(
             padding * np.ceil(float(n_structure_vars) / padding))
@@ -197,7 +208,7 @@ class gemv_prog(object):
         X_starts = p.X.starts
         Y_starts = p.Y.starts
         Y_in_starts = p.Y_in.starts
-        A_stride0s = p.A.stride0s
+        A_strides = [p.A.stride0s, p.A.stride1s][stride]
         A_shape1s = p.A.shape1s
         Y_shape0s = p.Y.shape0s
 
@@ -210,7 +221,7 @@ class gemv_prog(object):
                 xi, ai = xi[0], ai[0]  # to ignore numpy DeprecationWarning
                 gstructure[bbi, 0 * max_n_dots + ii] = X_starts[xi]
                 gstructure[bbi, 1 * max_n_dots + ii] = A_starts[ai]
-                gstructure[bbi, 2 * max_n_dots + ii] = A_stride0s[ai]
+                gstructure[bbi, 2 * max_n_dots + ii] = A_strides[ai]
                 gstructure[bbi, 3 * max_n_dots + ii] = A_shape1s[ai]
             # -- offset of output and input buffers
             gstructure[bbi, 4 * max_n_dots + 0] = Y_in_starts[bb]
@@ -227,7 +238,7 @@ class gemv_prog(object):
             'structure_vars_stride': structure_vars_stride,
             'x_starts': 'lstructure[0 * %s + ii]' % max_n_dots,
             'a_starts': 'lstructure[1 * %s + ii]' % max_n_dots,
-            'a_s0': 'lstructure[2 * %s + ii]' % max_n_dots,
+            'a_s%d' % stride: 'lstructure[2 * %s + ii]' % max_n_dots,
             'N_i': 'lstructure[3 * %s + ii]' % max_n_dots,
             'y_in_starts': 'lstructure[4 * %s + 0]' % max_n_dots,
             'y_offset': 'lstructure[4 * %s + 1]' % max_n_dots,
@@ -260,10 +271,8 @@ def ref_impl(p, items):
     if 0:
         if len(items) < 10:
             print('Falling back on reference implementation')
-            p.print_geometry_summary(items, full=True)
         else:
             print('Falling back on reference implementation')
-            p.print_geometry_summary(items)
 
     assert all(s == 1 for s in p.A.stride1s)
     assert all(s == 1 for s in p.X.stride1s)
@@ -372,7 +381,7 @@ def ref_impl(p, items):
         Template(text, output_encoding='ascii').render(**p.__dict__))
 
     gsize = (
-        max(p.geometry[ii]['y_len'] for ii in items),
+        max(p.geometry[ii].y_len for ii in items),
         len(items))
     lsize = None
     fn = cl.Program(p.queue.context, text).build().gemv_ref
@@ -442,35 +451,34 @@ def reduce_impl(p, items,
         raise NotImplementedError()
     if p.cl_gamma is not None:
         raise NotImplementedError()
-    if not all(s == 1 for s in p.A.stride1s):
-        raise NotImplementedError()
+    if not all(s == 1 for s in p.A.stride0s):
+        raise NotImplementedError('A must be in column major')
 
     assert p.float_alpha is not None
     assert p.float_gamma is not None
 
-    cl_gstructure, textconf = p.cl_geometry_and_textconf(items)
-    max_n_dots = max([len(p.geometry[ii]['dots']) for ii in items])
-    max_reduce_len = max(max([gg['a_shape1']
-                              for gg in p.geometry[ii]['dots']])
+    cl_gstructure, textconf = p.cl_geometry_and_textconf(items, stride=1)
+    max_n_dots = max([len(p.geometry[ii].dots) for ii in items])
+    max_reduce_len = max(max([gg.a_shape1
+                              for gg in p.geometry[ii].dots])
                          for ii in items)
-    max_y_len = max([p.geometry[ii]['y_len'] for ii in items])
+    max_y_len = max([p.geometry[ii].y_len for ii in items])
 
     # segment means the piece of Y written by a work-group
     # group_size is the number of values that we're reducing over
 
-    if len(items) < 4:
-        if group_size is None:
-            group_size = 32  # XXX
-        if segment_size is None:
-            segment_size = min(max_y_len, 2)  # XXX
-    else:
-        if group_size is None:
-            group_size = 32  # XXX
-        if segment_size is None:
-            segment_size = min(max_y_len, 4)  # XXX
+    # TODO autotune
+    if group_size is None:
+        group_size = 4
+
+    if segment_size is None:
+        if len(items) < 8:
+            segment_size = min(max_y_len, 8)  # XXX
+        else:
+            segment_size = min(max_y_len, 32)  # XXX
     g_segments = int(np.ceil(float(max_y_len) / segment_size))
-    gsize = (group_size, g_segments * segment_size, len(items))
-    lsize = (group_size, segment_size, 1)
+    gsize = (g_segments * segment_size, group_size, len(items))
+    lsize = (segment_size, group_size, 1)
 
     max_reduce_iters = int(np.ceil(float(max_reduce_len) / group_size))
     textconf.update({
@@ -481,8 +489,8 @@ def reduce_impl(p, items,
         'group_size': group_size,
         'local_count': group_size * segment_size,
         'max_reduce_len': max_reduce_len,
-        'N_cutoff': max_reduce_iters * group_size,
         'max_n_dots': max_n_dots,
+        'log2_group_size': int(np.ceil(np.log2(group_size))),
     })
     if 0:
         for k, v in textconf.items():
@@ -501,19 +509,18 @@ def reduce_impl(p, items,
             const __global ${Y_in.cl_buf.ctype} *Y_in_data,
             __global ${Y.cl_buf.ctype} *Y_data)
     {
+        const int i = get_local_id(0);
+        const int j = get_local_id(1);
+        const int m = get_global_id(0);
+
         __local int lstructure[${n_structure_vars}];
-    % if segment_size > 1:
-        // we'll cache X in shared memory so we load it only once
-        // for the whole segment
-        __local ${X.cl_buf.ctype} lX[${group_size}];
-    % endif
+
         //Scratch space for the dot products
         __local ${Y.cl_buf.ctype}
-            partialDotProduct[${segment_size}][${group_size}];
+            sums[${group_size}][${segment_size}];
         __local ${Y.cl_buf.ctype}
             y_sum_pre[${segment_size}];
-        const int local_idx = get_local_id(0)
-            + get_local_id(1) * get_local_size(0);
+        const int local_idx = i + j * get_local_size(0);
 
         // load structure
     % if local_count < n_structure_vars:
@@ -524,7 +531,7 @@ def reduce_impl(p, items,
             lstructure[ii] = gstructure[
                 get_global_id(2) * ${structure_vars_stride} + ii];
         }
-    % else :
+    % else:
         if (local_idx < ${n_structure_vars})
         {
             lstructure[local_idx] = gstructure[
@@ -533,25 +540,25 @@ def reduce_impl(p, items,
     % endif
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        if ((get_local_id(0) == 0) && (get_global_id(1) < ${y_len}))
+        if (j == 0 && m < ${y_len})
         {
     % if float_beta is not None and float_beta != 0 :
-            y_sum_pre[get_local_id(1)] = ${float_beta}
-                * Y_in_data[${y_in_starts} + get_global_id(1)];
+            y_sum_pre[i] = ${float_beta}
+                * Y_in_data[${y_in_starts} + m];
     % elif cl_beta is not None:
-            y_sum_pre[get_local_id(1)] = betas[${bb}]
-                * Y_in_data[${y_in_starts} + get_global_id(1)];
+            y_sum_pre[i] = betas[${bb}]
+                * Y_in_data[${y_in_starts} + m];
     % else :
-            y_sum_pre[get_local_id(1)] = 0;
+            y_sum_pre[i] = 0;
     % endif
 
     % if float_gamma is not None and float_gamma != 0:
-            y_sum_pre[get_local_id(1)] += ${float_gamma};
+            y_sum_pre[i] += ${float_gamma};
     % endif
-    // printf("betaY + gamma=%f\\n", y_sum_pre[get_local_id(1)]);
+    // printf("betaY + gamma=%f\\n", y_sum_pre[i]);
         }
 
-        partialDotProduct[get_local_id(1)][get_local_id(0)] = 0;
+        sums[j][i] = 0;
     % if max_n_dots > 1:
         for (int ii = 0;
                  ii < ${n_dot_products};
@@ -562,57 +569,48 @@ def reduce_impl(p, items,
     % endif
 
 
-        for (int nn = get_local_id(0);
-                 nn < ${N_cutoff};
-                 nn += get_local_size(0))
-        {
-    // segment_size = ${segment_size}
-    % if (segment_size == 1):
-            if ((nn < ${N_i}) && (get_global_id(1) < ${y_len}))
-            {
-            partialDotProduct[get_local_id(1)][get_local_id(0)] +=
-                A_data[${a_starts} + get_global_id(1) * ${a_s0} + nn]
-                * X_data[${x_starts} + nn];
-            }
-    % else:
-            barrier(CLK_LOCAL_MEM_FENCE);
-            if ((get_local_id(1) == 0) && (nn < ${N_i}))
-            {
-                lX[get_local_id(0)] = X_data[${x_starts} + nn];
-            }
-            barrier(CLK_LOCAL_MEM_FENCE);
-            if ((nn < ${N_i}) && (get_global_id(1) < ${y_len}))
-            {
-            partialDotProduct[get_local_id(1)][get_local_id(0)] +=
-                A_data[${a_starts} + get_global_id(1) * ${a_s0} + nn]
-                * lX[get_local_id(0)];
-            }
+
+        __global ${A.cl_buf.ctype}* a = A_data + ${a_starts} + m;
+
+    % if segment_size >= 4:
+        // we'll cache X in shared memory so we load it only once
+        // for the whole segment
+        __local ${X.cl_buf.ctype} lX[${max_reduce_len}];
+        for (int k = local_idx; k < ${N_i}; k += ${local_count})
+            lX[k] = X_data[${x_starts} + k];
+        barrier(CLK_LOCAL_MEM_FENCE);
     % endif
+
+        if (m < ${y_len}) {
+            for (int k = get_global_id(1); k < ${N_i}; k += get_global_size(1))
+            {
+        // segment_size = ${segment_size}
+        % if segment_size < 4:
+                sums[j][i] += a[${a_s1} * k] * X_data[${x_starts} + k];
+        % else:
+                sums[j][i] += a[${a_s1} * k] * lX[k];
+        % endif
+            }
         }
 
     % if (max_n_dots > 1):
         }
     % endif
 
-        // -- Parallel reduction long work-group dimension 0
-        for (uint stride = 1;
-                  stride < get_local_size(0);
-                  stride *= 2)
-        {
+        // -- Parallel reduction
+        % for ks in range(log2_group_size - 1, -1, -1):
             barrier(CLK_LOCAL_MEM_FENCE);
-
-            uint index = 2 * stride * get_local_id(0);
-            if (index + stride < get_local_size(0))
-            {
-                partialDotProduct[get_local_id(1)][index] +=
-                    partialDotProduct[get_local_id(1)][index + stride];
+            if (j < ${2**ks}) {
+                sums[j][i] += sums[j + ${2**ks}][i];
+        % if ks == 0:
+                if (m < ${y_len}) {
+                    Y_data[${y_offset} + m] = y_sum_pre[i]
+                        + ${float_alpha} * sums[0][i];
+                }
+        % endif
             }
-        }
-        // barrier(CLK_LOCAL_MEM_FENCE);
-        if ((get_local_id(0) == 0) && (get_global_id(1) < ${y_len})) {
-            Y_data[${y_offset} + get_global_id(1)] = y_sum_pre[get_local_id(1)]
-                + ${float_alpha} * partialDotProduct[get_local_id(1)][0];
-        }
+        % endfor
+
     }
         """
 
@@ -640,7 +638,7 @@ def reduce_impl(p, items,
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     rval.full_args = full_args  # prevent GC the args
-    rval.description = p.geometry_summary(items)
+    rval.description = p.geometry.summary(items)
     return rval
 
 
@@ -671,7 +669,7 @@ def many_dots_impl(p, items):
         raise NotImplementedError()
     if p.cl_gamma is not None:
         raise NotImplementedError()
-    if not all(s == 1 for s in p.A.stride1s):
+    if not all(s == 1 for s in p.A.stride0s):
         raise NotImplementedError()
 
     assert p.float_alpha is not None
@@ -681,12 +679,12 @@ def many_dots_impl(p, items):
         # -- easy probably, but not done
         raise NotImplementedError()
     A_js_shape0s = p.A_js.shape0s
-    cl_gstructure, textconf = p.cl_geometry_and_textconf(items)
+    cl_gstructure, textconf = p.cl_geometry_and_textconf(items, stride=1)
 
     # min_n_dots = min(A_js_shape0s)
     max_n_dots = max(A_js_shape0s)
 
-    max_y_len = max(p.geometry[ii]['y_len'] for ii in items)
+    max_y_len = max(p.geometry[ii].y_len for ii in items)
     MAX_SEGMENT_SIZE = 16  # tricky to tune?
 
     segment_size = min(
@@ -713,13 +711,7 @@ def many_dots_impl(p, items):
         'segment_idx': 'segment_idx',
         'dot_block_idx': 'dot_block_idx',
     })
-    if 0:
-        for k, v in textconf.items():
-            print(k, v)
     textconf.update(p.__dict__)
-    #    print('float_gamma', textconf['float_gamma'])
-    #    print('cl_gamma', textconf['cl_gamma'])
-    #    print('clra_gamma', textconf['clra_gamma'])
 
     text = """
         __kernel void gemv_many_dots(
@@ -778,11 +770,13 @@ def many_dots_impl(p, items):
                      ii < ${n_dot_products};
                      ii += ${dot_block_size})
             {
-                for (int nn = 0; nn < ${N_i}; nn += 1)
+                const __global ${A.cl_buf.ctype}* a = A_data + ${a_starts}
+                                                      + get_global_id(0);
+                const __global ${X.cl_buf.ctype}* x = X_data + ${x_starts};
+                for (int nn = 0; nn < ${N_i}; nn++)
                 {
-                    y_sum_post[dot_block_idx][segment_idx]
-                    += A_data[${a_starts} + get_global_id(0) * ${a_s0} + nn]
-                       * X_data[${x_starts} + nn];
+                    y_sum_post[dot_block_idx][segment_idx] +=
+                        a[${a_s1} * nn] * x[nn];
                 }
             }
         }
@@ -825,30 +819,30 @@ def many_dots_impl(p, items):
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     rval.full_args = full_args  # prevent GC the args
-    rval.description = p.geometry_summary(items)
+    rval.description = p.geometry.summary(items)
     return rval
 
 
 def block_impl(p, items):
 
     if p.clra_alpha is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: clra_alpha not supported')
     if p.clra_gamma is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: clra_gamma not supported')
     if p.clra_beta is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: clra_beta not supported')
     if p.cl_alpha is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: cl_alpha not supported')
     if p.cl_beta is not None:
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: cl_beta not supported')
     if p.cl_gamma is not None:
-        raise NotImplementedError()
-    if not all(s == 1 for s in p.A.stride1s):
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: cl_gamma not supported')
+    if not all(s == 1 for s in p.A.stride0s):
+        raise NotImplementedError('block_impl: A must be in column-major')
 
     if p.A_js is None:
         # -- easy probably, but not done
-        raise NotImplementedError()
+        raise NotImplementedError('block_impl: A_js cannot be None')
 
     # --- blocking
     # We want to group the dot products into blocks, so that each workgroup
@@ -857,7 +851,7 @@ def block_impl(p, items):
     # region of this buffer, then reduce across the buffer in a separate kernel
 
     # block_y = 8
-    block_y = 32
+    block_y = 128
     # block_x = 32
     block_x = 128
 
@@ -924,7 +918,7 @@ def block_impl(p, items):
             bw_reduce += shape0i*(len(Ybufind_reduce) + 1) * p.Y.dtype.itemsize
 
     # --- create structure
-    gstructure = np.column_stack([shape0s, shape1s, Astride0s, Astride1s,
+    gstructure = np.column_stack([shape0s, shape1s, Astride1s,
                                   Astarts, Xstride0s, Xstarts, Ybufstarts])
     cl_gstructure = to_device(p.queue, gstructure.astype(np.int32))
 
@@ -936,7 +930,7 @@ def block_impl(p, items):
     lsize0_log2 = int(np.log2(lsize0))
     assert 2**lsize0_log2 == lsize0
 
-    lsize = (lsize0, block_y, 1)
+    lsize = (block_y, lsize0, 1)
     gsize = (lsize[0], lsize[1], gstructure.shape[0])
     assert np.prod(lsize) >= block_x
 
@@ -947,12 +941,11 @@ def block_impl(p, items):
         n_structure_vars=gstructure.shape[1],
         shape0='lstructure[0]',
         shape1='lstructure[1]',
-        Astride0='lstructure[2]',
-        Astride1='lstructure[3]',
-        Astart='lstructure[4]',
-        Xstride0='lstructure[5]',
-        Xstart='lstructure[6]',
-        Ybufstart='lstructure[7]',
+        Astride1='lstructure[2]',
+        Astart='lstructure[3]',
+        Xstride0='lstructure[4]',
+        Xstart='lstructure[5]',
+        Ybufstart='lstructure[6]',
         block_y=block_y,
         block_x=block_x,
         lsize0=lsize0,
@@ -975,9 +968,9 @@ def block_impl(p, items):
         __global ${Ybuf.ctype} *Ybufdata
         )
     {
-        const int j = get_global_id(0);
-        const int i = get_global_id(1);
-        const int n = get_global_id(2);
+        const int i = get_global_id(0);       // Row index
+        const int j = get_global_id(1);       // Column group index
+        const int item_i = get_global_id(2);
 
         // load structure
         __local int lstructure[${n_structure_vars}];
@@ -985,7 +978,7 @@ def block_impl(p, items):
             get_local_id(0) + get_local_id(1)*get_local_size(0);
         if (local_idx < ${n_structure_vars})
             lstructure[local_idx] = gstructure[
-                n * ${n_structure_vars} + local_idx];
+                item_i * ${n_structure_vars} + local_idx];
         barrier(CLK_LOCAL_MEM_FENCE);
 
         __global const ${X.ctype} *x = Xdata + ${Xstart};
@@ -997,25 +990,33 @@ def block_impl(p, items):
             xlocal[local_idx] = x[local_idx*${Xstride0}];
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        __local ${Ybuf.ctype} sums[${block_y}][${lsize0}];
-        sums[i][j] = 0;
+        __local ${Ybuf.ctype} sums[${lsize0}][${block_y}];
+        sums[j][i] = 0;
+
+        const int ncols = max(1, (int)(${shape1} / get_local_size(1)));
+        const int jj_max = j + 1 < get_local_size(1) ?
+                             min((j+1) * ncols, ${shape1}) : ${shape1};
+
+        __global const ${A.ctype} *Ai = Adata + ${Astart} + i;
 
         if (i < ${shape0}) {
-            __global const ${A.ctype} *Ai = Adata + ${Astart} + i*${Astride0};
-            for(int jj = j; jj < ${shape1}; jj += get_global_size(0)) {
-                sums[i][j] += Ai[jj*${Astride1}] * xlocal[jj];
+            for(int jj = j * ncols; jj < jj_max; jj++) {
+                sums[j][i] += Ai[jj*${Astride1}] * xlocal[jj];
             }
         }
         barrier(CLK_LOCAL_MEM_FENCE);
 
-    % for k in range(lsize0_log2 - 1, 0, -1):
-        if (j < ${2**k})
-            sums[i][j] += sums[i][${2**k} + j];
+    % for k in range(lsize0_log2 - 1, -1, -1):
         barrier(CLK_LOCAL_MEM_FENCE);
+        if (j < ${2**k}) {
+            sums[j][i] += sums[j + ${2**k}][i];
+        % if k == 0:
+            if (i < ${shape0}) {
+                ybuf[i] = ${float_alpha} * sums[j][i];
+            }
+       % endif
+       }
     % endfor
-
-        if (i < ${shape0} && j == 0)
-            ybuf[i] = ${float_alpha} * (sums[i][0] + sums[i][1]);
     }
     """
 
@@ -1030,7 +1031,7 @@ def block_impl(p, items):
                 flops_per_call=flops_from_geometry(p.geometry, items),
                 )
     plan.full_args = full_args  # prevent GC the args
-    plan.description = p.geometry_summary(items)
+    plan.description = p.geometry.summary(items)
     plan.Ybuf = clYbuf
 
     # --- Reduce kernel
@@ -1121,9 +1122,169 @@ def block_impl(p, items):
                        name='clra_gemv.block_impl_reduce', tag=p.tag)
     plan_reduce.full_args = full_args_reduce  # prevent GC of the args
     plan_reduce.bw_per_call = bw_reduce
-    # plan_reduce.description = p.geometry_summary(items)
+    # plan_reduce.description = p.geometry.summary(items)
 
     return [plan, plan_reduce]
+
+
+def one_thread_per_row_impl(p, items):
+    """Each thread computes the dot product over one row.
+       The rows are grouped consecutively when y_len is small.
+    """
+    if p.clra_alpha is not None:
+        raise NotImplementedError()
+    if p.clra_gamma is not None:
+        raise NotImplementedError()
+    if p.clra_beta is not None:
+        raise NotImplementedError()
+    if p.cl_alpha is not None:
+        raise NotImplementedError()
+    if p.cl_gamma is not None:
+        raise NotImplementedError()
+    if not all(s == 1 for s in p.A.stride0s):
+        raise NotImplementedError('A must be in column major')
+
+    num_items = len(items)
+    assert num_items > 0
+
+    assert p.float_alpha is not None
+    assert p.float_gamma is not None
+
+    if p.A_js is None:
+        # -- easy probably, but not done
+        raise NotImplementedError()
+
+    cl_gstructure, textconf = p.cl_geometry_and_textconf(items,
+                                                         stride=1)
+
+    max_y_len = max(p.geometry[ii].y_len for ii in items)
+    max_n_dots = max(len(p.geometry[ii].dots) for ii in items)
+    all_same_y_len = len(set(p.geometry[ii].y_len for ii in items)) == 1
+
+
+    # Compute in consecutive threads if max_y_len is small,
+    # and all y_len are the same.
+    # TODO autotune
+    if all_same_y_len and max_y_len < 64:
+        consecutive = True
+        gsize = (max_y_len * num_items,)
+    else:
+        consecutive = False
+        gsize = (max_y_len, num_items)
+
+    textconf.update({
+        'max_n_dots': max_n_dots,
+        'max_y_len': max_y_len,
+        'consecutive': consecutive,
+        'all_same_y_len': all_same_y_len,
+    })
+    textconf.update(p.__dict__)
+
+    """
+    int i, item_i;
+% for ix, sprev, s, item_i in zip(range(len(items)), num_rows, num_rows[1:], items):
+    % if ix == 0:
+         if (global_i < ${s})
+    % else:
+         else if (global_i < ${s})
+    % endif
+         {
+            item_i = ${item_i};
+            i = global_i - ${sprev};
+         }
+    % endfor
+    """
+
+    text = """
+    __kernel void gemv(
+                const __global int* gstructure,
+                const __global ${A.cl_buf.ctype}* A_data,
+                const __global ${X.cl_buf.ctype}* X_data,
+            % if cl_beta is not None:
+                const __global ${cl_beta.ctype}* betas,
+            % endif
+                const __global ${Y_in.cl_buf.ctype}* Y_in_data,
+                __global ${Y.cl_buf.ctype}* Y_data)
+    {
+    % if consecutive:
+        const int global_i = get_global_id(0);
+
+        const int item_i = global_i / ${max_y_len};     // Item index
+        const int i = global_i - item_i * ${max_y_len}; // Row index within item
+    % else:
+        const int item_i = get_global_id(1);  // Item index
+        const int i = get_global_id(0);       // Row index within item
+    % endif
+
+        const __global int* lstructure =
+            gstructure + item_i * ${structure_vars_stride};
+
+    % if not all_same_y_len:
+        if (i >= ${y_len}) return;
+    % endif
+
+        ${Y.cl_buf.ctype} sum = 0;
+
+    % if max_n_dots > 1:
+        for (int ii = 0; ii < ${n_dot_products}; ii++)
+        {
+    % else:
+        const int ii = 0;
+    % endif
+
+            const int a_s1 = ${a_s1};
+            const int n_i = ${N_i};
+
+            const __global ${A.cl_buf.ctype}* a = A_data + ${a_starts} + i;
+            const __global ${X.cl_buf.ctype}* x = X_data + ${x_starts};
+
+            for (int j=0;j<n_i;j++)
+                sum += a[a_s1*j] * x[j];
+
+    % if max_n_dots > 1:
+        }
+    % endif
+
+    % if float_gamma is not None:
+        const ${Y.cl_buf.ctype} gamma = ${float_gamma};
+    % else:
+        const ${Y.cl_buf.ctype} gamma = 0;
+    % endif
+
+    % if float_beta is not None and float_beta != 0 :
+        Y_data[${y_offset} + i] = ${float_alpha} * sum + ${float_beta} * Y_in_data[${y_in_starts} + i] + gamma;
+    % elif cl_beta is not None:
+        Y_data[${y_offset} + i] = ${float_alpha} * sum + betas[${bb}] * Y_in_data[${y_in_starts} + i] + gamma;
+    % else:
+        Y_data[${y_offset} + i] = ${float_alpha} * sum + gamma;
+    % endif
+    }
+    """
+
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+
+    fn = cl.Program(p.queue.context, text).build().gemv
+
+    full_args = [
+        cl_gstructure,
+        p.A.cl_buf,
+        p.X.cl_buf,
+    ] + ([p.cl_beta] if p.cl_beta is not None else []) + [
+        p.Y_in.cl_buf,
+        p.Y.cl_buf,
+    ]
+
+    fn.set_args(*[arr.data for arr in full_args])
+    rval = Plan(p.queue, fn, gsize, None,
+                name='clra_gemv.one_thread_per_row_impl',
+                tag=p.tag,
+                bw_per_call=bw_from_geometry(p.geometry, items),
+                flops_per_call=flops_from_geometry(p.geometry, items),
+                )
+    rval.full_args = full_args  # prevent GC the args
+    rval.description = p.geometry.summary(items)
+    return rval
+
 
 
 class plan_ref_gemv(gemv_prog):
@@ -1156,9 +1317,9 @@ class plan_ragged_gather_gemv(gemv_prog):
 
         long_dots = [
             ii for ii in remaining_items
-            if len(self.geometry[ii]['dots']) <= 2
-            and max([0] + [dct['a_shape1']
-                           for dct in self.geometry[ii]['dots']]) > 16]
+            if len(self.geometry[ii].dots) <= 2
+            and max([0] + [dct.a_shape1
+                           for dct in self.geometry[ii].dots]) > 16]
         if long_dots:
             try:
                 long_plan = reduce_impl(self, long_dots)
@@ -1172,7 +1333,7 @@ class plan_ragged_gather_gemv(gemv_prog):
 
         # many_dots = [ii
             # for ii in remaining_items
-            # if len(self.geometry[ii]['dots']) > 3]
+            # if len(self.geometry[ii].dots) > 3]
         many_dots = remaining_items
         if many_dots:
             try:
@@ -1191,3 +1352,88 @@ class plan_ragged_gather_gemv(gemv_prog):
             plans.append(remaining_plan)
 
         return plans
+
+class plan_one_thread_per_row_gemv(gemv_prog):
+    def choose_plans(self):
+        return [one_thread_per_row_impl(self, range(len(self.Y)))]
+
+class plan_pretuned_gemv(gemv_prog):
+    PLANS = (one_thread_per_row_impl, reduce_impl, many_dots_impl, block_impl)
+
+    # Tuning grid obtained on a NVIDIA GTX 970.
+    # The indices correspond to functions in PLANS above.
+    TUNING_GRID = np.array(
+        [  [[ 0, 0, 0, 0, 1, 2, 0]
+          , [ 0, 1, 1, 1, 1, 2, 0]
+          , [ 1, 1, 1, 1, 1, 0, 0]
+          , [ 0, 1, 1, 1, 1, 1, 0]
+          , [ 1, 1, 1, 1, 1, 1, 1]
+          , [ 3, 3, 3, 1, 1, 1, 1]
+          , [ 3, 3, 3, 3, 1, 1, 1]]
+         ,
+           [[ 1, 0, 2, 0, 1, 0, 0]
+          , [ 2, 0, 2, 0, 0, 0, 0]
+          , [ 1, 1, 1, 0, 1, 0, 0]
+          , [ 1, 1, 1, 1, 1, 0, 1]
+          , [ 1, 1, 1, 2, 1, 0, 1]
+          , [ 3, 3, 3, 3, 1, 1, 1]
+          , [ 3, 3, 3, 3, 2, 0, 2]]
+         ,
+           [[ 0, 0, 0, 1, 1, 0, 0]
+          , [ 2, 2, 2, 0, 2, 0, 0]
+          , [ 1, 0, 0, 2, 1, 0, 0]
+          , [ 1, 0, 1, 0, 0, 0, 1]
+          , [ 1, 1, 1, 1, 1, 0, 1]
+          , [ 3, 3, 3, 3, 1, 0, 1]
+          , [ 3, 3, 3, 3, 2, 0, 2]]
+         ,
+           [[ 1, 0, 0, 0, 0, 0, 0]
+          , [ 1, 2, 0, 0, 0, 0, 0]
+          , [ 0, 0, 0, 1, 0, 0, 0]
+          , [ 2, 1, 0, 0, 0, 0, 0]
+          , [ 1, 1, 0, 0, 0, 0, 0]
+          , [ 3, 3, 3, 1, 0, 3, 0]
+          , [ 3, 3, 3, 3, 0, 3, 0]]
+         ,
+           [[ 1, 2, 0, 0, 0, 0, 0]
+          , [ 2, 0, 0, 1, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 2, 0, 1, 0, 0, 0, 0]
+          , [ 1, 1, 1, 0, 0, 0, 0]
+          , [ 3, 3, 1, 0, 0, 0, 0]
+          , [ 3, 3, 3, 0, 0, 0, 0]]
+         ,
+           [[ 0, 0, 0, 0, 0, 0, 0]
+          , [ 2, 0, 0, 0, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 3, 3, 0, 3, 0, 0, 0]
+          , [ 3, 3, 0, 0, 0, 0, 0]]
+         ,
+           [[ 2, 0, 0, 0, 0, 0, 0]
+          , [ 1, 0, 0, 0, 0, 0, 0]
+          , [ 0, 0, 0, 0, 0, 0, 0]
+          , [ 0, 0, 0, 0, 0, 0, 0]
+          , [ 0, 0, 0, 3, 0, 0, 0]
+          , [ 3, 0, 0, 0, 0, 0, 0]
+          , [ 3, 0, 0, 0, 0, 0, 0]]]
+        , dtype='uint8')
+    LOG_BASE = 4
+
+    def choose_plans(self):
+        items = range(len(self.Y))
+        m, n, k = 1, 1, 1
+        for ii in items:
+            m = max(m, self.geometry[ii].y_len)
+            n = max(n, max(d.a_shape1 for d in self.geometry[ii].dots))
+            k = max(k, len(self.geometry[ii].dots))
+        logm, logn, logk = [
+            min(int(round(math.log(x, plan_pretuned_gemv.LOG_BASE))),
+                plan_pretuned_gemv.TUNING_GRID.shape[i] - 1)
+            for i,x in enumerate((m,n,k))]
+
+        ind = plan_pretuned_gemv.TUNING_GRID[logm, logn, logk]
+        plan = plan_pretuned_gemv.PLANS[ind](self, range(len(self.Y)))
+
+        return plan if isinstance(plan, list) else [plan]

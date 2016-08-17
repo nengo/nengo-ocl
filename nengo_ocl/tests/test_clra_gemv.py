@@ -11,7 +11,7 @@ from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 from nengo_ocl.clra_gemv import (
     plan_reduce_gemv, plan_many_dots_gemv, plan_block_gemv,
-    plan_ragged_gather_gemv)
+    plan_ragged_gather_gemv, plan_one_thread_per_row_gemv)
 
 from .conftest import ctx
 
@@ -24,7 +24,7 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize(
             "planner", [
                 plan_reduce_gemv, plan_many_dots_gemv, plan_block_gemv,
-                plan_ragged_gather_gemv])
+                plan_ragged_gather_gemv, plan_one_thread_per_row_gemv])
 
 
 def allclose(raA, raB):
@@ -285,20 +285,35 @@ def test_speed(rng):
     A_js = RA(ajs, dtype=np.int32)
     X_js = RA(xjs, dtype=np.int32)
 
-    # -- run cl computation
-    prog = plan_ragged_gather_gemv(
-        queue, alpha, clA, A_js, clX, X_js, beta, clY)
-    plans = prog.choose_plans()
+    # For bandwidth and load computations
+    total_mem_gb = (sum(m*n + m + n + m for m,n in zip(ms,ns)) + 3) * np.dtype('float32').itemsize * 1e-9
+    total_gflops = sum(m* (2*n-1) + 4*m for m,n in zip(ms,ns)) * 1e-9
 
-    print('')
-    print('-' * 5 + ' Plans ' + '-' * 45)
-    for plan in plans:
-        print(plan)
+    # -- run cl computation a few times
+    ntrials = 5
+    total_time = 0.0
+    for i in range(ntrials):
+        prog = plan_ragged_gather_gemv(
+            queue, alpha, clA, A_js, clX, X_js, beta, clY)
+        plans = prog.choose_plans()
 
-    with Timer() as timer:
-        for plan in plans:
-            plan()
-    print("nengo_ocl: %0.3f" % timer.duration)
+        if i == 0:
+            print('')
+            print('-' * 5 + ' Plans ' + '-' * 45)
+            for plan in plans:
+                print(plan)
+
+        with Timer() as timer:
+            for plan in plans:
+                plan()
+
+        total_time += timer.duration
+
+    t = total_time / ntrials
+    print("nengo_ocl: %0.3f s, bandwidth: %.1f GB/s, load: %.1f GFlops"
+              % (t,
+                 total_mem_gb / t,
+                 total_gflops / t))
 
     # -- speed test in ocl blas
     if pyopencl_blas:
@@ -318,23 +333,31 @@ def test_speed(rng):
         #           for _ in range(k)]
 
         queue.finish()
-        with Timer() as timer:
-            if 0:
-                # use a single queue
-                for A, X, Y in zip(clAs, clXs, clYs):
-                    pyopencl_blas.gemv(queue, A, X, Y)
-                queue.finish()
-            else:
-                # use multiple parallel queues
-                events = []
-                for i, [A, X, Y] in enumerate(zip(clAs, clXs, clYs)):
-                    q = queues[i % len(queues)]
-                    e = pyopencl_blas.gemv(q, A, X, Y)
-                    events.append(e)
-                for q in queues:
-                    q.flush()
-                cl.wait_for_events(events)
-        print("clBLAS: %0.3f" % timer.duration)
+
+        total_time = 0.0
+        for i in range(ntrials):
+            with Timer() as timer:
+                if 0:
+                    # use a single queue
+                    for A, X, Y in zip(clAs, clXs, clYs):
+                        pyopencl_blas.gemv(queue, A, X, Y)
+                        queue.finish()
+                else:
+                    # use multiple parallel queues
+                    events = []
+                    for i, [A, X, Y] in enumerate(zip(clAs, clXs, clYs)):
+                        q = queues[i % len(queues)]
+                        e = pyopencl_blas.gemv(q, A, X, Y)
+                        events.append(e)
+                    for q in queues:
+                        q.flush()
+                    cl.wait_for_events(events)
+            total_time += timer.duration
+        t = total_time / ntrials
+        print("clBLAS: %0.3f, bandwidth: %.1f GB/s, load: %.1f GFlops"
+              % (t,
+                 total_mem_gb / t,
+                 total_gflops / t))
 
 
 if __name__ == '__main__':

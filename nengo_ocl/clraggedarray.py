@@ -73,6 +73,7 @@ class CLRaggedArray(object):
         self.stride1s = np_raggedarray.stride1s
         self.buf = np_raggedarray.buf
         self.names = np_raggedarray.names
+        self.order = np_raggedarray.order
 
     @classmethod
     def from_arrays(cls, queue, arrays, names=None, dtype=None, align=False):
@@ -248,9 +249,11 @@ class CLRaggedArray(object):
                 # contiguous
                 clarray = self.getitem_device(item)
                 if isinstance(new_value, np.ndarray):
-                    array = np.asarray(new_value, order='C', dtype=self.dtype)
+                    array = np.asarray(new_value, dtype=self.dtype,
+                                       order=self.order)
                 else:
-                    array = np.zeros(clarray.shape, dtype=clarray.dtype)
+                    array = np.zeros(clarray.shape, dtype=clarray.dtype,
+                                     order=self.order)
                     array[...] = new_value
 
                 array.shape = clarray.shape  # reshape to avoid warning

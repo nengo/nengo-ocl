@@ -24,7 +24,7 @@ from nengo.utils.stdlib import groupby
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
-from nengo_ocl.clra_gemv import plan_block_gemv
+from nengo_ocl.clra_gemv import plan_pretuned_gemv, plan_one_thread_per_row_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_reset, plan_copy, plan_slicedcopy,
     plan_direct, plan_lif, plan_lif_rate,
@@ -209,10 +209,11 @@ class MultiDotInc(Operator):
 
 class ViewBuilder(object):
 
-    def __init__(self, bases, rarray):
+    def __init__(self, bases, rarray, order='F'):
         self.sidx = {bb: ii for ii, bb in enumerate(bases)}
         assert len(bases) == len(self.sidx)
         self.rarray = rarray
+        self.order = order
 
         self.starts = []
         self.shape0s = []
@@ -238,8 +239,12 @@ class ViewBuilder(object):
         self.starts.append(self.rarray.starts[idx] + obj.elemoffset)
         self.shape0s.append(obj.shape[0] if obj.ndim > 0 else 1)
         self.shape1s.append(obj.shape[1] if obj.ndim > 1 else 1)
-        self.stride0s.append(obj.elemstrides[0] if obj.ndim > 0 else 1)
-        self.stride1s.append(obj.elemstrides[1] if obj.ndim > 1 else 1)
+        if self.order == 'F':
+            self.stride0s.append(1)
+            self.stride1s.append(obj.shape[0] if obj.ndim > 0 else 1)
+        else:
+            self.stride0s.append(obj.elemstrides[0] if obj.ndim > 0 else 1)
+            self.stride1s.append(obj.elemstrides[1] if obj.ndim > 1 else 1)
         self.names.append(getattr(obj, 'name', ''))
         self.sidx[obj] = len(self.sidx)
 
@@ -482,7 +487,7 @@ class Simulator(nengo.Simulator):
         if callable(beta):
             beta = RaggedArray([sidx[beta(o)] for o in ops], dtype=np.float32)
 
-        rval = plan_block_gemv(
+        rval = plan_one_thread_per_row_gemv(
             self.queue, alpha, all_data, A_js, all_data, X_js, beta, Y,
             Y_in=Y_in, gamma=gamma, tag=tag)
         return rval.plans
@@ -892,7 +897,7 @@ class Simulator(nengo.Simulator):
             X = self.all_data[
                 [self.sidx[self.model.sig[p]['in']] for p in probes]]
             Y = self.RaggedArray(
-                [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
+                [np.zeros((self.model.sig[p]['in'].size, n_prealloc), order='F')
                  for p in probes], dtype=np.float32)
 
             cl_plan = plan_probes(self.queue, periods, X, Y)
@@ -917,8 +922,10 @@ class Simulator(nengo.Simulator):
                 # XXX: this syntax retrieves *ALL* of Y from the device
                 #      because the :n_buffered only works on the ndarray
                 #      *after* it has been transferred.
-                raw = plan.Y[i][:n_buffered]
-                shaped = raw.reshape((n_buffered,) + shape)
+                raw = plan.Y[i][:,:n_buffered]
+                shaped = raw.reshape(shape + (n_buffered,), order='F')
+                # Transpose to (n_buffered, shape).
+                shaped = shaped.transpose([len(shape)] + list(range(len(shape))))
                 self._probe_outputs[probe].extend(shaped)
         plan.cl_bufpositions.fill(0)
         self.queue.finish()
@@ -950,7 +957,7 @@ class Simulator(nengo.Simulator):
                 N -= B
                 progress.step(n=B)
 
-        if self.profiling > 1:
+        if self.profiling:
             self.print_profiling()
 
     def reset(self, seed=None):
@@ -1085,11 +1092,11 @@ class Simulator(nengo.Simulator):
         print('%8s|%10s|%10s|%10s|' % ('n_calls', 'runtime', 'GF/s', 'GB/s'))
 
         for r in table:
-            print('%8d|%10.3f|%10.3f|%10.3f| %s' % r)
+            print('%8d|%10.5f|%10.3f|%10.3f| %s' % r)
 
         # totals totals
         print('-' * 80)
-        col = lambda c: np.asarray(map(lambda x: x[c], table))
+        col = lambda c: np.asarray([x[c] for x in table])
         times = col(1)
 
         def wmean(x):
