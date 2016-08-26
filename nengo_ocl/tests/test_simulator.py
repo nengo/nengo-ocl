@@ -6,6 +6,8 @@ from nengo.builder import Model
 from nengo.builder.operator import DotInc, PreserveValue, Reset
 from nengo.builder.signal import Signal
 
+from nengo_ocl.version import latest_nengo_version_info
+
 
 def test_multidotinc_compress(Simulator):
     a = Signal([0, 0])
@@ -28,19 +30,22 @@ def test_multidotinc_compress(Simulator):
         assert np.allclose(sim.signals[b], [4, -2])
 
 
-def test_version(monkeypatch, Simulator):
-    from nengo_ocl.version import latest_nengo_version_info
-
-    monkeypatch.setattr(nengo.version, 'version_info', (2, 0, 0))
-
+def test_error_on_version_in_blacklist(monkeypatch, Simulator):
     with nengo.Network() as model:
         nengo.Ensemble(10, 1)
 
+    monkeypatch.setattr(nengo.version, 'version_info', (2, 1, 1))
     with pytest.raises(ValueError):
-        Simulator(model)
+        with Simulator(model):
+            pass
 
-    next_version = list(latest_nengo_version_info)
-    next_version[-1] += 1
-    monkeypatch.setattr(nengo.version, 'version_info', tuple(next_version))
+
+def test_warn_on_future_version(monkeypatch, Simulator):
+    with nengo.Network() as model:
+        nengo.Ensemble(10, 1)
+
+    future_version = tuple(v + 1 for v in latest_nengo_version_info)
+    monkeypatch.setattr(nengo.version, 'version_info', future_version)
     with pytest.warns(UserWarning):
-        Simulator(model)
+        with Simulator(model):
+            pass

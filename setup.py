@@ -52,7 +52,7 @@ setup(
     zip_safe=False,
     setup_requires=['pytest-runner'] if testing else [],
     install_requires=[
-        'nengo>=%s' % version_module.latest_nengo_version,
+        'nengo',
         'mako',
         'pyopencl',
     ],

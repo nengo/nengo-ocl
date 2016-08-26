@@ -35,7 +35,8 @@ from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.planners import greedy_planner
 from nengo_ocl.ast_conversion import OCL_Function
 from nengo_ocl.utils import get_closures, indent, split, stable_unique, Timer
-from nengo_ocl.version import latest_nengo_version, latest_nengo_version_info
+from nengo_ocl.version import (
+    bad_nengo_versions, latest_nengo_version, latest_nengo_version_info)
 
 logger = logging.getLogger(__name__)
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
@@ -299,10 +300,11 @@ class Simulator(nengo.Simulator):
         self.model = None
 
         # --- check version
-        if nengo.version.version_info < latest_nengo_version_info:
+        if nengo.version.version_info in bad_nengo_versions:
             raise ValueError(
-                "This simulator only supports Nengo %s (got %s)" %
-                (latest_nengo_version, nengo.__version__))
+                "This simulator does not support Nengo version %s. Upgrade "
+                "with 'pip install --upgrade --no-deps nengo'."
+                % nengo.__version__)
         elif nengo.version.version_info > latest_nengo_version_info:
             warnings.warn("This version of `nengo_ocl` has not been tested "
                           "with your `nengo` version (%s). The latest fully "
