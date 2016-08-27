@@ -15,8 +15,6 @@ from nengo_ocl.clra_nonlinearities import (
     plan_lif, plan_lif_rate, plan_elementwise_inc, plan_reset, plan_slicedcopy,
     plan_linearfilter)
 
-from .conftest import ctx
-
 logger = logging.getLogger(__name__)
 RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
 
@@ -26,7 +24,7 @@ def not_close(a, b, rtol=1e-3, atol=1e-3):
 
 
 @pytest.mark.parametrize("upsample", [1, 4])
-def test_lif_step(upsample):
+def test_lif_step(ctx, upsample):
     """Test the lif nonlinearity, comparing one step with the Numpy version."""
     rng = np.random
 
@@ -86,7 +84,7 @@ def test_lif_step(upsample):
 
 
 @pytest.mark.parametrize("heterogeneous", [False, True])
-def test_lif_speed(rng, heterogeneous):
+def test_lif_speed(ctx, rng, heterogeneous):
     """Test the speed of the lif nonlinearity
 
     heterogeneous: if true, use a wide range of population sizes.
@@ -130,7 +128,7 @@ def test_lif_speed(rng, heterogeneous):
 
 
 @pytest.mark.parametrize("blockify", [False, True])
-def test_lif_rate(blockify):
+def test_lif_rate(ctx, blockify):
     """Test the `lif_rate` nonlinearity"""
     rng = np.random
     dt = 1e-3
@@ -164,7 +162,7 @@ def test_lif_rate(blockify):
     assert ra.allclose(R, clR.to_host())
 
 
-def test_elementwise_inc(rng):
+def test_elementwise_inc(ctx, rng):
     Xsizes = [(3, 3), (32, 64), (457, 342), (1, 100)]
     Asizes = [(3, 3), (1, 1),   (457, 342), (100, 1)]
     A = RA([rng.normal(size=size) for size in Asizes])
@@ -185,7 +183,7 @@ def test_elementwise_inc(rng):
         assert np.allclose(y, yy)
 
 
-def test_reset(rng):
+def test_reset(ctx, rng):
     # Yshapes = [(100,), (10, 17), (3, 3)]
     Yshapes = [(1000000,), (1000, 1700), (3, 3)]
     values = rng.uniform(size=len(Yshapes)).astype(np.float32)
@@ -213,7 +211,7 @@ def test_reset(rng):
         assert np.all(y == v)
 
 
-def test_slicedcopy(rng):
+def test_slicedcopy(ctx, rng):
     sizes = rng.randint(20, 200, size=10)
     A = RA([rng.normal(size=size) for size in sizes])
     B = RA([rng.normal(size=size) for size in sizes])
@@ -262,7 +260,7 @@ def test_slicedcopy(rng):
 
 @pytest.mark.parametrize('n_per_kind', [
     (100000, 0, 0), (0, 100000, 0), (0, 0, 100000), (10000, 10000, 10000)])
-def test_linearfilter(n_per_kind, rng):
+def test_linearfilter(ctx, n_per_kind, rng):
     kinds = (
         nengo.synapses.LinearFilter((2.,), (1.,), analog=False),
         nengo.synapses.Lowpass(0.005),

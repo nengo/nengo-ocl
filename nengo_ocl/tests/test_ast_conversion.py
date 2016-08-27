@@ -11,13 +11,11 @@ import nengo_ocl
 import nengo_ocl.ast_conversion as ast_conversion
 from nengo_ocl.ast_conversion import OCL_Function
 
-from .conftest import ctx
-
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
-def OclOnlySimulator(request):
+def OclOnlySimulator(request, ctx):
     """A nengo_ocl.Simulator that only allows OCL python functions"""
 
     def OclOnlySimulator(*args, **kwargs):

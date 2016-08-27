@@ -7,8 +7,9 @@ import pytest
 from nengo.conftest import plt, rng  # noqa: F401
 
 
-ctx = cl.create_some_context()
 @pytest.fixture(scope="session")
+def ctx(request):
+    return cl.create_some_context()
 
 
 # --- Change allclose tolerences for some Nengo tests

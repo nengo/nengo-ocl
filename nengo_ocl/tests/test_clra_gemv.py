@@ -13,8 +13,6 @@ from nengo_ocl.clra_gemv import (
     plan_reduce_gemv, plan_many_dots_gemv, plan_block_gemv,
     plan_ragged_gather_gemv)
 
-from .conftest import ctx
-
 logger = logging.getLogger(__name__)
 RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
 
@@ -35,7 +33,7 @@ def allclose(raA, raB):
     return True
 
 
-def test_basic():
+def test_basic(ctx):
     # -- prepare initial conditions on host
     A = RA([[[0.1, .2], [.3, .4]], [[.5, .6]]])
     X = RA([[3, 5]])
@@ -72,7 +70,7 @@ def test_basic():
         assert np.allclose(ref, sim)
 
 
-def _test_random(k=4, p=1, m=10, n=10):
+def _test_random(ctx, k=4, p=1, m=10, n=10):
     """
     Parameters
     ----------
@@ -125,24 +123,25 @@ def _test_random(k=4, p=1, m=10, n=10):
         assert np.allclose(ref, sim, atol=1e-3, rtol=1e-3)
 
 
-def test_random_small():
-    _test_random(k=4, m=10, n=10)
+def test_random_small(ctx):
+    _test_random(ctx, k=4, m=10, n=10)
 
 
-def test_random_large():
-    _test_random(k=10, m=550, n=550)
+def test_random_large(ctx):
+    _test_random(ctx, k=10, m=550, n=550)
 
 
-def test_many_dots_small():
-    _test_random(k=4, p=4, m=10, n=10)
+def test_many_dots_small(ctx):
+    _test_random(ctx, k=4, p=4, m=10, n=10)
 
 
-def test_many_dots_large():
+def test_many_dots_large(ctx):
     # _test_random(k=4, p=4, m=550, n=550)
-    _test_random(k=4, p=4, m=2000, n=1000)
+    _test_random(ctx, k=4, p=4, m=2000, n=1000)
 
 
 def check_from_shapes(
+    ctx,
     planner,
     alpha, beta, gamma,
     A_shapes, X_shapes,
@@ -192,8 +191,9 @@ def check_from_shapes(
             assert 0
 
 
-def test_one_element(planner):
+def test_one_element(ctx, planner):
     check_from_shapes(
+        ctx,
         planner,
         0.5, 0.6, 0.7,
         A_shapes=[(1, 1)],
@@ -202,8 +202,9 @@ def test_one_element(planner):
         X_js=[[0]])
 
 
-def test_one_short_segment(planner):
+def test_one_short_segment(ctx, planner):
     check_from_shapes(
+        ctx,
         planner,
         0.5, 0.6, 0.7,
         A_shapes=[(10, 1)],
@@ -212,8 +213,9 @@ def test_one_short_segment(planner):
         X_js=[[0]])
 
 
-def test_one_long_segment(planner):
+def test_one_long_segment(ctx, planner):
     check_from_shapes(
+        ctx,
         planner,
         0.5, 0.6, 0.7,
         A_shapes=[(2001, 1)],
@@ -222,9 +224,10 @@ def test_one_long_segment(planner):
         X_js=[[0]])
 
 
-def test_one_short_segment_many_dots(planner):
+def test_one_short_segment_many_dots(ctx, planner):
     for ND in 2, 20, 100:
         check_from_shapes(
+            ctx,
             planner,
             0.5, 0.6, 0.7,
             A_shapes=[(10, 1 + ii % 2) for ii in range(ND)],
@@ -233,9 +236,10 @@ def test_one_short_segment_many_dots(planner):
             X_js=[range(ND)])
 
 
-def test_one_short_segment_many_longer_dots(planner):
+def test_one_short_segment_many_longer_dots(ctx, planner):
     for ND in 2, 20, 100:
         check_from_shapes(
+            ctx,
             planner,
             0.5, 0.6, 0.7,
             A_shapes=[(2000, ii + 1) for ii in range(ND)],
@@ -244,7 +248,7 @@ def test_one_short_segment_many_longer_dots(planner):
             X_js=[range(ND)])
 
 
-def test_speed(rng):
+def test_speed(ctx, rng):
     try:
         import pyopencl_blas
     except ImportError:
