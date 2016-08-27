@@ -60,6 +60,11 @@ setup(
         'matplotlib>=1.4',
         'pytest>=2.9',
     ],
+    entry_points={
+        'nengo.backends': [
+            'ocl = nengo_ocl:Simulator',
+        ],
+    },
     classifiers=[  # https://pypi.python.org/pypi?%3Aaction=list_classifiers
         'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Science/Research',
