@@ -30,7 +30,7 @@ testing = 'test' in sys.argv or 'pytest' in sys.argv
 # Don't mess with added options if any are passed
 sysargs_overridden = False
 
-if '--addopts' not in sys.argv:
+if testing and '--addopts' not in sys.argv:
     # Enable nengo tests by default
     old_sysargs = sys.argv[:]
     sys.argv[:] = old_sysargs + ['--addopts', '--pyargs nengo']
