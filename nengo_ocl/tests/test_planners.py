@@ -1,4 +1,6 @@
 import nengo
+
+import nengo_ocl
 from nengo_ocl.planners import greedy_planner
 
 
@@ -34,10 +36,10 @@ def feedforward_network(extra_node=False):
     return model
 
 
-def test_greedy_planner_feedforward(Simulator):
+def test_greedy_planner_feedforward():
     model = feedforward_network()
 
-    with Simulator(model, planner=greedy_planner) as sim:
+    with nengo_ocl.Simulator(model, planner=greedy_planner) as sim:
         check_op_groups(sim)
         assert count_op_group(sim, nengo.builder.neurons.SimNeurons) == 1
         assert len(sim.op_groups) == 10

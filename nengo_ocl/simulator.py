@@ -270,7 +270,9 @@ class Simulator(nengo.Simulator):
     network, dt, seed, model
         These parameters are the same as in ``nengo.Simulator``.
     context : pyopencl.Context (optional)
-        OpenCL context specifying which device(s) to run on.
+        OpenCL context specifying which device(s) to run on. By default, we
+        will create a context by calling ``pyopencl.create_some_context()``
+        and use this context as the default for all subsequent ``Simulator``s.
     n_prealloc_probes : int (optional)
         Number of timesteps to buffer when probing. Larger numbers mean less
         data transfer with the device (faster), but use more device memory.
@@ -284,6 +286,8 @@ class Simulator(nengo.Simulator):
         A function to plan operator order. See ``nengo_ocl.planners``.
     """
 
+    # --- Store the result of create_some_context so we don't recreate it
+    some_context = None
     unsupported = []
 
     def Array(self, val, dtype=np.float32):
@@ -312,18 +316,17 @@ class Simulator(nengo.Simulator):
                               nengo.__version__, latest_nengo_version))
 
         # --- arguments/attributes
-        if context is None:
+        if context is None and Simulator.some_context is None:
             print('No context argument was provided to nengo_ocl.Simulator')
             print("Calling pyopencl.create_some_context() for you now:")
-            context = cl.create_some_context()
+            Simulator.some_context = cl.create_some_context()
         if profiling is None:
             profiling = int(os.getenv("NENGO_OCL_PROFILING", 0))
-        self.context = context
+        self.context = Simulator.some_context if context is None else context
         self.profiling = profiling
-        if self.profiling:
-            self.queue = cl.CommandQueue(context, properties=PROFILING_ENABLE)
-        else:
-            self.queue = cl.CommandQueue(context)
+        self.queue = cl.CommandQueue(
+            self.context,
+            properties=PROFILING_ENABLE if self.profiling else None)
 
         self.n_prealloc_probes = n_prealloc_probes
 
