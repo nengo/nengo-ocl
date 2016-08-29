@@ -303,7 +303,3 @@ def test_vector_functions(OclOnlySimulator):
 
     assert all_passed, ("Some functions failed, "
                         "see logger warnings for details")
-
-
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])

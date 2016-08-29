@@ -307,7 +307,3 @@ def test_linearfilter(ctx, n_per_kind, rng):
 
         z = clY[i][:n]
         assert np.allclose(z, y, atol=1e-7, rtol=1e-5), kind
-
-
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])

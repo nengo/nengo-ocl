@@ -339,7 +339,3 @@ def test_speed(ctx, rng):
                     q.flush()
                 cl.wait_for_events(events)
         print("clBLAS: %0.3f" % timer.duration)
-
-
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])

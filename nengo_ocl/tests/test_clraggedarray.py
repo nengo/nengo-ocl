@@ -110,7 +110,3 @@ def test_discontiguous_setitem(ctx, rng):
     clA[-1] = v
     assert ra.allclose(A, clA.to_host())
     assert np.allclose(clA[-1], v)
-
-
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
