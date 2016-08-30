@@ -648,7 +648,8 @@ class OCL_Translator(ast.NodeVisitor):
             return getattr(self._get_handle(expr.value), expr.attr)
 
     def visit_Call(self, expr):
-        assert expr.kwargs is None, "kwargs not implemented"
+        assert not hasattr(expr, 'kwargs') or expr.kwargs is None, (
+            "kwargs not implemented")
         handle = self._get_handle(expr.func)
         args = [self.visit(arg) for arg in expr.args]
         if not any(is_symbolic(arg) for arg in args):

@@ -299,7 +299,7 @@ def test_vector_functions(OclOnlySimulator):
         except Exception as e:
             all_passed = False
             logger.warning("Function `%s` failed with:\n    %s: %s"
-                           % (fn.__name__, e.__class__.__name__, e.message))
+                           % (fn.__name__, e.__class__.__name__, e))
 
     assert all_passed, ("Some functions failed, "
                         "see logger warnings for details")
