@@ -7,6 +7,7 @@ import nengo
 from nengo.utils.compat import range
 from nengo.utils.stdlib import Timer
 
+import nengo_ocl
 from nengo_ocl import raggedarray as ra
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA, to_device
@@ -307,3 +308,33 @@ def test_linearfilter(ctx, n_per_kind, rng):
 
         z = clY[i][:n]
         assert np.allclose(z, y, atol=1e-7, rtol=1e-5), kind
+
+
+@pytest.mark.parametrize('neuron_type', (nengo.neurons.RectifiedLinear(),
+                                         nengo.neurons.Sigmoid()))
+def test_static_neurons(ctx, plt, rng, neuron_type):
+    with nengo.Network(seed=0) as model:
+        u = nengo.Node(nengo.processes.WhiteNoise(scale=False))
+        a = nengo.Ensemble(31, 1, neuron_type=neuron_type)
+        nengo.Connection(u, a, synapse=None)
+
+        xp = nengo.Probe(a.neurons, 'input')
+        yp = nengo.Probe(a.neurons)
+
+    with nengo_ocl.Simulator(model, context=ctx) as sim:
+        sim.run(1.0)
+
+    x = sim.data[xp].ravel()
+    y = sim.data[yp].ravel()
+    r = neuron_type.rates(x, 1., 0.).ravel()
+
+    # --- plot
+    i, = ((x > -10) & (x < 10)).nonzero()
+    n_show = 100
+    if len(i) > n_show:
+        i = rng.choice(i, size=n_show, replace=False)
+
+    plt.plot(x[i], r[i], 'kx')
+    plt.plot(x[i], y[i], '.')
+
+    assert np.allclose(y, r, atol=1e-4, rtol=1e-3)

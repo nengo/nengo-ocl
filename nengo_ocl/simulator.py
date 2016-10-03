@@ -27,7 +27,7 @@ from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.clra_gemv import plan_block_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_reset, plan_copy, plan_slicedcopy,
-    plan_direct, plan_lif, plan_lif_rate,
+    plan_direct, plan_lif, plan_lif_rate, plan_rectified_linear, plan_sigmoid,
     plan_probes, plan_linearfilter, plan_elementwise_inc,
     create_rngs, init_rngs, get_dist_enums_params, plan_whitenoise,
     plan_presentinput, plan_conv2d, plan_pool2d, plan_bcm, plan_oja, plan_voja)
@@ -730,6 +730,18 @@ class Simulator(nengo.Simulator):
                                   for op in ops], dtype=J.dtype)
         return [plan_lif_rate(self.queue, dt, J, R, ref, tau,
                               N=N, tau_n=tau_n, inc_n=inc_n)]
+
+    def _plan_RectifiedLinear(self, ops):
+        J = self.all_data[[self.sidx[op.J] for op in ops]]
+        R = self.all_data[[self.sidx[op.output] for op in ops]]
+        return [plan_rectified_linear(self.queue, J, R)]
+
+    def _plan_Sigmoid(self, ops):
+        J = self.all_data[[self.sidx[op.J] for op in ops]]
+        R = self.all_data[[self.sidx[op.output] for op in ops]]
+        ref = self.RaggedArray([op.neurons.tau_ref * np.ones(op.J.size)
+                                for op in ops], dtype=J.dtype)
+        return [plan_sigmoid(self.queue, J, R, ref)]
 
     def plan_SimProcess(self, all_ops):
         class_groups = groupby(all_ops, lambda op: type(op.process))

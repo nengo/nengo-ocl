@@ -1036,6 +1036,40 @@ def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
         inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
 
 
+def plan_rectified_linear(queue, J, R, **kwargs):
+    assert J.ctype == 'float'
+    assert R.ctype == J.ctype
+
+    textconf = dict(type=J.ctype)
+    decs = "const ${type} c0 = 0;"
+    text = "R = max(J, c0);"
+
+    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    cl_name = "cl_rectified_linear"
+    return _plan_template(
+        queue, cl_name, text, declares=decs,
+        inputs=dict(J=J), outputs=dict(R=R), **kwargs)
+
+
+def plan_sigmoid(queue, J, R, ref, **kwargs):
+    assert J.ctype == 'float'
+    assert R.ctype == J.ctype
+
+    textconf = dict(type=J.ctype)
+    decs = "const ${type} c0 = 0, c1 = 1, t0 = -88, t1 = 15;"
+    text = "R = J < t0 ? c0 : J > t1 ? c1/ref : c1 / (ref * (c1 + exp(-J)));"
+    # ^ constants for cutoffs from Theano
+
+    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    cl_name = "cl_sigmoid"
+    return _plan_template(
+        queue, cl_name, text, declares=decs,
+        inputs=dict(J=J), outputs=dict(R=R), parameters=dict(ref=ref),
+        **kwargs)
+
+
 def _plan_template(queue, name, core_text, declares="", tag=None,
                    blockify=True, inputs={}, outputs={}, parameters={}):
     """Template for making a plan for vector nonlinearities.
