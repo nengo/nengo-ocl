@@ -18,6 +18,21 @@ def as_ascii(string):
         return string
 
 
+def equal_strides(strides1, strides2, shape):
+    """Check whether two arrays have equal strides.
+
+    Code from https://github.com/inducer/compyte
+    """
+    if len(strides1) != len(strides2) or len(strides2) != len(shape):
+        return False
+
+    for s, st1, st2 in zip(shape, strides1, strides2):
+        if s != 1 and st1 != st2:
+            return False
+
+    return True
+
+
 def get_closures(f):
     return OrderedDict(zip(
         f.__code__.co_freevars, (c.cell_contents for c in f.__closure__)))

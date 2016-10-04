@@ -10,6 +10,7 @@ from nengo.utils.compat import is_iterable, StringIO
 from pyopencl.array import Array, to_device
 
 from nengo_ocl.raggedarray import RaggedArray
+from nengo_ocl.utils import equal_strides
 
 # add 'ctype' property to Array (returned by 'to_device')
 Array.ctype = property(lambda self: cl.tools.dtype_to_ctype(self.dtype))
@@ -254,7 +255,8 @@ class CLRaggedArray(object):
                     array[...] = new_value
 
                 array.shape = clarray.shape  # reshape to avoid warning
-                assert array.strides == clarray.strides
+                assert equal_strides(
+                    array.strides, clarray.strides, clarray.shape)
                 clarray.set(array)
             else:
                 # discontiguous

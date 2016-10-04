@@ -236,11 +236,13 @@ class ViewBuilder(object):
 
         assert obj.size and obj.ndim <= 2
         idx = self.sidx[obj.base]
+        shape0 = obj.shape[0] if obj.ndim > 0 else 1
+        shape1 = obj.shape[1] if obj.ndim > 1 else 1
         self.starts.append(self.rarray.starts[idx] + obj.elemoffset)
-        self.shape0s.append(obj.shape[0] if obj.ndim > 0 else 1)
-        self.shape1s.append(obj.shape[1] if obj.ndim > 1 else 1)
-        self.stride0s.append(obj.elemstrides[0] if obj.ndim > 0 else 1)
-        self.stride1s.append(obj.elemstrides[1] if obj.ndim > 1 else 1)
+        self.shape0s.append(shape0)
+        self.shape1s.append(shape1)
+        self.stride0s.append(obj.elemstrides[0] if shape0 > 1 else 1)
+        self.stride1s.append(obj.elemstrides[1] if shape1 > 1 else 1)
         self.names.append(getattr(obj, 'name', ''))
         self.sidx[obj] = len(self.sidx)
 
