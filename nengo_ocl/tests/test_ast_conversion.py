@@ -11,8 +11,6 @@ import nengo_ocl
 import nengo_ocl.ast_conversion as ast_conversion
 from nengo_ocl.ast_conversion import OCL_Function
 
-logger = logging.getLogger(__name__)
-
 
 @pytest.fixture(scope="session")
 def OclOnlySimulator(request, ctx):
@@ -197,14 +195,14 @@ def _test_conn(OclOnlySimulator, fn, size_in, dist_in=None, n=1):
 
     # compare output
     z = np.array([sim.data[p][-1] for p in probes])
-    assert np.allclose(z, y)
+    assert np.allclose(z, y, atol=2e-7)
 
 
 def test_sin_conn(OclOnlySimulator):
     _test_conn(OclOnlySimulator, np.sin, 1, n=10)
 
 
-def test_functions(OclOnlySimulator, n_points=10):
+def test_functions(OclOnlySimulator, logger, n_points=10):
     """Test the function maps in ast_converter.py"""
     # TODO: split this into one test per function using py.test utilities
 
@@ -279,7 +277,7 @@ def test_functions(OclOnlySimulator, n_points=10):
                         "see logger warnings for details")
 
 
-def test_vector_functions(OclOnlySimulator):
+def test_vector_functions(OclOnlySimulator, logger):
     d = 5
     boolean = [any, all, np.any, np.all]
     funcs = ast_conversion.vector_funcs.keys()

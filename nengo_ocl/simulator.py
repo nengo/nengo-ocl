@@ -605,7 +605,7 @@ class Simulator(nengo.Simulator):
     def _plan_fn_in_ocl(self, fn, tt, xx, yy, fn_name):
         signal_size = lambda sig: sig.size if sig is not None else None
         vector_dims = lambda shape, dim: len(shape) == 1 and shape[0] == dim
-        unit_stride = lambda es: len(es) == 1 and es[0] == 1
+        unit_stride = lambda s, es: len(es) == 1 and (s[0] == 1 or es[0] == 1)
 
         t_in = tt[0] is not None
         x_in = xx[0] is not None
@@ -619,10 +619,10 @@ class Simulator(nengo.Simulator):
         # for indexing errors)
         if x_in:
             assert all(vector_dims(x.shape, x_dim) for x in xx)
-            assert all(unit_stride(x.elemstrides) for x in xx)
+            assert all(unit_stride(x.shape, x.elemstrides) for x in xx)
 
         assert all(vector_dims(y.shape, y_dim) for y in yy)
-        assert all(unit_stride(y.elemstrides) for y in yy)
+        assert all(unit_stride(y.shape, y.elemstrides) for y in yy)
 
         # try to get OCL code
         in_dims = ([1] if t_in else []) + ([x_dim] if x_in else [])

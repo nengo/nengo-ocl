@@ -4,7 +4,7 @@ from nengo.utils.testing import allclose
 import pyopencl as cl
 import pytest
 
-from nengo.conftest import plt, rng  # noqa: F401
+from nengo.conftest import logger, plt, rng  # noqa: F401
 
 
 @pytest.fixture(scope="session")
