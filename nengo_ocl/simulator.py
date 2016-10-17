@@ -299,10 +299,6 @@ class Simulator(nengo.Simulator):
     def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
                  n_prealloc_probes=32, profiling=None, if_python_code='none',
                  planner=greedy_planner):
-        # --- create these first since they are used in __del__
-        self.closed = False
-        self.model = None
-
         # --- check version
         if nengo.version.version_info in bad_nengo_versions:
             raise ValueError(
@@ -314,6 +310,10 @@ class Simulator(nengo.Simulator):
                           "with your `nengo` version (%s). The latest fully "
                           "supported version is %s" % (
                               nengo.__version__, latest_nengo_version))
+
+        # --- create these first since they are used in __del__
+        self.closed = False
+        self.model = None
 
         # --- arguments/attributes
         if context is None and Simulator.some_context is None:
