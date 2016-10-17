@@ -137,3 +137,16 @@ The Intel SDK for OpenCL is no longer available. Intel OpenCL drivers
 can be found `on Intel's website <https://software.intel.com/en-us/articles/opencl-drivers>`_.
 See `the PyOpenCL wiki <http://wiki.tiker.net/OpenCLHowTo#Installing_the_Intel_CPU_ICD>`_
 for instructions.
+
+Running Tests
+=============
+
+From the ``nengo_ocl`` source directory, run:
+
+.. code-block:: bash
+
+    py.test nengo_ocl/tests --pyargs nengo -v
+
+This will run the tests using the default context. If you wish to use another
+context, configure it with the ``PYOPENCL_CTX`` environment variable
+(run the Python command ``pyopencl.create_some_context()`` for more info).
