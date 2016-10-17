@@ -20,10 +20,12 @@ import nengo_ocl
 if sys.argv[1] == 'ref':
     sim_name = 'ref'
     sim_class = nengo.Simulator
+    sim_kwargs = {}
 elif sys.argv[1] == 'ocl':
     ctx = cl.create_some_context()
     sim_name = ctx.devices[0].name
     sim_class = nengo_ocl.Simulator
+    sim_kwargs = dict(context=ctx)
 else:
     raise Exception('unknown sim', sys.argv[1])
 
@@ -72,7 +74,7 @@ for i, dim in enumerate(dims):
         t_start = time.time()
 
         # -- build
-        sim = sim_class(model)
+        sim = sim_class(model, **sim_kwargs)
         t_sim = time.time()
 
         # -- warmup
