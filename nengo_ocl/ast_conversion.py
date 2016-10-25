@@ -26,7 +26,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-from nengo.utils.compat import is_iterable, range
+from nengo.utils.compat import is_iterable, is_number, range
 
 
 def is_symbolic(x):
@@ -247,11 +247,20 @@ vector_funcs = {
     np.sum: _sum_func,
 }
 
+vector_attr = {
+    'all': _all_func,
+    'any': _any_func,
+    'max': _max_func,
+    'min': _min_func,
+    'mean': lambda x: BinExp(_sum_func(x), '/', _len_func(x)),
+    'prod': _prod_func,
+    'sum': _sum_func,
+}
+
 OUTPUT_NAME = "OUTPUT__"
 
 
 class Expression(object):
-
     """Represents a numerical expression"""
 
     def _init_expr(self, expr):
@@ -271,7 +280,6 @@ class Expression(object):
 
 
 class VarExp(Expression):
-
     def __init__(self, name):
         self.name = name
 
@@ -280,7 +288,6 @@ class VarExp(Expression):
 
 
 class NumExp(Expression):
-
     def __init__(self, value):
         self.value = value
 
@@ -296,7 +303,6 @@ class NumExp(Expression):
 
 
 class UnaryExp(Expression):
-
     def __init__(self, op, right):
         assert isinstance(right, Expression)
         self.op, self.right = op, right
@@ -328,7 +334,6 @@ class UnaryExp(Expression):
 
 
 class BinExp(Expression):
-
     def __init__(self, left, op, right):
         assert isinstance(right, Expression) and isinstance(left, Expression)
         self.left, self.op, self.right = left, op, right
@@ -376,7 +381,6 @@ class BinExp(Expression):
 
 
 class FuncExp(Expression):
-
     def __init__(self, fn, *args):
         self.fn = fn
         self.args = args
@@ -426,7 +430,6 @@ class FuncExp(Expression):
 
 
 class IfExp(Expression):
-
     def __init__(self, cond, true, false):
         self.cond, self.true, self.false = cond, true, false
 
@@ -444,8 +447,7 @@ class IfExp(Expression):
 
 
 class Function_Finder(ast.NodeVisitor):
-    # Finds a FunctionDef or Lambda in an Abstract Syntax Tree
-
+    """Finds a FunctionDef or Lambda in an Abstract Syntax Tree"""
     def __init__(self):
         self.fn_node = None
 
@@ -462,7 +464,6 @@ class Function_Finder(ast.NodeVisitor):
 
 
 class OCL_Translator(ast.NodeVisitor):
-
     MAX_VECTOR_LENGTH = 25
     builtins = __builtin__.__dict__
 
@@ -518,7 +519,7 @@ class OCL_Translator(ast.NodeVisitor):
                 "got " + str(type(function_def)))
 
     def _parse_var(self, var):
-        if isinstance(var, (float, int)):
+        if is_number(var):
             return NumExp(var)
         elif isinstance(var, str):
             return '"%s"' % var
@@ -527,14 +528,13 @@ class OCL_Translator(ast.NodeVisitor):
                 var = var.tolist()
             self._check_vector_length(len(var))
             return [self._parse_var(v) for v in var]
-        elif isinstance(var, slice):
-            return var
         else:
-            raise NotImplementedError(
-                "Python objects of type %s are not supported" %
-                var.__class__.__name__)
+            return var
 
     def visit(self, node):
+        if node is None:
+            return None
+
         res = ast.NodeVisitor.visit(self, node)
         return res
 
@@ -554,6 +554,8 @@ class OCL_Translator(ast.NodeVisitor):
             return self._parse_var(self.closures[name])
         elif name in self.globals:
             return self._parse_var(self.globals[name])
+        elif name in self.builtins:
+            return self._parse_var(self.builtins[name])
         else:
             raise ValueError("Unrecognized name '%s'" % name)
 
@@ -563,29 +565,29 @@ class OCL_Translator(ast.NodeVisitor):
     def visit_Str(self, expr):
         return self._parse_var(expr.s)
 
-    def _visit_index(self, ast_num):
-        if ast_num is None:
+    def _int_index(self, index):
+        if index is None:
             return None
-        else:
-            index = self.visit(ast_num)
-            if isinstance(index, slice):
-                # happens if index is a name referring to a slice
-                return index
 
-            assert isinstance(index, NumExp), "Index must be a number"
-            assert isinstance(index.value, int), "Index must be an integer"
-            return index.value
+        assert isinstance(index, NumExp), "Index must be a number"
+        assert isinstance(index.value, int), "Index must be an integer"
+        return index.value
 
     def visit_Index(self, expr):
-        return self._visit_index(expr.value)
+        index = self.visit(expr.value)
+        if isinstance(index, slice):
+            # happens if index is a name referring to a slice
+            return index
+
+        return self._int_index(index)
 
     def visit_Ellipsis(self, expr):
         raise NotImplementedError("Ellipsis")
 
     def visit_Slice(self, expr):
-        lower = self._visit_index(expr.lower)
-        upper = self._visit_index(expr.upper)
-        step = self._visit_index(expr.step)
+        lower = self._int_index(self.visit(expr.lower))
+        upper = self._int_index(self.visit(expr.upper))
+        step = self._int_index(self.visit(expr.step))
         return slice(lower, upper, step)
 
     def visit_ExtSlice(self, expr):
@@ -639,24 +641,11 @@ class OCL_Translator(ast.NodeVisitor):
         return self._visit_binary_op(
             expr.ops[0], expr.left, expr.comparators[0])
 
-    def _get_handle(self, expr):
-        """Used to get handle on attribute or function"""
-        if isinstance(expr, ast.Name):
-            if expr.id in self.closures:
-                return self.closures[expr.id]
-            elif expr.id in self.globals:
-                return self.globals[expr.id]
-            elif expr.id in self.builtins:
-                return self.builtins[expr.id]
-            else:
-                raise ValueError("Name '%s' could not be resolved" % expr.id)
-        else:
-            return getattr(self._get_handle(expr.value), expr.attr)
-
     def visit_Call(self, expr):
-        assert not hasattr(expr, 'kwargs') or expr.kwargs is None, (
+        assert not expr.keywords and expr.kwargs is None, (
             "kwargs not implemented")
-        handle = self._get_handle(expr.func)
+        handle = self.visit(expr.func)
+        assert callable(handle)
         args = [self.visit(arg) for arg in expr.args]
         if not any(is_symbolic(arg) for arg in args):
             return handle(*args)
@@ -668,8 +657,14 @@ class OCL_Translator(ast.NodeVisitor):
             return value
 
     def visit_Attribute(self, expr):
-        handle = self._get_handle(expr)
-        return self._parse_var(handle)
+        value = self.visit(expr.value)
+        if not is_symbolic(value):
+            return self._parse_var(getattr(value, expr.attr))
+        elif isinstance(value, list) and expr.attr in vector_attr:
+            return lambda: vector_attr[expr.attr](value)
+        else:
+            raise ValueError("Cannot get %r attribute on an expression"
+                             % expr.attr)
 
     def visit_List(self, expr):
         return [self.visit(elt) for elt in expr.elts]
@@ -922,7 +917,7 @@ if __name__ == '__main__':
     multiplier = 3842.012
 
     def square(x):
-        print("wow: %f, %d, %s" % (0.3, 9, "hello"))
+        print("wow: %f, %d, %s" % (x[0], 9, "hello"))
 
         if 1 + (2 == 2):
             y = 2. * x
@@ -1036,3 +1031,5 @@ if __name__ == '__main__':
     ocl_f(lambda x: x[:len(x)/2], in_dims=4)
     ocl_f(lambda x: np.sum(x), in_dims=3)
     ocl_f(lambda x: np.mean(x), in_dims=3)
+    ocl_f(lambda x: x.min(), in_dims=4)
+    ocl_f(lambda x: np.sqrt((x**2).mean()), in_dims=5)
