@@ -212,6 +212,10 @@ def _any_func(x):
     return _recurse_binexp('||', x)
 
 
+def _len_func(x):
+    return NumExp(len(x))
+
+
 def _max_func(x):
     return FuncExp('max', x[0], _max_func(x[1:])) if len(x) > 1 else x[0]
 
@@ -230,6 +234,7 @@ def _sum_func(x):
 vector_funcs = {
     all: _all_func,
     any: _any_func,
+    len: _len_func,
     max: _max_func,
     min: _min_func,
     sum: _sum_func,
@@ -237,6 +242,7 @@ vector_funcs = {
     np.any: _any_func,
     np.max: _max_func,
     np.min: _min_func,
+    np.mean: lambda x: BinExp(_sum_func(x), '/', _len_func(x)),
     np.prod: _prod_func,
     np.sum: _sum_func,
 }
@@ -655,7 +661,7 @@ class OCL_Translator(ast.NodeVisitor):
         if not any(is_symbolic(arg) for arg in args):
             return handle(*args)
         elif handle in vector_funcs:
-            return FuncExp(handle, *args)
+            return vector_funcs[handle](*args)
         else:
             value = self._broadcast_args(
                 lambda *args: FuncExp(handle, *args), args)
@@ -881,12 +887,11 @@ class OCL_Function(object):
 
 
 if __name__ == '__main__':
-
     def ocl_f(*args, **kwargs):
         ocl_fn = OCL_Function(*args, **kwargs)
         print(ocl_fn.init)
         print(ocl_fn.code)
-        print('\n')
+        print('')
         return ocl_fn
 
     print('*' * 5 + 'Raw' + '*' * 50)
@@ -1026,3 +1031,8 @@ if __name__ == '__main__':
     def function(y):
         return np.sin(np.pi * y) + np.e
     ocl_f(function, in_dims=1)
+
+    print('*' * 5 + 'Vector functions' + '*' * 50)
+    ocl_f(lambda x: x[:len(x)/2], in_dims=4)
+    ocl_f(lambda x: np.sum(x), in_dims=3)
+    ocl_f(lambda x: np.mean(x), in_dims=3)
