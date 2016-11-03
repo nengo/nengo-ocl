@@ -326,7 +326,7 @@ class Simulator(nengo.Simulator):
         self.profiling = profiling
         self.queue = cl.CommandQueue(
             self.context,
-            properties=PROFILING_ENABLE if self.profiling else None)
+            properties=PROFILING_ENABLE if self.profiling else 0)
 
         self.n_prealloc_probes = n_prealloc_probes
 
