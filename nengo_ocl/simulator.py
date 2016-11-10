@@ -955,7 +955,13 @@ class Simulator(nengo.Simulator):
             bufpositions = self._cl_probe_plan.cl_bufpositions.get()
             assert np.all(bufpositions == 0)
 
-        with ProgressTracker(N, progress_bar) as progress:
+        try:
+            # Task required since Nengo 2.3.0
+            progress = ProgressTracker(N, progress_bar, "Simulating")
+        except TypeError:
+            progress = ProgressTracker(N, progress_bar)
+
+        with progress:
             # -- we will go through N steps of the simulator
             #    in groups of up to B at a time, draining
             #    the probe buffers after each group of B
