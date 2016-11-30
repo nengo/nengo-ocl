@@ -1,6 +1,6 @@
-===============
+***************
 Release History
-===============
+***************
 
 .. Changelog entries should follow this format:
 
@@ -18,9 +18,29 @@ Release History
    - Bugfixes
    - Documentation
 
-1.0.1 (unreleased)
-==================
+1.1.0 (November 30, 2016)
+=========================
 
+**Features**
+
+- Added support for ``RectifiedLinear`` and ``Sigmoid`` neuron types.
+- Added support for arbitrary ``Process`` subclasses. Unlike the processes
+  that are explicitly supported like ``WhiteSignal``, these processes
+  may not fully utilize the OpenCL device.
+- Added support for applying synaptic filters to matrices,
+  which is commonly done when probing connection weights.
+
+**Improvements**
+
+- Supports all Nengo versions from 2.1.2 to 2.3.0.
+- The ``LIF`` model is now more accurate, and matches the implementation
+  in Nengo (see `Nengo#975 <https://github.com/nengo/nengo/pull/975>`_).
+- Several operators have been optimized and should now run faster.
+
+**Bugfixes**
+
+- Fixed compatibility issues with Python 3,
+  and certain versions of NumPy and Nengo.
 
 1.0.0 (June 6, 2016)
 ====================
