@@ -13,12 +13,12 @@ import nengo
 import nengo.version
 import nengo.utils.numpy as npext
 from nengo.cache import get_default_decoder_cache
-from nengo.exceptions import SimulatorClosed
+from nengo.exceptions import ReadonlyError, SimulatorClosed
 from nengo.simulator import ProbeDict
 from nengo.builder.builder import Model
 from nengo.builder.operator import Operator, Copy, DotInc, Reset
 from nengo.builder.signal import Signal, SignalDict
-from nengo.utils.compat import iteritems, StringIO
+from nengo.utils.compat import iteritems, StringIO, range, ResourceWarning
 from nengo.utils.progress import ProgressTracker
 from nengo.utils.stdlib import groupby
 
@@ -264,7 +264,7 @@ class ViewBuilder(object):
             self.append_view(view)
 
 
-class Simulator(nengo.Simulator):
+class Simulator(object):
     """Simulator for running Nengo models in OpenCL.
 
     Parameters
@@ -290,7 +290,41 @@ class Simulator(nengo.Simulator):
 
     # --- Store the result of create_some_context so we don't recreate it
     some_context = None
-    unsupported = []
+
+    # 'unsupported' defines features unsupported by a simulator.
+    # The format is a list of tuples of the form `(test, reason)` with `test`
+    # being a string with wildcards (*, ?, [abc], [!abc]) matched against Nengo
+    # test paths and names, and `reason` is a string describing why the feature
+    # is not supported by the backend. For example:
+    #     unsupported = [('test_pes*', 'PES rule not implemented')]
+    # would skip all test whose names start with 'test_pes'.
+    unsupported = [
+        # neuron types
+        ('nengo/tests/test_neurons.py:test_izhikevich',
+         "Izhikevich neurons not implemented"),
+        ('nengo/tests/test_neurons.py:test_lif_min_voltage*',
+         "Min voltage not implemented"),
+
+        # nodes
+        ('nengo/tests/test_node.py:test_none',
+         "No error if nodes output None"),
+
+        # processes
+        ('nengo/tests/test_processes.py:test_brownnoise',
+         "Filtered noise processes not yet implemented"),
+        ('nengo/tests/test_ensemble.py:test_noise_copies_ok*',
+         "Filtered noise processes not yet implemented"),
+        ('nengo/tests/test_simulator.py:test_noise_copies_ok',
+         "Filtered noise processes not yet implemented"),
+
+        # synapses
+        ('nengo/tests/test_synapses.py:test_triangle',
+         "Only linear filters implemented"),
+
+        # specific to nengo.Simulator (functionality does not need testing)
+        ('nengo/tests/test_builder.py:test_commonsig_readonly',
+         "Specific to nengo.Simulator"),
+    ]
 
     def Array(self, val, dtype=np.float32):
         return to_device(self.queue, np.asarray(val, dtype=dtype))
@@ -441,6 +475,252 @@ class Simulator(nengo.Simulator):
             seeds = [self.rng.randint(npext.maxint) if s is None else s
                      for s in seeds]
             init_rngs(self.queue, rngs, seeds)
+
+    def __del__(self):
+        """Raise a ResourceWarning if we are deallocated while open."""
+        if not self.closed:
+            warnings.warn(
+                "Simulator with model=%s was deallocated while open. Please "
+                "close simulators manually to ensure resources are properly "
+                "freed." % self.model, ResourceWarning)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def __getitem__(self, item):
+        """
+        Return internally shaped signals, which are always 2d
+        """
+        return self.all_data[self.sidx[item]]
+
+    @property
+    def dt(self):
+        """(float) The time step of the simulator."""
+        return self.model.dt
+
+    @dt.setter
+    def dt(self, dummy):
+        raise ReadonlyError(attr='dt', obj=self)
+
+    @property
+    def n_steps(self):
+        """(int) The current time step of the simulator."""
+        return self._n_steps
+
+    @property
+    def time(self):
+        """(float) The current time of the simulator."""
+        return self._time
+
+    @property
+    def signals(self):
+        """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)
+        """
+        class Accessor(object):
+
+            def __iter__(_):
+                return iter(self.all_bases)
+
+            def __getitem__(_, item):
+                raw = self.all_data[self.sidx[item]]
+                if item.ndim == 0:
+                    return raw[0, 0]
+                elif item.ndim == 1:
+                    return raw.ravel()
+                elif item.ndim == 2:
+                    return raw
+                else:
+                    raise NotImplementedError()
+
+            def __setitem__(_, item, val):
+                incoming = np.asarray(val)
+                if item.ndim == 0:
+                    assert incoming.size == 1
+                    self.all_data[self.sidx[item]] = incoming
+                elif item.ndim == 1:
+                    assert (item.size,) == incoming.shape
+                    self.all_data[self.sidx[item]] = incoming[:, None]
+                elif item.ndim == 2:
+                    assert item.shape == incoming.shape
+                    self.all_data[self.sidx[item]] = incoming
+                else:
+                    raise NotImplementedError()
+
+            def __str__(self_):
+                sio = StringIO()
+                for k in self_:
+                    print(k, self_[k], file=sio)
+                return sio.getvalue()
+
+        return Accessor()
+
+    # --- Simulation functions (see ``nengo.Simulator`` for interface)
+    def close(self):
+        self.closed = True
+        self.context = None
+        self.queue = None
+        self.all_data = None
+        self._plan = []
+        self._plans = None
+        self._raggedarrays_to_reset = None
+        self._cl_rngs = None
+        self._cl_probe_plan = None
+
+    def _probe(self):
+        """Copy all probed signals to buffers"""
+        self._probe_step_time()
+
+        plan = self._cl_probe_plan
+        if plan is None:
+            return  # nothing to probe
+
+        self.queue.finish()
+        bufpositions = plan.cl_bufpositions.get()
+        for i, probe in enumerate(self.model.probes):
+            shape = self.model.sig[probe]['in'].shape
+            n_buffered = bufpositions[i]
+            if n_buffered:
+                # XXX: this syntax retrieves *ALL* of Y from the device
+                #      because the :n_buffered only works on the ndarray
+                #      *after* it has been transferred.
+                raw = plan.Y[i][:n_buffered]
+                shaped = raw.reshape((n_buffered,) + shape)
+                self._probe_outputs[probe].extend(shaped)
+        plan.cl_bufpositions.fill(0)
+        self.queue.finish()
+
+    def _probe_step_time(self):
+        self._n_steps = self.signals[self.model.step].copy()
+        self._time = self.signals[self.model.time].copy()
+
+    def reset(self, seed=None):
+        if self.closed:
+            raise SimulatorClosed("Cannot reset closed Simulator.")
+
+        if seed is not None:
+            raise NotImplementedError("Seed changing not implemented")
+
+        # reset signals
+        for base in self.all_bases:
+            # TODO: copy all data on at once
+            if not base.readonly:
+                self.all_data[self.sidx[base]] = base.initial_value
+
+        for clra, ra in iteritems(self._raggedarrays_to_reset):
+            # TODO: copy all data on at once
+            for i in range(len(clra)):
+                clra[i] = ra[i]
+
+        # clear probe data
+        if self._cl_probe_plan is not None:
+            self._cl_probe_plan.cl_bufpositions.fill(0)
+
+            for probe in self.model.probes:
+                del self._probe_outputs[probe][:]
+
+        self._reset_rng()
+        self._reset_cl_rngs()
+        self._probe_step_time()
+
+    def run(self, time_in_seconds, progress_bar=None):
+        """Simulate for the given length of time.
+
+        Parameters
+        ----------
+        time_in_seconds : float
+            Amount of time to run the simulation for.
+        progress_bar : bool or `.ProgressBar` or `.ProgressUpdater`, optional \
+                       (Default: True)
+            Progress bar for displaying the progress of the simulation run.
+
+            If True, the default progress bar will be used.
+            If False, the progress bar will be disabled.
+            For more control over the progress bar, pass in a `.ProgressBar`
+            or `.ProgressUpdater` instance.
+        """
+        steps = int(np.round(float(time_in_seconds) / self.dt))
+        logger.info("Running %s for %f seconds, or %d steps",
+                    self.model.label, time_in_seconds, steps)
+        self.run_steps(steps, progress_bar=progress_bar)
+
+    def run_steps(self, N, progress_bar=True):
+        if self.closed:
+            raise SimulatorClosed("Simulator cannot run because it is closed.")
+
+        if self.n_steps + N >= 2**24:
+            # since n_steps is float32, point at which `n_steps == n_steps + 1`
+            raise ValueError("Cannot handle more than 2**24 steps")
+
+        if self._cl_probe_plan is not None:
+            # -- precondition: the probe buffers have been drained
+            bufpositions = self._cl_probe_plan.cl_bufpositions.get()
+            assert np.all(bufpositions == 0)
+
+        try:
+            progress = ProgressTracker(N, progress_bar, "Simulating")
+        except TypeError:
+            progress = ProgressTracker(N, progress_bar)
+
+        with progress:
+            # -- we will go through N steps of the simulator
+            #    in groups of up to B at a time, draining
+            #    the probe buffers after each group of B
+            while N:
+                B = min(N, self._max_steps_between_probes)
+                self._plans.call_n_times(B)
+                self._probe()
+                N -= B
+                progress.step(n=B)
+
+        if self.profiling > 1:
+            self.print_profiling()
+
+    def step(self):
+        return self.run_steps(1, progress_bar=False)
+
+    def trange(self, dt=None):
+        """Create a vector of times matching probed data.
+
+        Note that the range does not start at 0 as one might expect, but at
+        the first timestep (i.e., ``dt``).
+
+        Parameters
+        ----------
+        dt : float, optional (Default: None)
+            The sampling period of the probe to create a range for.
+            If None, the simulator's ``dt`` will be used.
+        """
+        dt = self.dt if dt is None else dt
+        n_steps = int(self.n_steps * (self.dt / dt))
+        return dt * np.arange(1, n_steps + 1)
+
+    # --- Planning
+    def plan_probes(self):
+        if len(self.model.probes) == 0:
+            self._max_steps_between_probes = self.n_prealloc_probes
+            self._cl_probe_plan = None
+            return []
+        else:
+            n_prealloc = self.n_prealloc_probes
+
+            probes = self.model.probes
+            periods = [1 if p.sample_every is None else
+                       p.sample_every / self.dt
+                       for p in probes]
+
+            X = self.all_data[
+                [self.sidx[self.model.sig[p]['in']] for p in probes]]
+            Y = self.RaggedArray(
+                [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
+                 for p in probes], dtype=np.float32)
+
+            cl_plan = plan_probes(self.queue, periods, X, Y)
+            self._max_steps_between_probes = n_prealloc * int(min(periods))
+            self._cl_probe_plan = cl_plan
+            return [cl_plan]
 
     def plan_op_group(self, op_type, ops):
         return getattr(self, 'plan_' + op_type.__name__)(ops)
@@ -892,177 +1172,6 @@ class Simulator(nengo.Simulator):
         return [plan_voja(self.queue, pre, post, encoders, delta,
                           learning_signal, scale, alpha)]
 
-    def plan_probes(self):
-        if len(self.model.probes) == 0:
-            self._max_steps_between_probes = self.n_prealloc_probes
-            self._cl_probe_plan = None
-            return []
-        else:
-            n_prealloc = self.n_prealloc_probes
-
-            probes = self.model.probes
-            periods = [1 if p.sample_every is None else
-                       p.sample_every / self.dt
-                       for p in probes]
-
-            X = self.all_data[
-                [self.sidx[self.model.sig[p]['in']] for p in probes]]
-            Y = self.RaggedArray(
-                [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
-                 for p in probes], dtype=np.float32)
-
-            cl_plan = plan_probes(self.queue, periods, X, Y)
-            self._max_steps_between_probes = n_prealloc * int(min(periods))
-            self._cl_probe_plan = cl_plan
-            return [cl_plan]
-
-    def _probe(self):
-        """Copy all probed signals to buffers"""
-        self._probe_step_time()
-
-        plan = self._cl_probe_plan
-        if plan is None:
-            return  # nothing to probe
-
-        self.queue.finish()
-        bufpositions = plan.cl_bufpositions.get()
-        for i, probe in enumerate(self.model.probes):
-            shape = self.model.sig[probe]['in'].shape
-            n_buffered = bufpositions[i]
-            if n_buffered:
-                # XXX: this syntax retrieves *ALL* of Y from the device
-                #      because the :n_buffered only works on the ndarray
-                #      *after* it has been transferred.
-                raw = plan.Y[i][:n_buffered]
-                shaped = raw.reshape((n_buffered,) + shape)
-                self._probe_outputs[probe].extend(shaped)
-        plan.cl_bufpositions.fill(0)
-        self.queue.finish()
-
-    def step(self):
-        return self.run_steps(1, progress_bar=False)
-
-    def run_steps(self, N, progress_bar=True):
-        if self.closed:
-            raise SimulatorClosed("Simulator cannot run because it is closed.")
-
-        if self.n_steps + N >= 2**24:
-            # since n_steps is float32, point at which `n_steps == n_steps + 1`
-            raise ValueError("Cannot handle more than 2**24 steps")
-
-        if self._cl_probe_plan is not None:
-            # -- precondition: the probe buffers have been drained
-            bufpositions = self._cl_probe_plan.cl_bufpositions.get()
-            assert np.all(bufpositions == 0)
-
-        try:
-            # Task required since Nengo 2.3.0
-            progress = ProgressTracker(N, progress_bar, "Simulating")
-        except TypeError:
-            progress = ProgressTracker(N, progress_bar)
-
-        with progress:
-            # -- we will go through N steps of the simulator
-            #    in groups of up to B at a time, draining
-            #    the probe buffers after each group of B
-            while N:
-                B = min(N, self._max_steps_between_probes)
-                self._plans.call_n_times(B)
-                self._probe()
-                N -= B
-                progress.step(n=B)
-
-        if self.profiling > 1:
-            self.print_profiling()
-
-    def reset(self, seed=None):
-        if self.closed:
-            raise SimulatorClosed("Cannot reset closed Simulator.")
-
-        if seed is not None:
-            raise NotImplementedError("Seed changing not implemented")
-
-        # reset signals
-        for base in self.all_bases:
-            # TODO: copy all data on at once
-            if not base.readonly:
-                self.all_data[self.sidx[base]] = base.initial_value
-
-        for clra, ra in iteritems(self._raggedarrays_to_reset):
-            # TODO: copy all data on at once
-            for i in range(len(clra)):
-                clra[i] = ra[i]
-
-        # clear probe data
-        if self._cl_probe_plan is not None:
-            self._cl_probe_plan.cl_bufpositions.fill(0)
-
-            for probe in self.model.probes:
-                del self._probe_outputs[probe][:]
-
-        self._reset_rng()
-        self._reset_cl_rngs()
-        self._probe_step_time()
-
-    def close(self):
-        self.closed = True
-        self.context = None
-        self.queue = None
-        self.all_data = None
-        self._plan = []
-        self._plans = None
-        self._raggedarrays_to_reset = None
-        self._cl_rngs = None
-        self._cl_probe_plan = None
-
-    def __getitem__(self, item):
-        """
-        Return internally shaped signals, which are always 2d
-        """
-        return self.all_data[self.sidx[item]]
-
-    @property
-    def signals(self):
-        """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)
-        """
-        class Accessor(object):
-
-            def __iter__(_):
-                return iter(self.all_bases)
-
-            def __getitem__(_, item):
-                raw = self.all_data[self.sidx[item]]
-                if item.ndim == 0:
-                    return raw[0, 0]
-                elif item.ndim == 1:
-                    return raw.ravel()
-                elif item.ndim == 2:
-                    return raw
-                else:
-                    raise NotImplementedError()
-
-            def __setitem__(_, item, val):
-                incoming = np.asarray(val)
-                if item.ndim == 0:
-                    assert incoming.size == 1
-                    self.all_data[self.sidx[item]] = incoming
-                elif item.ndim == 1:
-                    assert (item.size,) == incoming.shape
-                    self.all_data[self.sidx[item]] = incoming[:, None]
-                elif item.ndim == 2:
-                    assert item.shape == incoming.shape
-                    self.all_data[self.sidx[item]] = incoming
-                else:
-                    raise NotImplementedError()
-
-            def __str__(self_):
-                sio = StringIO()
-                for k in self_:
-                    print(k, self_[k], file=sio)
-                return sio.getvalue()
-
-        return Accessor()
-
     def print_plans(self):
         print(" Plans ".center(80, '-'))
         for plan in self._plans.plans:
@@ -1127,32 +1236,3 @@ class Simulator(nengo.Simulator):
             print('\n')
             for r in unknowns:
                 print("%s %s" % r)
-
-
-Simulator.unsupported.extend([
-    # neuron types
-    ('nengo/tests/test_neurons.py:test_izhikevich',
-     "Izhikevich neurons not implemented"),
-    ('nengo/tests/test_neurons.py:test_lif_min_voltage*',
-     "Min voltage not implemented"),
-
-    # nodes
-    ('nengo/tests/test_node.py:test_none',
-     "No error if nodes output None"),
-
-    # processes
-    ('nengo/tests/test_processes.py:test_brownnoise',
-     "Filtered noise processes not yet implemented"),
-    ('nengo/tests/test_ensemble.py:test_noise_copies_ok*',
-     "Filtered noise processes not yet implemented"),
-    ('nengo/tests/test_simulator.py:test_noise_copies_ok',
-     "Filtered noise processes not yet implemented"),
-
-    # synapses
-    ('nengo/tests/test_synapses.py:test_triangle',
-     "Only linear filters implemented"),
-
-    # specific to nengo.Simulator (functionality does not need testing)
-    ('nengo/tests/test_builder.py:test_commonsig_readonly',
-     "Specific to nengo.Simulator"),
-])
