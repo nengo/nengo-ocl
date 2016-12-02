@@ -334,7 +334,7 @@ class Simulator(object):
 
     def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
                  n_prealloc_probes=32, profiling=None, if_python_code='none',
-                 planner=greedy_planner):
+                 planner=greedy_planner, progress_bar=True):
         # --- check version
         if nengo.version.version_info in bad_nengo_versions:
             raise ValueError(
@@ -361,15 +361,14 @@ class Simulator(object):
         self.context = Simulator.some_context if context is None else context
         self.profiling = profiling
         self.queue = cl.CommandQueue(
-            self.context,
-            properties=PROFILING_ENABLE if self.profiling else 0)
-
-        self.n_prealloc_probes = n_prealloc_probes
+            self.context, properties=PROFILING_ENABLE if self.profiling else 0)
 
         if if_python_code not in ['none', 'warn', 'error']:
             raise ValueError("%r not a valid value for `if_python_code`"
                              % if_python_code)
         self.if_python_code = if_python_code
+        self.n_prealloc_probes = n_prealloc_probes
+        self.progress_bar = progress_bar
 
         # --- Nengo build
         with Timer() as nengo_timer:
@@ -659,6 +658,8 @@ class Simulator(object):
             bufpositions = self._cl_probe_plan.cl_bufpositions.get()
             assert np.all(bufpositions == 0)
 
+        if progress_bar is None:
+            progress_bar = self.progress_bar
         try:
             progress = ProgressTracker(N, progress_bar, "Simulating")
         except TypeError:
