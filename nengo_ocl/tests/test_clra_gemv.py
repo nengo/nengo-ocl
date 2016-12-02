@@ -2,7 +2,6 @@ import logging
 import numpy as np
 import pyopencl as cl
 import pyopencl.array  # noqa: F401
-import pytest
 
 from nengo.utils.compat import range
 from nengo.utils.stdlib import Timer
