@@ -1,6 +1,6 @@
 from collections import OrderedDict
 
-from nengo.builder.operator import Operator, Copy, DotInc
+from nengo.builder.operator import Operator, DotInc
 from nengo.builder.signal import Signal
 from nengo.utils.compat import iteritems
 
@@ -35,9 +35,7 @@ class MultiDotInc(Operator):
 
     @classmethod
     def convert_to(cls, op):
-        if isinstance(op, Copy):
-            rval = cls(op.dst, op.src, beta=1, gamma=0, tag=op.tag)
-        elif isinstance(op, DotInc):
+        if isinstance(op, DotInc):
             rval = cls(op.Y, op.Y, beta=1, gamma=0, tag=op.tag)
             rval.add_AX(op.A, op.X)
         else:

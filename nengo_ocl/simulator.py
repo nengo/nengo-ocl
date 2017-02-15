@@ -621,9 +621,9 @@ class Simulator(object):
         values = self.Array([op.value for op in ops])
         return [plan_reset(self.queue, targets, values)]
 
-    def plan_SlicedCopy(self, ops):
-        copies, ops = split(ops, lambda op: (op.src_slice is Ellipsis and
-                                             op.dst_slice is Ellipsis))
+    def plan_Copy(self, ops):
+        copies, ops = split(ops, lambda op: (
+            op.src_slice is None and op.dst_slice is None))
 
         plans = []
         if copies:
@@ -635,7 +635,8 @@ class Simulator(object):
         if ops:
             A = self.all_data[[self.sidx[op.src] for op in ops]]
             B = self.all_data[[self.sidx[op.dst] for op in ops]]
-            inds = lambda ary, i: np.arange(ary.size, dtype=np.int32)[i]
+            inds = lambda ary, i: np.arange(ary.size, dtype=np.int32)[
+                Ellipsis if i is None else i]
             Ainds = self.RaggedArray(
                 [inds(op.src, op.src_slice) for op in ops])
             Binds = self.RaggedArray(
