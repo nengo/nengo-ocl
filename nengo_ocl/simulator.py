@@ -561,6 +561,11 @@ class Simulator(object):
     def plan_op_group(self, op_type, ops):
         return getattr(self, 'plan_' + op_type.__name__)(ops)
 
+    def plan_PreserveValue(self, ops):  # LEGACY
+        # This op was removed in Nengo version 2.3.1+, but remains here
+        # for compatibility with older versions of Nengo.
+        return []  # do nothing
+
     def plan_MultiDotInc(self, ops):
         constant_bs = [op for op in ops if op._float_beta is not None]
         vector_bs = [op for op in ops
@@ -618,9 +623,15 @@ class Simulator(object):
         values = self.Array([op.value for op in ops])
         return [plan_reset(self.queue, targets, values)]
 
-    def plan_Copy(self, ops):
+    def plan_SlicedCopy(self, ops):  # LEGACY
+        # This op was removed in Nengo version 2.3.1+, but remains here
+        # for compatibility with older versions of Nengo.
+        return self.plan_Copy(ops, legacy=True)
+
+    def plan_Copy(self, ops, legacy=False):
+        noslice = Ellipsis if legacy else None  # LEGACY
         copies, ops = split(ops, lambda op: (
-            op.src_slice is None and op.dst_slice is None))
+            op.src_slice is noslice and op.dst_slice is noslice))
 
         plans = []
         if copies:

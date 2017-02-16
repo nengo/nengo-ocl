@@ -1,8 +1,9 @@
 from collections import OrderedDict
 
-from nengo.builder.operator import Operator, DotInc
+from nengo.builder.operator import Operator, Copy, DotInc
 from nengo.builder.signal import Signal
 from nengo.utils.compat import iteritems
+from nengo.version import version_info as nengo_version
 
 
 class MultiDotInc(Operator):
@@ -35,7 +36,9 @@ class MultiDotInc(Operator):
 
     @classmethod
     def convert_to(cls, op):
-        if isinstance(op, DotInc):
+        if nengo_version <= (2, 3, 0) and isinstance(op, Copy):  # LEGACY
+            rval = cls(op.dst, op.src, beta=1, gamma=0, tag=op.tag)
+        elif isinstance(op, DotInc):
             rval = cls(op.Y, op.Y, beta=1, gamma=0, tag=op.tag)
             rval.add_AX(op.A, op.X)
         else:

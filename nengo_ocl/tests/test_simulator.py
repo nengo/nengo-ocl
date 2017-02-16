@@ -10,7 +10,14 @@ import nengo_ocl
 from nengo_ocl.version import latest_nengo_version_info
 
 
-def test_multidotinc_compress():
+def test_multidotinc_compress(monkeypatch):
+    if nengo.version.version_info < (2, 3, 1):  # LEGACY
+        # Nengo versions <= 2.3.0 have more stringent op validation which
+        # required PreserveValue. That's been removed, so the strict
+        # validation causes this test to fail despite it working.
+        monkeypatch.setattr(
+            nengo.utils.simulator, 'validate_ops', lambda *args: None)
+
     a = Signal([0, 0])
     b = Signal([0, 0])
     A = Signal([[1, 2], [0, 1]])
