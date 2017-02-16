@@ -3,7 +3,7 @@ import pytest
 
 import nengo
 from nengo.builder import Model
-from nengo.builder.operator import DotInc, PreserveValue, Reset
+from nengo.builder.operator import DotInc, Reset
 from nengo.builder.signal import Signal
 
 import nengo_ocl
@@ -20,7 +20,7 @@ def test_multidotinc_compress():
 
     m = Model(dt=0)
     m.operators += [Reset(a), DotInc(A, x, a), DotInc(B, y, a)]
-    m.operators += [PreserveValue(b), DotInc(A, y, b), DotInc(B, x, b)]
+    m.operators += [DotInc(A, y, b), DotInc(B, x, b)]
 
     with nengo_ocl.Simulator(None, model=m) as sim:
         sim.step()

@@ -561,9 +561,6 @@ class Simulator(object):
     def plan_op_group(self, op_type, ops):
         return getattr(self, 'plan_' + op_type.__name__)(ops)
 
-    def plan_PreserveValue(self, ops):
-        return []  # do nothing
-
     def plan_MultiDotInc(self, ops):
         constant_bs = [op for op in ops if op._float_beta is not None]
         vector_bs = [op for op in ops
