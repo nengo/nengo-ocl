@@ -642,7 +642,7 @@ class OCL_Translator(ast.NodeVisitor):
             expr.ops[0], expr.left, expr.comparators[0])
 
     def visit_Call(self, expr):
-        assert not expr.keywords and expr.kwargs is None, (
+        assert not expr.keywords and getattr(expr, "kwargs", None) is None, (
             "kwargs not implemented")
         handle = self.visit(expr.func)
         assert callable(handle)
