@@ -1,3 +1,24 @@
+#!/usr/bin/env python
+"""usage: python benchmark_circonv.py (ref|ocl) d1,... [name]
+
+(ref|ocl)
+  Passing 'ref' will use the reference simulator, `nengo.Simulator`,
+  while passing 'ocl' will use `nengo_ocl.Simulator`.
+
+d1,...
+  A comma separated list of integers referring to
+  the number of dimensions in the vectors being convolved in the benchmark.
+  A typical value would be 16,32,64,128,256,512.
+
+name
+  An optional name to give to the benchmark run. The name will be
+  displayed in the legend plotted with `view_records.py`.
+  If not given, one will be automatically generated for you.
+
+Example usage:
+  python benchmark_circconv.py ref 2,4,6 "Reference simulator"
+"""
+
 from collections import OrderedDict
 import datetime
 try:
@@ -16,18 +37,22 @@ from nengo.networks.circularconvolution import circconv
 
 import nengo_ocl
 
+if len(sys.argv) not in (3, 4):
+    print(__doc__)
+    sys.exit()
 
 if sys.argv[1] == 'ref':
-    sim_name = 'ref'
+    sim_name = 'ref' if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo.Simulator
     sim_kwargs = {}
 elif sys.argv[1] == 'ocl':
     ctx = cl.create_some_context()
-    sim_name = ctx.devices[0].name
+    sim_name = ctx.devices[0].name if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo_ocl.Simulator
     sim_kwargs = dict(context=ctx)
 else:
     raise Exception('unknown sim', sys.argv[1])
+
 
 dims = map(int, sys.argv[2].split(','))
 
