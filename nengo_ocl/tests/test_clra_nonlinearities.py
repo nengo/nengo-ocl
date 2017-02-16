@@ -312,7 +312,7 @@ def test_linearfilter(ctx, n_per_kind, rng):
 
 @pytest.mark.parametrize('neuron_type', (nengo.neurons.RectifiedLinear(),
                                          nengo.neurons.Sigmoid()))
-def test_static_neurons(ctx, plt, rng, neuron_type):
+def test_static_neurons(plt, rng, neuron_type):
     with nengo.Network(seed=0) as model:
         u = nengo.Node(nengo.processes.WhiteNoise(scale=False))
         a = nengo.Ensemble(31, 1, neuron_type=neuron_type)
@@ -321,7 +321,7 @@ def test_static_neurons(ctx, plt, rng, neuron_type):
         xp = nengo.Probe(a.neurons, 'input')
         yp = nengo.Probe(a.neurons)
 
-    with nengo_ocl.Simulator(model, context=ctx) as sim:
+    with nengo_ocl.Simulator(model) as sim:
         sim.run(1.0)
 
     x = sim.data[xp].ravel()
