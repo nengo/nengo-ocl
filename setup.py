@@ -5,10 +5,12 @@ import os
 import sys
 
 try:
-    from setuptools import setup
+    from setuptools import find_packages, setup
 except ImportError:
-    from ez_setup import use_setuptools
-    use_setuptools()
+    raise ImportError(
+        "'setuptools' is required but not installed. To install it, "
+        "follow the instructions at "
+        "https://pip.pypa.io/en/stable/installing/#installing-with-get-pip-py")
 
 from setuptools import find_packages, setup  # noqa: F811
 
@@ -21,6 +23,7 @@ def read(*filenames, **kwargs):
         with io.open(filename, encoding=encoding) as f:
             buf.append(f.read())
     return sep.join(buf)
+
 
 root = os.path.dirname(os.path.realpath(__file__))
 version_module = imp.load_source(
