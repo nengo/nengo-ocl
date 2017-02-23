@@ -46,6 +46,7 @@ The requirements are the same as Nengo, with the additional Python packages
 ``mako`` and ``pyopencl`` (where the latter requires installing OpenCL).
 
 General:
+
 * Python 2.7+ or Python 3.3+ (same as Nengo)
 * One or more OpenCL implementations (test with e.g. PyOpenCl)
 
@@ -54,6 +55,7 @@ part of installing Nengo OCL. See below for more details
 on how to install OpenCL.
 
 Python packages:
+
 * NumPy
 * nengo
 * mako

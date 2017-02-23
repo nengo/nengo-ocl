@@ -18,10 +18,14 @@ Release History
    - Bugfixes
    - Documentation
 
-1.1.1 (unreleased)
-==================
+1.2.0 (February 23, 2017)
+=========================
 
+**Improvements**
 
+- Supports all Nengo versions from 2.1.2 to 2.3.1.
+- ``nengo_ocl.Simulator`` is no longer a subclass of ``nengo.Simulator``,
+  reducing the chances that Nengo OCL will be affected by changes in Nengo.
 
 1.1.0 (November 30, 2016)
 =========================
