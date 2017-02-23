@@ -18,6 +18,11 @@ Release History
    - Bugfixes
    - Documentation
 
+1.2.1 (unreleased)
+==================
+
+
+
 1.2.0 (February 23, 2017)
 =========================
 

@@ -8,8 +8,8 @@ a release version. Release versions are git tagged with the version.
 
 # --- version of this release
 name = "nengo_ocl"
-version_info = (1, 2, 0)  # (major, minor, patch)
-dev = None
+version_info = (1, 2, 1)  # (major, minor, patch)
+dev = 0
 version = "{v}{dev}".format(v='.'.join(str(v) for v in version_info),
                             dev=('.dev%d' % dev) if dev is not None else '')
 
