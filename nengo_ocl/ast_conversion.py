@@ -1,17 +1,18 @@
-"""
-This file holds a parser to turn simple Python functions into OCL code
+"""This module contains a parser to turn Python functions into OCL code.
 
-TODO:
-* better testing, i.e., write test cases for all the test functions
-  at the bottom of this file.
-* get binary_and, or, xor, etc. functions working (priority = low)
-  - this will require the ability to specify integer input variables
-  - or perhaps just cast inputs to these functions to integers
-* a danger right now is that there is no check that the user uses all passed
-  inputs in their function. For example, if the fn is meant to act on three
-  arguments, and the user makes a mistake in their model that passes a
-  5-vector to the function, no warning is issued. There's no obvious way to
-  deal with this better, though.
+.. todo:: Better testing, i.e., write test cases for all the test functions
+          at the bottom of this file.
+
+.. todo:: Get binary_and, or, xor, etc. functions working (priority = low)
+
+   * this will require the ability to specify integer input variables
+   * or perhaps just cast inputs to these functions to integers
+
+.. todo:: A danger right now is that there is no check that the user uses all
+   passed inputs in their function. For example, if the fn is meant to act on
+   three arguments, and the user makes a mistake in their model that passes a
+   5-vector to the function, no warning is issued. There's no obvious way to
+   deal with this better, though.
 """
 
 try:

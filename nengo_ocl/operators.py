@@ -7,7 +7,7 @@ from nengo.version import version_info as nengo_version
 
 
 class MultiDotInc(Operator):
-    """ y <- gamma + beta * y_in + \sum_i dot(A_i, x_i) """
+    """``y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)``"""
 
     def __init__(self, Y, Y_in, beta, gamma, tag=None):
         assert Y.ndim == 1

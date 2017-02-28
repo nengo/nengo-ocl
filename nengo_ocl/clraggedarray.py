@@ -20,8 +20,8 @@ Array.start = property(lambda self: self.offset / self.dtype.itemsize)
 def data_ptr(array):
     """Given an Array, get a Buffer that starts at the right offset
 
-    This fails unless `array.offset` is a multiple of
-    `queue.device.mem_base_addr_align`, which is rare, so this isn't really
+    This fails unless ``array.offset`` is a multiple of
+    ``queue.device.mem_base_addr_align``, which is rare, so this isn't really
     a good function.
     """
     if array.offset:

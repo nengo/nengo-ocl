@@ -239,16 +239,13 @@ class gemv_prog(object):
 
 
 def ref_impl(p, items):
-    """
-    Return an OpenCL function to calculate elements `items` of
-    gemv operation `p`.
+    """Return an OCL function to calculate ``items`` of gemv operation ``p``.
 
-    In this reference implementation, we create a work item
-    per output number, or more specifically, a work grid
-    of (max_y_len, len(items)).  Each work item loops over the
-    dot products and the elements within each dot product to
-    compute the output value Y[global_id(1)][global_id(0)].
-
+    In this reference implementation, we create a work item per output number,
+    or more specifically, a work grid of shape ``(max_y_len, len(items))``.
+    Each work item loops over the  dot products and the elements within
+    each dot product to compute the output value
+    ``Y[global_id(1)][global_id(0)]``.
     """
 
     if p.clra_alpha is not None:

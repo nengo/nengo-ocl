@@ -105,11 +105,11 @@ class Simulator(object):
     Parameters
     ----------
     network, dt, seed, model
-        These parameters are the same as in ``nengo.Simulator``.
-    context : pyopencl.Context (optional)
+        These parameters are the same as in `nengo.Simulator`.
+    context : `pyopencl.Context` (optional)
         OpenCL context specifying which device(s) to run on. By default, we
-        will create a context by calling ``pyopencl.create_some_context()``
-        and use this context as the default for all subsequent ``Simulator``s.
+        will create a context by calling `pyopencl.create_some_context`
+        and use this context as the default for all subsequent instances.
     n_prealloc_probes : int (optional)
         Number of timesteps to buffer when probing. Larger numbers mean less
         data transfer with the device (faster), but use more device memory.
