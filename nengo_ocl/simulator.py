@@ -662,13 +662,13 @@ class Simulator(object):
 
     def plan_SimPyFunc(self, ops):
         groups = groupby(ops, lambda op: op.fn)
+        # ^ NOTE: Groups functions based on equality `==`, not identity `is`.
+        #   I think this is what we want in all cases.
         plans = []
         for fn, group in groups:
-            assert all(op.fn is fn for op in group)
-            plans.extend(self._plan_python_fn(fn,
-                                              [op.t for op in group],
-                                              [op.x for op in group],
-                                              [op.output for op in group]))
+            plans.extend(self._plan_python_fn(
+                fn, ts=[op.t for op in group], xs=[op.x for op in group],
+                ys=[op.output for op in group]))
         return plans
 
     def _plan_python_fn(self, fn, ts, xs, ys):
