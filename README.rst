@@ -39,6 +39,10 @@ but use ``nengo_ocl.Simulator`` when creating a simulator for your model::
     plt.plot(sim.trange(), sim.data[probe_b])
     plt.show()
 
+If you are running within ``nengo_gui`` make sure the ``PYOPENCL_CTX`` 
+environment variable has been set. If this variable is not set it will open 
+an interactive prompt which will cause ``nengo_gui`` to get stuck during build.
+
 Dependencies and Installation
 =============================
 
