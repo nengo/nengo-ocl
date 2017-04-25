@@ -2,11 +2,15 @@ from collections import defaultdict
 
 from nengo.builder.operator import Operator
 from nengo.utils.compat import iteritems
-from nengo.utils.simulator import operator_depencency_graph
+try:
+    from nengo.utils.simulator import operator_dependency_graph
+except ImportError:
+    from nengo.utils.simulator import (
+        operator_depencency_graph as operator_dependency_graph)
 
 
 def greedy_planner(operators):
-    edges = operator_depencency_graph(operators)
+    edges = operator_dependency_graph(operators)
 
     is_op = lambda op: isinstance(op, Operator)
     for op, dests in iteritems(edges):
