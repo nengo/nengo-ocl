@@ -15,13 +15,13 @@ import nengo.utils.numpy as npext
 from nengo.cache import get_default_decoder_cache
 from nengo.exceptions import ReadonlyError, SimulatorClosed
 from nengo.simulator import ProbeDict
-from nengo.builder.builder import Model
 from nengo.builder.operator import Reset
 from nengo.builder.signal import SignalDict
 from nengo.utils.compat import iteritems, StringIO, range, ResourceWarning
 from nengo.utils.progress import ProgressTracker
 from nengo.utils.stdlib import groupby
 
+from nengo_ocl.builder import Builder, Model
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.clra_gemv import plan_block_gemv
@@ -210,7 +210,8 @@ class Simulator(object):
             if model is None:
                 self.model = Model(dt=float(dt),
                                    label="%s, dt=%f" % (network, dt),
-                                   decoder_cache=get_default_decoder_cache())
+                                   decoder_cache=get_default_decoder_cache(),
+                                   builder=Builder())
             else:
                 self.model = model
 
