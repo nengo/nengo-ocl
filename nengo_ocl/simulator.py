@@ -211,7 +211,7 @@ class Simulator(object):
                 self.model = Model(dt=float(dt),
                                    label="%s, dt=%f" % (network, dt),
                                    decoder_cache=get_default_decoder_cache(),
-                                   builder=Builder())
+                                   builder=Builder(queue=self.queue))
             else:
                 self.model = model
 
