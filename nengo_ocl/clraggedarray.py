@@ -14,7 +14,9 @@ from nengo_ocl.utils import equal_strides
 
 # add 'ctype' property to Array (returned by 'to_device')
 Array.ctype = property(lambda self: cl.tools.dtype_to_ctype(self.dtype))
-Array.start = property(lambda self: self.offset / self.dtype.itemsize)
+Array.start = property(lambda self: self.offset // self.dtype.itemsize)
+Array.elemstrides = property(
+    lambda self: tuple(s // self.dtype.itemsize for s in self.strides))
 
 
 def data_ptr(array):
