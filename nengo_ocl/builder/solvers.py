@@ -14,39 +14,66 @@ from nengo_ocl.clraggedarray import CLRaggedArray
 from nengo_ocl.clra_nonlinearities import plan_lif_rate
 
 
+# def np_solve(A, y):
+#     return np.linalg.solve(A, y)
+
+
+def cho_solve(A, y, overwrite=False):
+    # Solve A x = y for x
+    try:
+        import scipy.linalg
+        factor = scipy.linalg.cho_factor(A, overwrite_a=overwrite)
+        x = scipy.linalg.cho_solve(factor, y)
+    except ImportError:
+        L = np.linalg.cholesky(A)
+        L = np.linalg.inv(L.T)
+        x = np.dot(L, np.dot(L.T, y))
+
+    return x
+
+
 @Builder.register(nengo.solvers.Solver)
 def build_solver(model, solver, conn, rng, transform):
-    from nengo.builder.connection import multiply, get_eval_points, get_targets
-
-    encoders = model.params[conn.pre_obj].encoders
-    gain = model.params[conn.pre_obj].gain
-    bias = model.params[conn.pre_obj].bias
-
-    eval_points = get_eval_points(model, conn, rng)
-    targets = get_targets(conn, eval_points)
-
-    x = np.dot(eval_points, encoders.T / conn.pre_obj.radius)
-    E = None
-    if solver.weights:
-        E = model.params[conn.post_obj].scaled_encoders.T[conn.post_slice]
-        # include transform in solved weights
-        targets = multiply(targets, transform.T)
-
-    wrapped_solver = (model.decoder_cache.wrap_solver(solve_for_decoders)
-                      if model.seeded[conn] else solve_for_decoders)
+    from nengo.builder.connection import multiply
+    eval_points, neuron_type, gain, bias, X, Y, E = get_solve_params(
+        model, solver, conn, rng, transform)
+    wrapped_solver = wrap_solver(model, conn, solve_for_decoders)
     decoders, solver_info = wrapped_solver(
-        solver, conn.pre_obj.neuron_type, gain, bias, x, targets,
-        rng=rng, E=E, conn=conn, queue=model.builder.queue)
-
+        solver, neuron_type, gain, bias, X, Y, rng,
+        E=E, conn=conn, queue=model.builder.queue)
     weights = (decoders.T if solver.weights else
                multiply(transform, decoders.T))
     return eval_points, weights, solver_info
 
 
-def solve_for_decoders(
-        solver, neuron_type, gain, bias, X, Y, rng, E=None, conn=None,
-        queue=None):
-    ocl_activity_min_size = 1e6
+def get_solve_params(model, solver, conn, rng, transform):
+    from nengo.builder.connection import multiply, get_eval_points, get_targets
+    neuron_type = conn.pre_obj.neuron_type
+    encoders = model.params[conn.pre_obj].encoders
+    gain = model.params[conn.pre_obj].gain
+    bias = model.params[conn.pre_obj].bias
+
+    eval_points = get_eval_points(model, conn, rng)
+    Y = get_targets(conn, eval_points)
+
+    X = np.dot(eval_points, encoders.T / conn.pre_obj.radius)
+    E = None
+    if solver.weights:
+        E = model.params[conn.post_obj].scaled_encoders.T[conn.post_slice]
+        # include transform in solved weights
+        Y = multiply(Y, transform.T)
+
+    return eval_points, neuron_type, gain, bias, X, Y, E
+
+
+def wrap_solver(model, conn, solve_fn):
+    return (model.decoder_cache.wrap_solver(solve_fn)
+            if model.seeded[conn] else solve_fn)
+
+
+def solve_for_decoders(solver, neuron_type, gain, bias, X, Y, rng,
+                       E=None, conn=None, queue=None):
+    ocl_activity_min_size = 1e6  # TODO: find best value
 
     A, clA = None, None
     if queue is not None and X.size > ocl_activity_min_size:
@@ -80,21 +107,16 @@ def solve_for_decoders(
     return decoders, solver_info
 
 
-def neuron_rates(neuron_type, x, gain, bias, queue=None):
-    import pyopencl.elementwise
+def neuron_rates(neuron_type, X, gain, bias, queue=None):
+    m, n = X.shape
 
-    m, n = x.shape
+    # Compute rates in-place in X
+    clX = cl.array.to_device(queue, X.astype(np.float32))
+    clgain = cl.array.to_device(queue, gain.astype(np.float32))
+    clbias = cl.array.to_device(queue, bias.astype(np.float32))
+    compute_J(queue, clX, clgain, clbias)
 
-    X = cl.array.to_device(queue, x.astype(np.float32))
-    gain = cl.array.to_device(queue, gain.astype(np.float32))
-    bias = cl.array.to_device(queue, bias.astype(np.float32))
-    J = cl.array.Array(queue, X.shape, dtype=np.float32)
-    R = cl.array.Array(queue, J.shape, dtype=np.float32)
-    compute_J(queue, X, gain, bias, J)
-
-    raJ = CLRaggedArray.from_clarray_rows(queue, J)
-    raR = CLRaggedArray.from_clarray_rows(queue, R)
-
+    raX = CLRaggedArray.from_clarray_rows(queue, clX)
     if type(neuron_type) in (nengo.neurons.LIF, nengo.neurons.LIFRate,
                              nengo.neurons.AdaptiveLIF,
                              nengo.neurons.AdaptiveLIFRate):
@@ -104,107 +126,94 @@ def neuron_rates(neuron_type, x, gain, bias, queue=None):
         ref = CLRaggedArray.from_arrays(
             queue, [neuron_type.tau_ref * np.ones(n)], dtype=np.float32)[zm]
         dt = 1.  # never actually gets used
-        plan = plan_lif_rate(queue, dt, raJ, raR, ref, tau, blockify=False)
+        plan = plan_lif_rate(queue, dt, raX, raX, ref, tau, blockify=False)
         plan()
     else:
         raise NotImplementedError()
 
-    return R
+    return clX
 
 
-def compute_J(queue, X, gain, bias, J):
+def compute_J(queue, X, gain, bias):
     from mako.template import Template
     from nengo_ocl.utils import as_ascii
 
     m, n = X.shape
 
     assert X.elemstrides[1] == 1
-    assert J.elemstrides[1] == 1
     assert gain.ndim == 1 and gain.elemstrides[0] == 1
     assert bias.ndim == 1 and bias.elemstrides[0] == 1
 
     text = """
         __kernel void fn(
-            __global const ${Xtype} *X,
+            __global ${Xtype} *X,
             __global const ${gaintype} *gain,
-            __global const ${biastype} *bias,
-            __global ${Jtype} *J
+            __global const ${biastype} *bias
         )
         {
             const int j = get_global_id(0);
             const int i = get_global_id(1);
             if (i < ${m} && j < ${n})
-                J[i*${Jstride0} + j] = X[i*${Xstride0} + j] * gain[j] + bias[j];
+                X[i*${Xstride0} + j] = X[i*${Xstride0} + j] * gain[j] + bias[j];
         }
         """
     textconf = dict(Xtype=X.ctype, gaintype=gain.ctype, biastype=bias.ctype,
-                    Jtype=J.ctype, m=m, n=n,
-                    Jstride0=J.elemstrides[0], Xstride0=X.elemstrides[0])
+                    m=m, n=n, Xstride0=X.elemstrides[0])
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     fn = cl.Program(queue.context, text).build().fn
     gsize, lsize = (n, m), None
-    return fn(queue, gsize, lsize, X.data, gain.data, bias.data, J.data)
+    return fn(queue, gsize, lsize, X.data, gain.data, bias.data)
 
 
-# @Builder.register_ocl_solver(nengo.solvers.LstsqL2)
-# def solve_LstsqL2(solver, queue, clA, Y, rng=None, E=None):
-#     from hunse_tools.timing import tic, toc
+@Builder.register_ocl_solver(nengo.solvers.LstsqL2)
+def solve_LstsqL2(solver, queue, clA, Y, rng=None, E=None):
+    import scipy.linalg
+    import pyopencl_blas
+    pyopencl_blas.setup()
 
-#     dtype = np.float32
-#     # dtype = np.float64
+    dtype = np.float32
+    # dtype = np.float64
 
-#     import pyopencl_blas
-#     pyopencl_blas.setup()
+    tstart = time.time()
 
-#     tstart = time.time()
+    A = clA.get()
+    if clA.dtype != dtype:
+        clA = clA.astype(dtype)
+    clY = cl.array.to_device(queue, Y.astype(dtype))
 
-#     A = clA.get()
-#     clA = clA.astype(dtype)
-#     clY = cl.array.to_device(queue, Y.astype(dtype))
+    sigma = solver.reg * cl.array.max(clA).get()
 
-#     sigma = solver.reg * cl.array.max(clA).get()
+    m, n = clA.shape
+    _, d = Y.shape
 
-#     m, n = clA.shape
-#     _, d = Y.shape
+    transpose = solver.solver.transpose
+    if transpose is None:
+        transpose = m < n  # transpose if matrix is fat
 
-#     transpose = solver.solver.transpose
-#     if transpose is None:
-#         transpose = m < n  # transpose if matrix is fat
+    if transpose:
+        # substitution: x = A'*xbar, G*xbar = b where G = A*A' + lambda*I
+        clG = cl.array.Array(queue, (m, m), dtype=dtype)
+        pyopencl_blas.gemm(queue, clA, clA, clG, transB=True)
+        G, B = clG.get(), Y
+    else:
+        # multiplication by A': G*x = A'*b where G = A'*A + lambda*I
+        clG = cl.array.Array(queue, (n, n), dtype=dtype)
+        clB = cl.array.Array(queue, (n, d), dtype=dtype)
+        pyopencl_blas.gemm(queue, clA, clA, clG, transA=True)
+        pyopencl_blas.gemm(queue, clA, clY, clB, transA=True)
+        G, B = clG.get(), clB.get()
 
-#     if transpose:
-#         # substitution: x = A'*xbar, G*xbar = b where G = A*A' + lambda*I
-#         clG = cl.array.Array(queue, (m, m), dtype=dtype)
-#         pyopencl_blas.gemm(queue, clA, clA, clG, transB=True)
-#         G, B = clG.get(), Y
-#     else:
-#         # multiplication by A': G*x = A'*b where G = A'*A + lambda*I
-#         clG = cl.array.Array(queue, (n, n), dtype=dtype)
-#         clB = cl.array.Array(queue, (n, d), dtype=dtype)
-#         pyopencl_blas.gemm(queue, clA, clA, clG, transA=True)
-#         pyopencl_blas.gemm(queue, clA, clY, clB, transA=True)
-#         G, B = clG.get().astype(np.float64), clB.get().astype(np.float64)
+    # pyopencl_blas.teardown()
 
-#     # pyopencl_blas.teardown()
+    np.fill_diagonal(G, G.diagonal() + 2*m * sigma**2)
 
-#     np.fill_diagonal(G, G.diagonal() + 2*m * sigma**2)
+    # X = cho_solve(G, B, overwrite=True)
+    # X = scipy.linalg.solve(G, B)
+    X = np.linalg.solve(G, B)
 
-#     try:
-#         import scipy.linalg
-#         factor = scipy.linalg.cho_factor(G, overwrite_a=True)
-#         X = scipy.linalg.cho_solve(factor, B)
-#     except ImportError:
-#         L = np.linalg.cholesky(G)
-#         L = np.linalg.inv(L.T)
-#         X = np.dot(L, np.dot(L.T, B))
+    X = np.dot(A.T, X) if transpose else X
+    tend = time.time()
 
-#     # U, s, V = np.linalg.svd(G, full_matrices=False)
-#     # si = 1. / s
-#     # si[s < 1e-8*s.max()] = 0
-#     # X = np.dot(V.T, si[:, None] * np.dot(U.T, B))
-
-#     X = np.dot(A.T, X) if transpose else X
-#     tend = time.time()
-
-#     info = {'rmses': rmses(A, X, Y), 'time': tend - tstart}
-#     return solver.mul_encoders(X, E), info
+    info = {'rmses': rmses(A, X, Y), 'time': tend - tstart}
+    return solver.mul_encoders(X, E), info
