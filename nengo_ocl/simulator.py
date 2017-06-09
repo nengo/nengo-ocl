@@ -300,7 +300,7 @@ class Simulator(object):
         self._plans = Plans(plans, self.profiling)
 
         self.rng = None  # all randomness set, should no longer be used
-        self._probe_step_time()
+        self._reset_probes()  # clears probes from previous model builds
 
     def _create_cl_rngs(self, seeds):
         seeds = [self.rng.randint(npext.maxint) if s is None else s
@@ -436,6 +436,16 @@ class Simulator(object):
         self._n_steps = self.signals[self.model.step].copy()
         self._time = self.signals[self.model.time].copy()
 
+    def _reset_probes(self):
+        if self._cl_probe_plan is not None:
+            self._cl_probe_plan.cl_bufpositions.fill(0)
+
+        for probe in self.model.probes:
+            self._probe_outputs[probe] = []
+        self.data.reset()
+
+        self._probe_step_time()
+
     def reset(self, seed=None):
         if self.closed:
             raise SimulatorClosed("Cannot reset closed Simulator.")
@@ -454,16 +464,8 @@ class Simulator(object):
             for i in range(len(clra)):
                 clra[i] = ra[i]
 
-        # clear probe data
-        if self._cl_probe_plan is not None:
-            self._cl_probe_plan.cl_bufpositions.fill(0)
-
-        for probe in self.model.probes:
-            self._probe_outputs[probe] = []
-        self.data.reset()
-
         self._reset_rngs()
-        self._probe_step_time()
+        self._reset_probes()
 
     def run(self, time_in_seconds, progress_bar=None):
         """Simulate for the given length of time.
