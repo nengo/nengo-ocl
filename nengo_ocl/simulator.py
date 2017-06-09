@@ -770,21 +770,20 @@ class Simulator(object):
         y_idx = [self.sidx[y] if y is not None else None for y in yy]
         ix_iy = list(zip(x_idx, y_idx))
 
+        def m2v(x):  # matrix to vector, if appropriate
+            return x[:, 0] if x.ndim == 2 and x.shape[1] == 1 else x
+
+        def v2m(x):  # vector to matrix, if appropriate
+            return x[:, None] if x.ndim == 1 else x
+
         def step():
             t = float(self.all_data[t_idx][0, 0] if t_in else 0)
             for ix, iy in ix_iy:
-                if ix is not None:
-                    x = self.all_data[ix]
-                    if x.ndim == 2 and x.shape[1] == 1:
-                        x = x[:, 0]
-                    y = fn(t, x) if t_in else fn(x)
-                else:
-                    y = fn(t) if t_in else fn()
+                args = [t] if t_in else []
+                args += [m2v(self.all_data[ix])] if ix is not None else []
+                y = fn(*args)
                 if iy is not None:
-                    y = np.asarray(y)
-                    if y.ndim == 1:
-                        y = y[:, None]
-                    self.all_data[iy] = y
+                    self.all_data[iy] = v2m(np.asarray(y))
 
         return PythonPlan(step, name='python_fn', tag=fn_name)
 
