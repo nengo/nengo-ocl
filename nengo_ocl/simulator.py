@@ -143,6 +143,10 @@ class Simulator(object):
         # nodes
         ('nengo/tests/test_node.py:test_none',
          "No error if nodes output None"),
+        ('nengo/tests/test_node.py:test_non_finite_values',
+         "No error for non-finite values"),
+        ('nengo/tests/test_neurons.py:test_direct_mode_nonfinite_value',
+         "No error for non-finite values"),
 
         # processes
         ('nengo/tests/test_processes.py:test_brownnoise',
@@ -155,6 +159,10 @@ class Simulator(object):
         # synapses
         ('nengo/tests/test_synapses.py:test_triangle',
          "Only linear filters implemented"),
+
+        # learning rules
+        ('nengo/tests/test_learning_rules.py:test_custom_type',
+         "Copying 2-D arrays not implemented"),
 
         # specific to nengo.Simulator (functionality does not need testing)
         ('nengo/tests/test_builder.py:test_commonsig_readonly',
