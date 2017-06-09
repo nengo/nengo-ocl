@@ -7,19 +7,17 @@ PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 class BasePlan(object):
 
     def __init__(self, name="", tag=None,
-                 flops_per_call=None,
-                 bw_per_call=None
-                 ):
+                 flops_per_call=None, bw_per_call=None):
         self.name = name
         self.tag = tag
+
         self.atimes = []
         self.btimes = []
         self.ctimes = []
         self.n_calls = 0
-        # -- floating-point ops per call
-        self.flops_per_call = flops_per_call
-        # -- bandwidth requirement per call
-        self.bw_per_call = bw_per_call
+
+        self.flops_per_call = flops_per_call  # floating-point ops per call
+        self.bw_per_call = bw_per_call  # bandwidth requirement per call
 
     def __str__(self):
         return '<%s%s>' % (self.name, ": %s" % self.tag if self.tag else "")
@@ -120,6 +118,15 @@ class Plans(object):
 
     def __call__(self):
         return self.call_n_times(1)
+
+    def __len__(self):
+        return len(self.plans)
+
+    def __getitem__(self, i):
+        return self.plans[i]
+
+    def __iter__(self):
+        return iter(self.plans)
 
     def call_n_times(self, n):
         last_event = self.enqueue_n_times(n)

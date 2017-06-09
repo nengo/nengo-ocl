@@ -281,34 +281,41 @@ class Simulator(object):
 
         # --- set seed
         self.seed = np.random.randint(npext.maxint) if seed is None else seed
-        self._reset_rng()
+        self.rng = np.random.RandomState(self.seed)
 
         # --- create list of plans
         self._raggedarrays_to_reset = {}
         self._cl_rngs = {}
+        self._python_rngs = {}
 
+        plans = []
         with Timer() as plans_timer:
-            self._plan = []
             for op_type, op_list in op_groups:
-                self._plan.extend(self.plan_op_group(op_type, op_list))
-            self._plan.extend(self.plan_probes())
+                plans.extend(self.plan_op_group(op_type, op_list))
+            plans.extend(self.plan_probes())
 
         logger.info("Plans in %0.3f s" % plans_timer.duration)
 
         # -- create object to execute list of plans
-        self._plans = Plans(self._plan, self.profiling)
+        self._plans = Plans(plans, self.profiling)
 
-        self._reset_cl_rngs()
+        self.rng = None  # all randomness set, should no longer be used
         self._probe_step_time()
 
-    def _reset_rng(self):
-        self.rng = np.random.RandomState(self.seed)
+    def _create_cl_rngs(self, seeds):
+        seeds = [self.rng.randint(npext.maxint) if s is None else s
+                 for s in seeds]
+        cl_rngs = create_rngs(self.queue, len(seeds))
+        init_rngs(self.queue, cl_rngs, seeds)
+        self._cl_rngs[cl_rngs] = seeds
+        return cl_rngs
 
-    def _reset_cl_rngs(self):
+    def _reset_rngs(self):
         for rngs, seeds in iteritems(self._cl_rngs):
-            seeds = [self.rng.randint(npext.maxint) if s is None else s
-                     for s in seeds]
             init_rngs(self.queue, rngs, seeds)
+
+        for rng, state in iteritems(self._python_rngs):
+            rng.set_state(state)
 
     def __del__(self):
         """Raise a ResourceWarning if we are deallocated while open."""
@@ -397,7 +404,6 @@ class Simulator(object):
         self.context = None
         self.queue = None
         self.all_data = None
-        self._plan = []
         self._plans = None
         self._raggedarrays_to_reset = None
         self._cl_rngs = None
@@ -452,11 +458,11 @@ class Simulator(object):
         if self._cl_probe_plan is not None:
             self._cl_probe_plan.cl_bufpositions.fill(0)
 
-            for probe in self.model.probes:
-                del self._probe_outputs[probe][:]
+        for probe in self.model.probes:
+            self._probe_outputs[probe] = []
+        self.data.reset()
 
-        self._reset_rng()
-        self._reset_cl_rngs()
+        self._reset_rngs()
         self._probe_step_time()
 
     def run(self, time_in_seconds, progress_bar=None):
@@ -872,7 +878,7 @@ class Simulator(object):
     def plan_SimProcess(self, all_ops):
         class_groups = groupby(all_ops, lambda op: type(op.process))
         plan_groups = defaultdict(list)
-        step_plans = []
+        python_ops = []
         for process_class, ops in class_groups:
             for cls in process_class.__mro__:
                 attrname = '_plan_' + cls.__name__
@@ -880,17 +886,23 @@ class Simulator(object):
                     plan_groups[attrname].extend(ops)
                     break
             else:
-                for op in ops:
-                    shape = lambda s: s.shape if s is not None else (0,)
-                    fn = op.process.make_step(
-                        shape(op.input), shape(op.output), self.model.dt,
-                        rng=op.process.get_rng(self.rng))
-                    step_plans.extend(self._plan_python_fn(
-                        fn, [op.t], [op.input], [op.output]))
+                python_ops.extend(ops)
 
         process_plans = [p for attr, ops in iteritems(plan_groups)
                          for p in getattr(self, attr)(ops)]
-        return process_plans + step_plans
+        python_plans = [p for op in python_ops
+                        for p in self._plan_python_process(op)]
+        return process_plans + python_plans
+
+    def _plan_python_process(self, op):
+        shape = lambda s: s.shape if s is not None else (0,)
+        rng = op.process.get_rng(self.rng)
+        fn = op.process.make_step(
+            shape(op.input), shape(op.output), self.model.dt, rng=rng)
+        plans = self._plan_python_fn(fn, [op.t], [op.input], [op.output])
+        plan, = plans  # should only be one
+        self._python_rngs[rng] = rng.get_state()
+        return plans
 
     def _plan_LinearFilter(self, ops):
         steps = [op.process.make_step(op.input.shape, op.output.shape,
@@ -914,8 +926,8 @@ class Simulator(object):
     def _plan_WhiteNoise(self, ops):
         assert all(op.input is None for op in ops)
 
-        rngs = create_rngs(self.queue, len(ops))
-        self._cl_rngs[rngs] = [op.process.seed for op in ops]
+        seeds = [op.process.seed for op in ops]
+        cl_rngs = self._create_cl_rngs(seeds)
 
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
         scale = self.Array([op.process.scale for op in ops], dtype=np.int32)
@@ -925,7 +937,7 @@ class Simulator(object):
         params = CLRaggedArray(self.queue, params)
         dt = self.model.dt
         return [plan_whitenoise(
-            self.queue, Y, enums, params, scale, inc, dt, rngs)]
+            self.queue, Y, enums, params, scale, inc, dt, cl_rngs)]
 
     def _plan_FilteredNoise(self, ops):
         raise NotImplementedError()
@@ -1018,7 +1030,7 @@ class Simulator(object):
 
     def print_plans(self):
         print(" Plans ".center(80, '-'))
-        for plan in self._plans.plans:
+        for plan in self._plans:
             print("%r" % plan)
             if hasattr(plan, 'description'):
                 print(indent(plan.description, 4))
@@ -1037,7 +1049,7 @@ class Simulator(object):
         # make and sort table
         table = []
         unknowns = []
-        for p in self._plans.plans:
+        for p in self._plans:
             if isinstance(p, BasePlan):
                 t = sum(p.ctimes)
                 calls_per_sec = p.n_calls / t if t > 0 else np.nan

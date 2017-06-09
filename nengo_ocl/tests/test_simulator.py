@@ -58,3 +58,27 @@ def test_warn_on_future_version(monkeypatch):
     with warns(UserWarning):
         with nengo_ocl.Simulator(model):
             pass
+
+
+def test_reset():
+    seed = 3
+
+    class CustomProcess(nengo.Process):
+        def make_step(self, shape_in, shape_out, dt, rng):
+            def step(t):
+                return rng.uniform(size=shape_out).ravel()
+            return step
+
+    with nengo.Network() as model:
+        u = nengo.Node(CustomProcess())
+        up = nengo.Probe(u)
+
+    with nengo_ocl.Simulator(model, seed=seed) as sim:
+        sim.run_steps(10)
+        ua = np.array(sim.data[up])
+
+        sim.reset()
+        sim.run_steps(10)
+        ub = np.array(sim.data[up])
+
+    assert np.allclose(ua, ub)
