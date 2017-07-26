@@ -25,7 +25,7 @@ autodoc_member_order = 'bysource'  # default is alphabetical
 
 # -- sphinx.ext.intersphinx
 intersphinx_mapping = {
-    'nengo': ('http://pythonhosted.org/nengo/', None),
+    'nengo': ('https://www.nengo.ai/nengo/', None),
     'numpy': ('https://docs.scipy.org/doc/numpy', None),
     'pyopencl': ('https://documen.tician.de/pyopencl/', None),
     'scipy': ('https://docs.scipy.org/doc/scipy/reference', None),
