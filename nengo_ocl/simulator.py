@@ -651,22 +651,22 @@ class Simulator(object):
 
         plans = []
         if copies:
-            A = self.all_data[[self.sidx[op.src] for op in copies]]
-            B = self.all_data[[self.sidx[op.dst] for op in copies]]
+            X = self.all_data[[self.sidx[op.src] for op in copies]]
+            Y = self.all_data[[self.sidx[op.dst] for op in copies]]
             incs = np.array([op.inc for op in copies], dtype=np.int32)
-            plans.append(plan_copy(self.queue, A, B, incs))
+            plans.append(plan_copy(self.queue, X, Y, incs))
 
         if ops:
-            A = self.all_data[[self.sidx[op.src] for op in ops]]
-            B = self.all_data[[self.sidx[op.dst] for op in ops]]
+            X = self.all_data[[self.sidx[op.src] for op in ops]]
+            Y = self.all_data[[self.sidx[op.dst] for op in ops]]
             inds = lambda ary, i: np.arange(ary.size, dtype=np.int32)[
                 Ellipsis if i is None else i]
-            Ainds = self.RaggedArray(
+            Xinds = self.RaggedArray(
                 [inds(op.src, op.src_slice) for op in ops])
-            Binds = self.RaggedArray(
+            Yinds = self.RaggedArray(
                 [inds(op.dst, op.dst_slice) for op in ops])
             incs = np.array([op.inc for op in ops], dtype=np.int32)
-            plans.append(plan_slicedcopy(self.queue, A, B, Ainds, Binds, incs))
+            plans.append(plan_slicedcopy(self.queue, X, Y, Xinds, Yinds, incs))
 
         return plans
 

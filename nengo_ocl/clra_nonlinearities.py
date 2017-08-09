@@ -23,10 +23,10 @@ def blockify_ij(max_size, ra):
     sizes = []
     inds = []
     offsets = []
-    for i in range(len(ra)):
-        size = ra.sizes[i]
+    for k in range(len(ra)):
+        size = ra.sizes[k]
         for offset in range(0, size, max_size):
-            inds.append(i)
+            inds.append(k)
             sizes.append(min(size - offset, max_size))
             offsets.append(offset)
 
@@ -204,15 +204,13 @@ def plan_reset(queue, Y, values, tag=None):
     return plan
 
 
-def plan_copy(queue, A, B, incs, tag=None):
-    N = len(A)
-    assert len(A) == len(B)
-
-    for arr in [A, B]:
-        assert (arr.shape1s == 1).all()
-    assert (A.shape0s == B.shape0s).all()
-
-    assert A.ctype == B.ctype
+def plan_copy(queue, X, Y, incs, tag=None):
+    assert len(X) == len(Y)
+    assert (X.shape0s == Y.shape0s).all()
+    assert (X.shape1s == Y.shape1s).all()
+    assert (X.stride1s == 1).all()
+    assert (Y.stride1s == 1).all()
+    assert X.ctype == Y.ctype
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -220,56 +218,57 @@ def plan_copy(queue, A, B, incs, tag=None):
     % if inc is None:
             __global const int *incdata,
     % endif
-            __global const int *Astrides,
-            __global const int *Astarts,
-            __global const ${Atype} *Adata,
-            __global const int *Bstrides,
-            __global const int *Bstarts,
-            __global ${Btype} *Bdata,
-            __global const int *sizes
+            __global const int *offsets,
+            __global const int *shape0s,
+            __global const int *shape1s,
+            __global const int *Xstride0s,
+            __global const int *Xstarts,
+            __global const ${Xtype} *Xdata,
+            __global const int *Ystride0s,
+            __global const int *Ystarts,
+            __global ${Ytype} *Ydata
         )
         {
-            const int i = get_global_id(0);
             const int n = get_global_id(1);
-            if (n >= ${N} || i >= sizes[n])
-                return;
+            const int ij = get_global_id(0) + offsets[n];
 
-            __global const ${Atype} *a = Adata + Astarts[n];
-            __global ${Btype} *b = Bdata + Bstarts[n];
+            const int shape1 = shape1s[n];
+            const int i = ij / shape1;
+            const int j = ij % shape1;
+            const int xo = Xstarts[n] + i*Xstride0s[n] + j;
+            const int yo = Ystarts[n] + i*Ystride0s[n] + j;
 
+            if (i < shape0s[n]) {
     % if inc is True:
-            b[i*Bstrides[n]] += a[i*Astrides[n]];
+                Ydata[yo] += Xdata[xo];
     % elif inc is False:
-            b[i*Bstrides[n]] = a[i*Astrides[n]];
+                Ydata[yo]  = Xdata[xo];
     % else:
-            if (incdata[n])  b[i*Bstrides[n]] += a[i*Astrides[n]];
-            else             b[i*Bstrides[n]] = a[i*Astrides[n]];
+                if (incdata[n])  Ydata[yo] += Xdata[xo];
+                else             Ydata[yo]  = Xdata[xo];
     % endif
+            }
         }
         """
 
-    lsize0 = 16
-    lsize1 = get_mwgs(queue) // lsize0
-    # lsize0 = min(256, A.sizes.max())
+    lsize0 = get_mwgs(queue, cap=256)
+    sizes, inds, offsets = blockify_ij(lsize0, Y)
 
-    sizes, inds, [Astarts, Bstarts] = blockify_vectors(lsize0, [A, B])
+    lsize = None
+    gsize = (lsize0, len(sizes))
 
-    N = len(sizes)
-    lsize = (lsize0, lsize1)
-    gsize = (lsize0, round_up(N, lsize1))
-    # lsize = None
-    # gsize = (lsize0, N)
-
-    textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N, inc=None)
+    textconf = dict(Xtype=X.ctype, Ytype=Y.ctype, inc=None)
 
     full_args = [
-        to_device(queue, A.stride0s[inds]),
-        to_device(queue, Astarts),
-        A.cl_buf,
-        to_device(queue, B.stride0s[inds]),
-        to_device(queue, Bstarts),
-        B.cl_buf,
-        to_device(queue, sizes),
+        to_device(queue, offsets),
+        to_device(queue, X.shape0s[inds]),
+        to_device(queue, X.shape1s[inds]),
+        to_device(queue, X.stride0s[inds]),
+        to_device(queue, X.starts[inds]),
+        X.cl_buf,
+        to_device(queue, Y.stride0s[inds]),
+        to_device(queue, Y.starts[inds]),
+        Y.cl_buf,
     ]
     if (incs == 0).all():
         textconf['inc'] = False
@@ -284,26 +283,26 @@ def plan_copy(queue, A, B, incs, tag=None):
 
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_copy", tag=tag)
     plan.full_args = tuple(full_args)  # prevent garbage-collection
-    plan.bw_per_call = A.nbytes + B.nbytes
+    plan.bw_per_call = X.nbytes + Y.nbytes
     plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(A), A.sizes.sum(), A.sizes.mean(), A.sizes.min(), A.sizes.max()))
+        (len(X), X.sizes.sum(), X.sizes.mean(), X.sizes.min(), X.sizes.max()))
     return plan
 
 
-def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
-    N = len(A)
-    assert len(A) == len(B) == len(Ainds) == len(Binds)
+def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
+    N = len(X)
+    assert len(X) == len(Y) == len(Xinds) == len(Yinds)
 
-    for arr in [A, B, Ainds, Binds]:
+    for arr in [X, Y, Xinds, Yinds]:
         assert (arr.shape1s == 1).all()
         assert (arr.stride1s == 1).all()
-    for arr in [Ainds, Binds]:
+    for arr in [Xinds, Yinds]:
         assert (arr.stride0s == 1).all()
-    assert (Ainds.shape0s == Binds.shape0s).all()
+    assert (Xinds.shape0s == Yinds.shape0s).all()
 
-    assert A.ctype == B.ctype
-    assert Ainds.ctype == Binds.ctype == 'int'
+    assert X.ctype == Y.ctype
+    assert Xinds.ctype == Yinds.ctype == 'int'
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -311,17 +310,17 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     % if inc is None:
             __global const int *incdata,
     % endif
-            __global const int *Astride0s,
-            __global const int *Astarts,
-            __global const ${Atype} *Adata,
-            __global const int *Bstride0s,
-            __global const int *Bstarts,
-            __global ${Btype} *Bdata,
+            __global const int *Xstride0s,
+            __global const int *Xstarts,
+            __global const ${Xtype} *Xdata,
+            __global const int *Ystride0s,
+            __global const int *Ystarts,
+            __global ${Ytype} *Ydata,
             __global const int *Isizes,
-            __global const int *AIstarts,
-            __global const int *AIdata,
-            __global const int *BIstarts,
-            __global const int *BIdata
+            __global const int *XIstarts,
+            __global const int *XIdata,
+            __global const int *YIstarts,
+            __global const int *YIdata
         )
         {
             const int i = get_global_id(0);
@@ -329,22 +328,22 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
             if (n >= ${N})
                 return;
 
-            __global const ${Atype} *a = Adata + Astarts[n];
-            __global ${Btype} *b = Bdata + Bstarts[n];
-            __global const int *aind = AIdata + AIstarts[n];
-            __global const int *bind = BIdata + BIstarts[n];
-            const int Astride0 = Astride0s[n], Bstride0 = Bstride0s[n];
+            __global const ${Xtype} *a = Xdata + Xstarts[n];
+            __global ${Ytype} *b = Ydata + Ystarts[n];
+            __global const int *aind = XIdata + XIstarts[n];
+            __global const int *bind = YIdata + YIstarts[n];
+            const int Xstride0 = Xstride0s[n], Ystride0 = Ystride0s[n];
 
             if (i < Isizes[n]) {
     % if inc is True:
-                b[bind[i]*Bstride0] += a[aind[i]*Astride0];
+                b[bind[i]*Ystride0] += a[aind[i]*Xstride0];
     % elif inc is False:
-                b[bind[i]*Bstride0] = a[aind[i]*Astride0];
+                b[bind[i]*Ystride0] = a[aind[i]*Xstride0];
     % else:
                 if (incdata[n])
-                    b[bind[i]*Bstride0] += a[aind[i]*Astride0];
+                    b[bind[i]*Ystride0] += a[aind[i]*Xstride0];
                 else
-                    b[bind[i]*Bstride0] = a[aind[i]*Astride0];
+                    b[bind[i]*Ystride0] = a[aind[i]*Xstride0];
     % endif
             }
         }
@@ -353,27 +352,27 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
     lsize0 = 16
     lsize1 = get_mwgs(queue) // lsize0
 
-    sizes, inds, [AIstarts, BIstarts] = blockify_vectors(
-        lsize0, [Ainds, Binds])
+    sizes, inds, [XIstarts, YIstarts] = blockify_vectors(
+        lsize0, [Xinds, Yinds])
 
     N = len(sizes)
     lsize = (lsize0, lsize1)
     gsize = (lsize0, round_up(N, lsize1))
 
-    textconf = dict(Atype=A.ctype, Btype=B.ctype, N=N, inc=None)
+    textconf = dict(Xtype=X.ctype, Ytype=Y.ctype, N=N, inc=None)
 
     full_args = [
-        to_device(queue, A.stride0s[inds]),
-        to_device(queue, A.starts[inds]),
-        A.cl_buf,
-        to_device(queue, B.stride0s[inds]),
-        to_device(queue, B.starts[inds]),
-        B.cl_buf,
+        to_device(queue, X.stride0s[inds]),
+        to_device(queue, X.starts[inds]),
+        X.cl_buf,
+        to_device(queue, Y.stride0s[inds]),
+        to_device(queue, Y.starts[inds]),
+        Y.cl_buf,
         to_device(queue, sizes),
-        to_device(queue, AIstarts),
-        Ainds.cl_buf,
-        to_device(queue, BIstarts),
-        Binds.cl_buf,
+        to_device(queue, XIstarts),
+        Xinds.cl_buf,
+        to_device(queue, YIstarts),
+        Yinds.cl_buf,
     ]
     if (incs == 0).all():
         textconf['inc'] = False
@@ -388,11 +387,11 @@ def plan_slicedcopy(queue, A, B, Ainds, Binds, incs, tag=None):
 
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
     plan.full_args = tuple(full_args)  # prevent garbage-collection
-    plan.bw_per_call = 2 * (Ainds.nbytes + Ainds.sizes.sum()*A.dtype.itemsize)
+    plan.bw_per_call = 2 * (Xinds.nbytes + Xinds.sizes.sum()*X.dtype.itemsize)
     plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(Ainds), Ainds.sizes.sum(),
-         Ainds.sizes.mean(), Ainds.sizes.min(), Ainds.sizes.max()))
+        (len(Xinds), Xinds.sizes.sum(),
+         Xinds.sizes.mean(), Xinds.sizes.min(), Xinds.sizes.max()))
     return plan
 
 

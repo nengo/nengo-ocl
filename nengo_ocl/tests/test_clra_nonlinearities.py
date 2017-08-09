@@ -13,8 +13,8 @@ from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA, to_device
 
 from nengo_ocl.clra_nonlinearities import (
-    plan_lif, plan_lif_rate, plan_elementwise_inc, plan_reset, plan_slicedcopy,
-    plan_linearfilter)
+    plan_lif, plan_lif_rate, plan_reset, plan_copy, plan_slicedcopy,
+    plan_elementwise_inc, plan_linearfilter)
 
 logger = logging.getLogger(__name__)
 RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
@@ -161,6 +161,24 @@ def test_lif_rate(ctx, blockify):
         logger.warn("LIF rate was not tested above the firing threshold!")
     assert ra.allclose(J, clJ.to_host())
     assert ra.allclose(R, clR.to_host())
+
+
+def test_copy(ctx, rng):
+    sizes = [(10, 1), (40, 64), (457, 342), (1, 100)]
+    X = RA([rng.normal(size=size) for size in sizes])
+    incs = rng.randint(0, 2, size=len(sizes)).astype(np.int32)
+
+    queue = cl.CommandQueue(ctx)
+    clX = CLRA(queue, X)
+    clY = CLRA(queue, RA([np.zeros_like(x) for x in X]))
+
+    # compute on device
+    plan = plan_copy(queue, clX, clY, incs)
+    plan()
+
+    # check result
+    for x, y in zip(X, clY.to_host()):
+        assert np.allclose(y, x)
 
 
 def test_elementwise_inc(ctx, rng):
