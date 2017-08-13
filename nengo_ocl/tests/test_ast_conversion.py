@@ -60,8 +60,8 @@ def _test_node(OclOnlySimulator, fn, size_in=0):
             nengo.Connection(u, v, synapse=0)
 
     # run model
-    sim = OclOnlySimulator(model)
-    sim.run(0.005)
+    with OclOnlySimulator(model) as sim:
+        sim.run(0.005)
 
     # compare output
     t = sim.trange()
@@ -187,10 +187,10 @@ def _test_conn(OclOnlySimulator, fn, size_in, dist_in=None, n=1):
             probes.append(nengo.Probe(w))
 
     # run model
-    sim = OclOnlySimulator(model)
-    sim.step()
-    # sim.step()
-    # sim.step()
+    with OclOnlySimulator(model) as sim:
+        sim.step()
+        # sim.step()
+        # sim.step()
 
     # compare output
     z = np.array([sim.data[p][-1] for p in probes])

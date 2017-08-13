@@ -144,6 +144,8 @@ for i, dim in enumerate(dims):
         print(records[-1])
         print("%s, dims=%d exception" % (sim_name, dim))
         raise
+    finally:
+        sim.close()
 
 filename = "records_circconv_%s.pkl" % ((
     datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")))

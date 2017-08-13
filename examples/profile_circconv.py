@@ -58,9 +58,9 @@ with nengo.Network(label="ProfileConv", seed=3) as model:
     D_p = nengo.Probe(D.product.output)
 
 # --- simulation
-sim = nengo_ocl.Simulator(model, context=ctx, profiling=True)
-sim.run(1.0)
-sim.print_profiling(sort=1)
+with nengo_ocl.Simulator(model, context=ctx, profiling=True) as sim:
+    sim.run(1.0)
+    sim.print_profiling(sort=1)
 
 # --- results
 import matplotlib.pyplot as plt

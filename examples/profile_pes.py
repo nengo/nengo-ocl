@@ -42,6 +42,6 @@ with nengo.Network(label="ProfilePES", seed=3) as model:
     nengo.Connection(e, c.learning_rule, synapse=None)
 
 # --- simulation
-sim = nengo_ocl.Simulator(model, context=ctx, profiling=True)
-sim.run(runtime)
-sim.print_profiling(sort=1)
+with nengo_ocl.Simulator(model, context=ctx, profiling=True) as sim:
+    sim.run(runtime)
+    sim.print_profiling(sort=1)
