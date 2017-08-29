@@ -827,7 +827,11 @@ class Simulator(object):
                                 for op in ops], dtype=J.dtype)
         tau = self.RaggedArray([op.neurons.tau_rc * np.ones(op.J.size)
                                 for op in ops], dtype=J.dtype)
-        return [plan_lif(self.queue, dt, J, V, W, S, ref, tau)]
+        amp = (self.RaggedArray([op.neurons.amplitude * np.ones(op.J.size)
+                                 for op in ops], dtype=J.dtype)
+               if any(hasattr(op.neurons, 'amplitude') for op in ops)
+               else None)
+        return [plan_lif(self.queue, dt, J, V, W, S, ref, tau, amp=amp)]
 
     def _plan_LIFRate(self, ops):
         dt = self.model.dt
@@ -837,7 +841,11 @@ class Simulator(object):
                                 for op in ops], dtype=J.dtype)
         tau = self.RaggedArray([op.neurons.tau_rc * np.ones(op.J.size)
                                 for op in ops], dtype=J.dtype)
-        return [plan_lif_rate(self.queue, dt, J, R, ref, tau)]
+        amp = (self.RaggedArray([op.neurons.amplitude * np.ones(op.J.size)
+                                 for op in ops], dtype=J.dtype)
+               if any(hasattr(op.neurons, 'amplitude') for op in ops)
+               else None)
+        return [plan_lif_rate(self.queue, dt, J, R, ref, tau, amp=amp)]
 
     def _plan_AdaptiveLIF(self, ops):
         dt = self.model.dt

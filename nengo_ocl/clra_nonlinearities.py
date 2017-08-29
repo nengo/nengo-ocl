@@ -904,7 +904,7 @@ ${code}
 
 
 def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
-             inc_n=None, upsample=1, fastlif=False, **kwargs):
+             inc_n=None, upsample=1, fastlif=False, amp=None, **kwargs):
     adaptive = N is not None
     assert J.ctype == 'float'
     for array in [V, W, outS]:
@@ -919,11 +919,14 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
         inputs.update(dict(N=N))
         outputs.update(dict(outN=N))
         parameters.update(dict(tau_n=tau_n, inc_n=inc_n))
+    if amp:
+        parameters.update(dict(amp=amp))
 
     dt = float(dt)
     textconf = dict(
         type=J.ctype, dt=dt, upsample=upsample, adaptive=adaptive,
-        dtu=dt/upsample, dtu_inv=upsample/dt, dt_inv=1/dt, fastlif=fastlif)
+        dtu=dt/upsample, dtu_inv=upsample/dt, dt_inv=1/dt, fastlif=fastlif,
+        amp=bool(amp))
     decs = """
         char spiked;
         ${type} dV;
@@ -986,6 +989,9 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
 % if adaptive:
         outN = N + (dt / tau_n) * (inc_n * outS - N);
 % endif
+% if amp:
+        outS *= amp;
+% endif
         """
     decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
@@ -996,7 +1002,7 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
 
 
 def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
-                  **kwargs):
+                  amp=None, **kwargs):
     assert J.ctype == 'float'
     assert R.ctype == J.ctype
     adaptive = N is not None
@@ -1004,13 +1010,15 @@ def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
     inputs = dict(J=J)
     outputs = dict(R=R)
     parameters = dict(tau=tau, ref=ref)
-    textconf = dict(type=J.ctype, dt=dt, adaptive=adaptive)
+    textconf = dict(type=J.ctype, dt=dt, adaptive=adaptive, amp=bool(amp))
     if adaptive:
         assert all(ary is not None for ary in [N, tau_n, inc_n])
         assert N.ctype == J.ctype
         inputs.update(dict(N=N))
         outputs.update(dict(outN=N))
         parameters.update(dict(tau_n=tau_n, inc_n=inc_n))
+    if amp:
+        parameters.update(dict(amp=amp))
 
     decs = """
         const ${type} c0 = 0, c1 = 1;
@@ -1025,6 +1033,9 @@ def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
         R = c1 / (ref + tau * log1p(c1/J));
     % if adaptive:
         outN = N + (dt / tau_n) * (inc_n*R - N);
+    % endif
+    % if amp:
+        R *= amp;
     % endif
         """
     decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
