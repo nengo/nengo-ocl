@@ -944,42 +944,42 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
 
 % for ii in range(upsample):
         W -= dtu;
-% if not fastlif:
+  % if not fastlif:
         delta_t = (W > dtu) ? 0 : (W < 0) ? dtu : dtu - W;
-% endif
-% if adaptive:
+  % endif
+  % if adaptive:
         dV = -expm1(-delta_t / tau) * (J - N - V);
-% else:
+  % else:
         dV = -expm1(-delta_t / tau) * (J - V);
-% endif
+  % endif
         V += dV;
 
-% if fastlif:
+  % if fastlif:
         if (V < 0 || W > dtu)
             V = 0;
         else if (W >= 0)
             V *= 1 - W * dtu_inv;
-% endif
+  % endif
 
         if (V > V_threshold) {
-% if fastlif:
+  % if fastlif:
             const ${type} overshoot = dtu * (V - V_threshold) / dV;
             W = ref - overshoot + dtu;
-% else:
+  % else:
             const ${type} t_spike = dtu + tau * log1p(
                 -(V - V_threshold) / (J - V_threshold));
             W = ref + t_spike;
-% endif
+  % endif
             V = 0;
             spiked = 1;
         }
-% if not fastlif:
+  % if not fastlif:
          else if (V < 0) {
             V = 0;
         }
-% endif
-
+  % endif
 % endfor
+
         outV = V;
         outW = W;
         outS = (spiked) ? dt_inv : 0;
