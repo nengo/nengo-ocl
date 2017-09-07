@@ -248,10 +248,6 @@ class Simulator(object):
 
         with Timer() as signals_timer:
             # Initialize signals
-            all_signals = stable_unique(
-                sig for op in operators for sig in op.all_signals)
-            all_bases = stable_unique(sig.base for sig in all_signals)
-
             sigdict = SignalDict()  # map from Signal.base -> ndarray
             for op in operators:
                 op.init_signals(sigdict)
@@ -263,6 +259,9 @@ class Simulator(object):
             self.data = ProbeDict(self._probe_outputs)
 
             # Create data on host and add views
+            all_signals = stable_unique(
+                sig for op in operators for sig in op.all_signals)
+            all_bases = stable_unique(sig.base for sig in all_signals)
             self.all_data = RaggedArray(
                 [sigdict[sb] for sb in all_bases],
                 names=[getattr(sb, 'name', '') for sb in all_bases],
@@ -273,6 +272,9 @@ class Simulator(object):
             for probe in self.model.probes:
                 view_builder.append_view(self.model.sig[probe]['in'])
             view_builder.add_views_to(self.all_data)
+
+            # all_signals.remove(self.model.step)
+            self._cl_n_steps = self.Array(self.model.step.initial_value, dtype=np.uint32)
 
             self.all_bases = all_bases
             self.sidx = {
@@ -343,7 +345,16 @@ class Simulator(object):
         """
         Return internally shaped signals, which are always 2d
         """
-        return self.all_data[self.sidx[item]]
+        if item is self.model.step:
+            return self._cl_n_steps.get()
+        else:
+            return self.all_data[self.sidx[item]]
+
+    def __setitem__(self, item, val):
+        if item is self.model.step:
+            self._cl_n_steps.set(val)
+        else:
+            self.all_data[self.sidx[item]] = val
 
     @property
     def dt(self):
@@ -374,7 +385,7 @@ class Simulator(object):
                 return iter(self.all_bases)
 
             def __getitem__(_, item):
-                raw = self.all_data[self.sidx[item]]
+                raw = self[item]
                 if item.ndim == 0:
                     return raw[0, 0]
                 elif item.ndim == 1:
@@ -388,13 +399,13 @@ class Simulator(object):
                 incoming = np.asarray(val)
                 if item.ndim == 0:
                     assert incoming.size == 1
-                    self.all_data[self.sidx[item]] = incoming
+                    self[item] = incoming
                 elif item.ndim == 1:
                     assert (item.size,) == incoming.shape
-                    self.all_data[self.sidx[item]] = incoming[:, None]
+                    self[item] = incoming[:, None]
                 elif item.ndim == 2:
                     assert item.shape == incoming.shape
-                    self.all_data[self.sidx[item]] = incoming
+                    self[item] = incoming
                 else:
                     raise NotImplementedError()
 
@@ -630,7 +641,9 @@ class Simulator(object):
 
     def plan_TimeUpdate(self, ops):
         op, = ops
-        step = self.all_data[[self.sidx[op.step]]]
+        # step = self.all_data[[self.sidx[op.step]]]
+        step = self._cl_n_steps
+        # TODO: fix plan_timeupdate to take clArray for step
         time = self.all_data[[self.sidx[op.time]]]
         return [plan_timeupdate(self.queue, step, time, self.model.dt)]
 
@@ -962,7 +975,8 @@ class Simulator(object):
 
     def _plan_WhiteSignal(self, ops):
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        s = self[self.model.step]
+        # t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
 
         dt = self.model.dt
         signals = []
@@ -973,17 +987,18 @@ class Simulator(object):
             signals.append(get_closures(f)['signal'])
 
         signals = self.RaggedArray(signals, dtype=np.float32)
-        return [plan_presentinput(self.queue, Y, t, signals, dt)]
+        return [plan_presentinput(self.queue, Y, s, signals, dt)]
 
     def _plan_PresentInput(self, ops):
         ps = [op.process for op in ops]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        # t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        s = self[self.model.step]
         inputs = self.RaggedArray([p.inputs.reshape(p.inputs.shape[0], -1)
                                    for p in ps], dtype=np.float32)
         pres_t = self.Array([p.presentation_time for p in ps])
         dt = self.model.dt
-        return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
+        return [plan_presentinput(self.queue, Y, s, inputs, dt, pres_t=pres_t)]
 
     def _plan_Conv2d(self, ops):
         plans = []

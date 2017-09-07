@@ -1447,21 +1447,19 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
     return plan
 
 
-def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
+def plan_presentinput(queue, Y, s, X, dt, pres_t=None, tag=None):
     N = len(Y)
-    assert len(Y) == len(t) == len(signals)
+    assert len(Y) == len(signals)
     assert pres_t is None or pres_t.shape == (N,)
 
-    for arr in [Y, t, signals]:
+    for arr in [Y, X]:
         assert (arr.stride1s == 1).all()
 
     assert (Y.shape1s == 1).all()
     assert (Y.stride0s == 1).all()
+    assert (Y.shape0s == X.shape1s).all()
 
-    assert (t.shape0s == 1).all()
-    assert (t.shape1s == 1).all()
-
-    assert (Y.shape0s == signals.shape1s).all()
+    assert s.shape == (1, 1)
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -1472,11 +1470,10 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
             __global const int *Yshape0s,
             __global const int *Ystarts,
             __global ${Ytype} *Ydata,
-            __global const int *Tstarts,
-            __global ${Ttype} *Tdata,
-            __global const int *Sshape0s,
-            __global const int *Sstarts,
-            __global ${Stype} *Sdata
+            __global ${Stype} *Sdata,
+            __global const int *Xshape0s,
+            __global const int *Xstarts,
+            __global ${Xtype} *Xdata
         )
         {
             int i = get_global_id(0);
@@ -1486,35 +1483,33 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
                 return;
 
             __global ${Ytype} *y = Ydata + Ystarts[k];
-            __global ${Ytype} *s = Sdata + Sstarts[k];
-            const int it = *(Tdata + Tstarts[k]);
-            const int nt = Sshape0s[k];
+            __global ${Xtype} *x = Xdata + Xstarts[k];
+            const ${Stype} s = *Sdata;
+            const int n = Xshape0s[k];
     % if Ptype is not None:
-            const float pt = Pdata[k];
-            const int ti = (int)((it - 0.5f) * (${dt}f / pt)) % nt;
+            const ${Ptype} p = Pdata[k];
+            const ${Stype} ti = (int)((s - 0.5f) * (${dt}f / pt)) % nt;
     % else:
-            const int ti = (int)it % nt;
+            const ${Stype} ti = s % n;
     % endif
 
             for (; i < m; i += get_global_size(0))
-                y[i] = s[m*ti + i];
+                y[i] = x[m*ti + i];
         }
         """
 
-    textconf = dict(Ytype=Y.ctype, Ttype=t.ctype, Stype=signals.ctype,
-                    Ptype=pres_t.ctype if pres_t is not None else None,
-                    dt=dt)
+    textconf = dict(dt=dt, Ytype=Y.ctype, Stype=s.ctype, Xtype=X.ctype,
+                    Ptype=pres_t.ctype if pres_t is not None else None)
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = ((pres_t,) if pres_t is not None else ()) + (
         Y.cl_shape0s,
         Y.cl_starts,
         Y.cl_buf,
-        t.cl_starts,
-        t.cl_buf,
-        signals.cl_shape0s,
-        signals.cl_starts,
-        signals.cl_buf,
+        s,
+        X.cl_shape0s,
+        X.cl_starts,
+        X.cl_buf,
     )
     _fn = cl.Program(queue.context, text).build().presentinput
     _fn.set_args(*[arr.data for arr in full_args])
