@@ -228,7 +228,7 @@ class Simulator(object):
 
         logger.info("Nengo build in %0.3f s" % nengo_timer.duration)
 
-        # --- operators
+        # --- use planner to determine operator grouping and order
         with Timer() as planner_timer:
             operators = list(self.model.operators)
 
@@ -246,7 +246,14 @@ class Simulator(object):
 
         logger.info("Planning in %0.3f s" % planner_timer.duration)
 
+        # --- create OpenCL signals (allocate memory on device)
         with Timer() as signals_timer:
+            # Add built states to the probe dictionary
+            self._probe_outputs = dict(self.model.params)
+
+            # Provide a nicer interface to probe outputs
+            self.data = ProbeDict(self._probe_outputs)
+
             # Initialize signals
             all_signals = stable_unique(
                 sig for op in operators for sig in op.all_signals)
@@ -256,23 +263,19 @@ class Simulator(object):
             for op in operators:
                 op.init_signals(sigdict)
 
-            # Add built states to the probe dictionary
-            self._probe_outputs = dict(self.model.params)
-
-            # Provide a nicer interface to probe outputs
-            self.data = ProbeDict(self._probe_outputs)
+            self._cl_n_steps = self.Array(sigdict[self.model.step], dtype=np.int32)
 
             # Create data on host and add views
-            self.all_data = RaggedArray(
+            host_data = RaggedArray(
                 [sigdict[sb] for sb in all_bases],
                 names=[getattr(sb, 'name', '') for sb in all_bases],
                 dtype=np.float32)
 
-            view_builder = ViewBuilder(all_bases, self.all_data)
+            view_builder = ViewBuilder(all_bases, host_data)
             view_builder.setup_views(operators)
             for probe in self.model.probes:
                 view_builder.append_view(self.model.sig[probe]['in'])
-            view_builder.add_views_to(self.all_data)
+            view_builder.add_views_to(host_data)
 
             self.all_bases = all_bases
             self.sidx = {
@@ -283,7 +286,7 @@ class Simulator(object):
             del view_builder
 
             # Copy data to device
-            self.all_data = CLRaggedArray(self.queue, self.all_data)
+            self.all_data = CLRaggedArray(self.queue, host_data)
 
         logger.info("Signals in %0.3f s" % signals_timer.duration)
 
@@ -296,6 +299,7 @@ class Simulator(object):
         self._cl_rngs = {}
         self._python_rngs = {}
 
+        # --- build OpenCL plans from operators
         plans = []
         with Timer() as plans_timer:
             for op_type, op_list in op_groups:
@@ -962,7 +966,8 @@ class Simulator(object):
 
     def _plan_WhiteSignal(self, ops):
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        s = self._cl_n_steps
+        # s = self.all_data[[self.sidx[self.model.step] for _ in ops]]
 
         dt = self.model.dt
         signals = []
