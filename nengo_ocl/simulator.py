@@ -234,7 +234,7 @@ class Simulator(object):
 
         logger.info("Nengo build in %0.3f s" % nengo_timer.duration)
 
-        # --- operators
+        # --- use planner to determine operator grouping and order
         with Timer() as planner_timer:
             operators = list(self.model.operators)
 
@@ -252,7 +252,14 @@ class Simulator(object):
 
         logger.info("Planning in %0.3f s" % planner_timer.duration)
 
+        # --- create OpenCL signals (allocate memory on device)
         with Timer() as signals_timer:
+            # Add built states to the probe dictionary
+            self._probe_outputs = dict(self.model.params)
+
+            # Provide a nicer interface to probe outputs
+            self.data = ProbeDict(self._probe_outputs)
+
             # Initialize signals
             all_signals = stable_unique(
                 sig for op in operators for sig in op.all_signals)
@@ -262,23 +269,17 @@ class Simulator(object):
             for op in operators:
                 op.init_signals(sigdict)
 
-            # Add built states to the probe dictionary
-            self._probe_outputs = dict(self.model.params)
-
-            # Provide a nicer interface to probe outputs
-            self.data = ProbeDict(self._probe_outputs)
-
             # Create data on host and add views
-            self.all_data = RaggedArray(
+            host_data = RaggedArray(
                 [sigdict[sb] for sb in all_bases],
                 names=[getattr(sb, 'name', '') for sb in all_bases],
                 dtype=np.float32)
 
-            view_builder = ViewBuilder(all_bases, self.all_data)
+            view_builder = ViewBuilder(all_bases, host_data)
             view_builder.setup_views(operators)
             for probe in self.model.probes:
                 view_builder.append_view(self.model.sig[probe]['in'])
-            view_builder.add_views_to(self.all_data)
+            view_builder.add_views_to(host_data)
 
             self.all_bases = all_bases
             self.sidx = {
@@ -288,8 +289,17 @@ class Simulator(object):
             self._YYB_views = view_builder._YYB_views
             del view_builder
 
+            # Store step separately as integer
+            step_bases = [self.model.step]
+            self.sidx.pop(self.model.step)
+            step_data = RaggedArray(
+                [sigdict[sb] for sb in step_bases],
+                names=[getattr(sb, 'name', '') for sb in step_bases],
+                dtype=np.int32)
+            self._cl_step = CLRaggedArray(self.queue, step_data)
+
             # Copy data to device
-            self.all_data = CLRaggedArray(self.queue, self.all_data)
+            self.all_data = CLRaggedArray(self.queue, host_data)
 
         logger.info("Signals in %0.3f s" % signals_timer.duration)
 
@@ -302,6 +312,7 @@ class Simulator(object):
         self._cl_rngs = {}
         self._python_rngs = {}
 
+        # --- build OpenCL plans from operators
         plans = []
         with Timer() as plans_timer:
             for op_type, op_list in op_groups:
@@ -447,8 +458,8 @@ class Simulator(object):
         self.queue.finish()
 
     def _probe_step_time(self):
-        self._n_steps = self.signals[self.model.step].copy()
-        self._time = self.signals[self.model.time].copy()
+        self._n_steps = self._cl_step[0][0, 0]
+        self._time = self.signals[self.model.time]
 
     def _reset_probes(self):
         if self._cl_probe_plan is not None:
@@ -471,7 +482,10 @@ class Simulator(object):
         for base in self.all_bases:
             # TODO: copy all data on at once
             if not base.readonly:
-                self.all_data[self.sidx[base]] = base.initial_value
+                if base is self.model.step:
+                    self._cl_step[0] = base.initial_value
+                else:
+                    self.all_data[self.sidx[base]] = base.initial_value
 
         for clra, ra in iteritems(self._raggedarrays_to_reset):
             # TODO: copy all data on at once
@@ -524,9 +538,9 @@ class Simulator(object):
         if self.closed:
             raise SimulatorClosed("Simulator cannot run because it is closed.")
 
-        if self.n_steps + N >= 2**24:
-            # since n_steps is float32, point at which `n_steps == n_steps + 1`
-            raise ValueError("Cannot handle more than 2**24 steps")
+        if self.n_steps + N >= 2**31:
+            # since n_steps is int32
+            raise ValueError("Cannot handle more than 2**31 steps")
 
         if self._cl_probe_plan is not None:
             # -- precondition: the probe buffers have been drained
@@ -654,7 +668,7 @@ class Simulator(object):
 
     def plan_TimeUpdate(self, ops):
         op, = ops
-        step = self.all_data[[self.sidx[op.step]]]
+        step = self._cl_step[[0]]
         time = self.all_data[[self.sidx[op.time]]]
         return [plan_timeupdate(self.queue, step, time, self.model.dt)]
 
@@ -985,7 +999,7 @@ class Simulator(object):
 
     def _plan_WhiteSignal(self, ops):
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        s = self._cl_step[[0 for _ in ops]]
 
         dt = self.model.dt
         signals = []
@@ -996,17 +1010,17 @@ class Simulator(object):
             signals.append(get_closures(f)['signal'])
 
         signals = self.RaggedArray(signals, dtype=np.float32)
-        return [plan_presentinput(self.queue, Y, t, signals, dt)]
+        return [plan_presentinput(self.queue, Y, s, signals, dt)]
 
     def _plan_PresentInput(self, ops):
         ps = [op.process for op in ops]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        s = self._cl_step[[0 for _ in ops]]
         inputs = self.RaggedArray([p.inputs.reshape(p.inputs.shape[0], -1)
                                    for p in ps], dtype=np.float32)
         pres_t = self.Array([p.presentation_time for p in ps])
         dt = self.model.dt
-        return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
+        return [plan_presentinput(self.queue, Y, s, inputs, dt, pres_t=pres_t)]
 
     def _plan_Conv2d(self, ops):
         plans = []
