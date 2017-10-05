@@ -250,11 +250,11 @@ class CLRaggedArray(object):
                 # contiguous
                 clarray = self.getitem_device(item)
                 if isinstance(new_value, np.ndarray):
-                    array = np.asarray(new_value, dtype=self.dtype,
-                                       order=self.order)
+                    array = np.asarray(
+                        new_value, dtype=self.dtype, order=self.order)
                 else:
-                    array = np.zeros(clarray.shape, dtype=clarray.dtype,
-                                     order=self.order)
+                    array = np.zeros(
+                        clarray.shape, dtype=clarray.dtype, order=self.order)
                     array[...] = new_value
 
                 array.shape = clarray.shape  # reshape to avoid warning

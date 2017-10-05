@@ -78,8 +78,12 @@ class ViewBuilder(object):
         self.shape0s.append(shape0)
         self.shape1s.append(shape1)
         if self.order == 'F':
+            assert 0, "TODO"
+            # This needs to account for strides, while making sure things are col-major
             self.stride0s.append(1)
             self.stride1s.append(shape0)
+            # self.stride0s.append(obj.elemstrides[0] if shape0 > 1 else 1)
+            # self.stride1s.append(obj.elemstrides[1] if shape1 > 1 else 1)
         else:
             self.stride0s.append(obj.elemstrides[0] if shape0 > 1 else 1)
             self.stride1s.append(obj.elemstrides[1] if shape1 > 1 else 1)
@@ -534,9 +538,6 @@ class Simulator(object):
                 N -= B
                 progress.step(n=B)
 
-        if self.profiling:
-            self.print_profiling()
-
     def step(self):
         return self.run_steps(1, progress_bar=False)
 
@@ -620,18 +621,29 @@ class Simulator(object):
         if len(ops) == 0:
             return []
 
-        all_data, sidx = self.all_data, self.sidx
-        A_js = RaggedArray([[sidx[ss] for ss in A_js_fn(op)] for op in ops])
-        X_js = RaggedArray([[sidx[ss] for ss in X_js_fn(op)] for op in ops])
+        def get_arrays_and_indices(js_fn):
+            # Return view of A/X arrays used, with indices to that array
+            xidx = [[self.sidx[ss] for ss in js_fn(op)] for op in ops]
+            uidx = np.unique(xidx)
+            xmap = dict(zip(uidx, range(len(uidx))))
+            Xs = self.all_data[uidx]
+            X_js = RaggedArray([[xmap[idx] for idx in row] for row in xidx],
+                               dtype=np.int32)
+            return Xs, X_js
+
+        As, A_js = get_arrays_and_indices(A_js_fn)
+        Xs, X_js = get_arrays_and_indices(X_js_fn)
+
         Y_sigs = [Y_fn(item) for item in ops]
         Y_in_sigs = [Y_in_fn(item) for item in ops] if Y_in_fn else Y_sigs
-        Y = all_data[[sidx[sig] for sig in Y_sigs]]
-        Y_in = all_data[[sidx[sig] for sig in Y_in_sigs]]
+        Y = self.all_data[[self.sidx[sig] for sig in Y_sigs]]
+        Y_in = self.all_data[[self.sidx[sig] for sig in Y_in_sigs]]
         if callable(beta):
-            beta = RaggedArray([sidx[beta(o)] for o in ops], dtype=np.float32)
+            beta = RaggedArray([self.sidx[beta(o)] for o in ops],
+                               dtype=np.float32)
 
         rval = plan_one_thread_per_row_gemv(
-            self.queue, alpha, all_data, A_js, all_data, X_js, beta, Y,
+            self.queue, alpha, As, A_js, Xs, X_js, beta, Y,
             Y_in=Y_in, gamma=gamma, tag=tag)
         return rval.plans
 
@@ -929,10 +941,10 @@ class Simulator(object):
         X = self.all_data[[self.sidx[op.input] for op in ops]]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
         Xbuf0 = RaggedArray(
-            [np.zeros(shape) for shape in zip(B.sizes, X.sizes)],
+            [np.zeros(shape) for shape in zip(X.sizes, B.sizes)],
             dtype=np.float32)
         Ybuf0 = RaggedArray(
-            [np.zeros(shape) for shape in zip(A.sizes, Y.sizes)],
+            [np.zeros(shape) for shape in zip(Y.sizes, A.sizes)],
             dtype=np.float32)
         Xbuf = CLRaggedArray(self.queue, Xbuf0)
         Ybuf = CLRaggedArray(self.queue, Ybuf0)
@@ -969,7 +981,7 @@ class Simulator(object):
             assert op.input is None and op.output is not None
             rng = op.process.get_rng(self.rng)
             f = op.process.make_step((0,), op.output.shape, dt, rng)
-            signals.append(get_closures(f)['signal'])
+            signals.append(get_closures(f)['signal'].T)
 
         signals = self.RaggedArray(signals, dtype=np.float32)
         return [plan_presentinput(self.queue, Y, t, signals, dt)]
@@ -978,7 +990,7 @@ class Simulator(object):
         ps = [op.process for op in ops]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
         t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
-        inputs = self.RaggedArray([p.inputs.reshape(p.inputs.shape[0], -1)
+        inputs = self.RaggedArray([p.inputs.reshape(p.inputs.shape[0], -1).T
                                    for p in ps], dtype=np.float32)
         pres_t = self.Array([p.presentation_time for p in ps])
         dt = self.model.dt

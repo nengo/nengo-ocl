@@ -165,20 +165,22 @@ def test_lif_rate(ctx, blockify):
 
 def test_copy(ctx, rng):
     sizes = [(10, 1), (40, 64), (457, 342), (1, 100)]
-    X = RA([rng.normal(size=size) for size in sizes])
+    X = RA([rng.uniform(-1, 1, size=size) for size in sizes])
+    Y = RA([rng.uniform(-1, 1, size=size) for size in sizes])
     incs = rng.randint(0, 2, size=len(sizes)).astype(np.int32)
 
     queue = cl.CommandQueue(ctx)
     clX = CLRA(queue, X)
-    clY = CLRA(queue, RA([np.zeros_like(x) for x in X]))
+    clY = CLRA(queue, Y)
 
     # compute on device
     plan = plan_copy(queue, clX, clY, incs)
     plan()
 
     # check result
-    for x, y in zip(X, clY.to_host()):
-        assert np.allclose(y, x)
+    for x, y, z, inc in zip(X, Y, clY.to_host(), incs):
+        xy = y + x if inc else x
+        assert np.allclose(z, xy)
 
 
 def test_elementwise_inc(ctx, rng):
@@ -296,8 +298,8 @@ def test_linearfilter(ctx, n_per_kind, rng):
 
     X = RA([rng.normal(size=n) for kind, n in kinds_n])
     Y = RA([np.zeros(n) for kind, n in kinds_n])
-    Xbuf = RA([np.zeros(shape) for shape in zip(B.sizes, X.sizes)])
-    Ybuf = RA([np.zeros(shape) for shape in zip(A.sizes, Y.sizes)])
+    Xbuf = RA([np.zeros(shape) for shape in zip(X.sizes, B.sizes)])
+    Ybuf = RA([np.zeros(shape) for shape in zip(Y.sizes, A.sizes)])
 
     queue = cl.CommandQueue(ctx)
     clA = CLRA(queue, A)

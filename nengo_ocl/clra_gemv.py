@@ -129,6 +129,9 @@ class Geometry(object):
     def __getitem__(self, key):
         return self._dbbs[key]
 
+    def __iteritems__(self):
+        return self._dbbs
+
     def __str__(self):
         return self.summary()
 
@@ -1128,6 +1131,8 @@ def one_thread_per_row_impl(p, items):
     """Each thread computes the dot product over one row.
        The rows are grouped consecutively when y_len is small.
     """
+    assert len(items) > 0
+
     if p.clra_alpha is not None:
         raise NotImplementedError()
     if p.clra_gamma is not None:
@@ -1139,10 +1144,7 @@ def one_thread_per_row_impl(p, items):
     if p.cl_gamma is not None:
         raise NotImplementedError()
     if not all(s == 1 for s in p.A.stride0s):
-        raise NotImplementedError('A must be in column major')
-
-    num_items = len(items)
-    assert num_items > 0
+        raise NotImplementedError('A must be column-contiguous')
 
     assert p.float_alpha is not None
     assert p.float_gamma is not None
@@ -1151,23 +1153,21 @@ def one_thread_per_row_impl(p, items):
         # -- easy probably, but not done
         raise NotImplementedError()
 
-    cl_gstructure, textconf = p.cl_geometry_and_textconf(items,
-                                                         stride=1)
+    cl_gstructure, textconf = p.cl_geometry_and_textconf(items, stride=1)
 
     max_y_len = max(p.geometry[ii].y_len for ii in items)
     max_n_dots = max(len(p.geometry[ii].dots) for ii in items)
     all_same_y_len = len(set(p.geometry[ii].y_len for ii in items)) == 1
-
 
     # Compute in consecutive threads if max_y_len is small,
     # and all y_len are the same.
     # TODO autotune
     if all_same_y_len and max_y_len < 64:
         consecutive = True
-        gsize = (max_y_len * num_items,)
+        gsize = (max_y_len * len(items),)
     else:
         consecutive = False
-        gsize = (max_y_len, num_items)
+        gsize = (max_y_len, len(items))
 
     textconf.update({
         'max_n_dots': max_n_dots,
@@ -1176,21 +1176,6 @@ def one_thread_per_row_impl(p, items):
         'all_same_y_len': all_same_y_len,
     })
     textconf.update(p.__dict__)
-
-    """
-    int i, item_i;
-% for ix, sprev, s, item_i in zip(range(len(items)), num_rows, num_rows[1:], items):
-    % if ix == 0:
-         if (global_i < ${s})
-    % else:
-         else if (global_i < ${s})
-    % endif
-         {
-            item_i = ${item_i};
-            i = global_i - ${sprev};
-         }
-    % endfor
-    """
 
     text = """
     __kernel void gemv(
@@ -1235,7 +1220,7 @@ def one_thread_per_row_impl(p, items):
             const __global ${A.cl_buf.ctype}* a = A_data + ${a_starts} + i;
             const __global ${X.cl_buf.ctype}* x = X_data + ${x_starts};
 
-            for (int j=0;j<n_i;j++)
+            for (int j = 0; j < n_i; j++)
                 sum += a[a_s1*j] * x[j];
 
     % if max_n_dots > 1:

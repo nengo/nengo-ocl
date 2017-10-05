@@ -34,9 +34,9 @@ class RaggedArray(object):
     """
 
     def __init__(self, arrays, names=None, dtype=None, align=False, order='F'):
-        assert order in ('C','F')
+        assert order in ('C', 'F')
 
-        arrays = [np.asarray(a, order=order) for a in arrays]
+        arrays = [np.asarray(a) for a in arrays]
         assert len(arrays) > 0
         assert all(a.ndim <= 2 for a in arrays)
 
@@ -57,12 +57,13 @@ class RaggedArray(object):
         self.starts = starts
         self.shape0s = [a.shape[0] if a.ndim > 0 else 1 for a in arrays]
         self.shape1s = [a.shape[1] if a.ndim > 1 else 1 for a in arrays]
-        self.stride0s = [a.strides[0] // a.itemsize
-                         if a.ndim > 0 else 1 for a in arrays]
-        self.stride1s = [a.strides[1] // a.itemsize
-                         if a.ndim > 1 else
-                         (max(a.shape[0], 1) if a.ndim > 0 and order == 'F' else 1)
-                         for a in arrays]
+
+        if order == 'C':
+            self.stride0s = [a.shape[1] if a.ndim > 1 else 1 for a in arrays]
+            self.stride1s = [1 for a in arrays]
+        elif order == 'F':
+            self.stride0s = [1 for a in arrays]
+            self.stride1s = [a.shape[0] if a.ndim > 1 else 1 for a in arrays]
 
         buf = np.zeros(starts[-1] + arrays[-1].size, dtype=dtype)
         for a, s in zip(arrays, starts):
@@ -70,7 +71,6 @@ class RaggedArray(object):
 
         self.buf = buf
         self.names = names
-
         self.order = order
 
         self._sizes = None
@@ -138,7 +138,7 @@ class RaggedArray(object):
         self._shape1s = np.array(shape1s, dtype='int32')
         self._shape1s.setflags(write=False)
         self._sizes = None
-        assert np.all(self.shape1s > 0)
+        assert np.all(self.shape1s >= 0)
         assert self.shape1s.size == self.starts.size
 
     @property

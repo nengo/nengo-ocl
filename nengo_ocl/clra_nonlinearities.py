@@ -18,6 +18,19 @@ def get_mwgs(queue, cap=256):
     return min(queue.device.max_work_group_size, cap)
 
 
+def update_param(textconf, raname, param, pname, index='n'):
+    textconf[raname + pname] = (
+        str(param[0]) if (param == param[0]).all() else
+        '%s%ss[%s]' % (raname, pname, index))
+
+
+def update_geometry(textconf, ra, raname, index='n'):
+    update_param(textconf, raname, ra.shape0s, 'shape0', index=index)
+    update_param(textconf, raname, ra.shape1s, 'shape1', index=index)
+    update_param(textconf, raname, ra.stride0s, 'stride0', index=index)
+    update_param(textconf, raname, ra.stride1s, 'stride1', index=index)
+
+
 def blockify_ij(max_size, ra):
     """Blockify a single matrix or vector using the offset method"""
     sizes = []
@@ -207,8 +220,6 @@ def plan_copy(queue, X, Y, incs, tag=None):
     assert len(X) == len(Y)
     assert (X.shape0s == Y.shape0s).all()
     assert (X.shape1s == Y.shape1s).all()
-    assert (X.stride0s == 1).all()
-    assert (Y.stride0s == 1).all()
     assert X.ctype == Y.ctype
 
     text = """
@@ -220,9 +231,11 @@ def plan_copy(queue, X, Y, incs, tag=None):
             __global const int *offsets,
             __global const int *shape0s,
             __global const int *shape1s,
+            __global const int *Xstride0s,
             __global const int *Xstride1s,
             __global const int *Xstarts,
             __global const ${Xtype} *Xdata,
+            __global const int *Ystride0s,
             __global const int *Ystride1s,
             __global const int *Ystarts,
             __global ${Ytype} *Ydata
@@ -232,10 +245,10 @@ def plan_copy(queue, X, Y, incs, tag=None):
             const int ij = get_global_id(0) + offsets[n];
 
             const int shape0 = shape0s[n];
-            const int i = ij / shape0;
-            const int j = ij % shape0;
-            const int xo = Xstarts[n] + i + j*Xstride1s[n];
-            const int yo = Ystarts[n] + i + j*Ystride1s[n];
+            const int i = ij % shape0;
+            const int j = ij / shape0;
+            const int xo = Xstarts[n] + i*${Xstride0} + j*${Xstride1};
+            const int yo = Ystarts[n] + i*${Ystride0} + j*${Ystride1};
 
             if (j < shape1s[n]) {
     % if inc is True:
@@ -257,14 +270,18 @@ def plan_copy(queue, X, Y, incs, tag=None):
     gsize = (lsize0, len(sizes))
 
     textconf = dict(Xtype=X.ctype, Ytype=Y.ctype, inc=None)
+    update_geometry(textconf, X, 'X', index='n')
+    update_geometry(textconf, Y, 'Y', index='n')
 
     full_args = [
         to_device(queue, offsets),
         to_device(queue, X.shape0s[inds]),
         to_device(queue, X.shape1s[inds]),
+        to_device(queue, X.stride0s[inds]),
         to_device(queue, X.stride1s[inds]),
         to_device(queue, X.starts[inds]),
         X.cl_buf,
+        to_device(queue, Y.stride0s[inds]),
         to_device(queue, Y.stride1s[inds]),
         to_device(queue, Y.starts[inds]),
         Y.cl_buf,
@@ -330,18 +347,17 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
             __global ${Ytype} *b = Ydata + Ystarts[n];
             __global const int *aind = XIdata + XIstarts[n];
             __global const int *bind = YIdata + YIstarts[n];
-            const int Xstride0 = Xstride0s[n], Ystride0 = Ystride0s[n];
 
             if (i < Isizes[n]) {
     % if inc is True:
-                b[bind[i]*Ystride0] += a[aind[i]*Xstride0];
+                b[bind[i]*${Ystride0}] += a[aind[i]*${Xstride0}];
     % elif inc is False:
-                b[bind[i]*Ystride0] = a[aind[i]*Xstride0];
+                b[bind[i]*${Ystride0}] = a[aind[i]*${Xstride0}];
     % else:
                 if (incdata[n])
-                    b[bind[i]*Ystride0] += a[aind[i]*Xstride0];
+                    b[bind[i]*${Ystride0}] += a[aind[i]*${Xstride0}];
                 else
-                    b[bind[i]*Ystride0] = a[aind[i]*Xstride0];
+                    b[bind[i]*${Ystride0}] = a[aind[i]*${Xstride0}];
     % endif
             }
         }
@@ -358,6 +374,8 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
     gsize = (lsize0, round_up(N, lsize1))
 
     textconf = dict(Xtype=X.ctype, Ytype=Y.ctype, N=N, inc=None)
+    update_geometry(textconf, X, 'X', index='n')
+    update_geometry(textconf, Y, 'Y', index='n')
 
     full_args = [
         to_device(queue, X.stride0s[inds]),
@@ -397,8 +415,6 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     """Implements an element-wise increment Y += A * X"""
     assert len(Y) == len(X) == len(A)
 
-    for arr in [A, X, Y]:
-        assert (arr.stride0s == 1).all()
     assert ((X.shape0s == 1) | (X.shape0s == Y.shape0s)).all()
     assert ((X.shape1s == 1) | (X.shape1s == Y.shape1s)).all()
     assert ((A.shape0s == 1) | (A.shape0s == Y.shape0s)).all()
@@ -410,7 +426,8 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     text = """
         inline ${Ytype} get_element(
             __global const ${Ytype} *data,
-            const int shape0, const int shape1, const int stride1,
+            const int shape0, const int shape1,
+            const int stride0, const int stride1,
             const int i, const int j
         )
         {
@@ -419,9 +436,9 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             else if (shape0 == 1)
                 return data[j*stride1];
             else if (shape1 == 1)
-                return data[i];
+                return data[i*stride0];
             else
-                return data[i + j*stride1];
+                return data[i*stride0 + j*stride1];
         }
 
         ////////// MAIN FUNCTION //////////
@@ -429,16 +446,19 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             __global const int *offsets,
             __global const int *Ashape0s,
             __global const int *Ashape1s,
+            __global const int *Astride0s,
             __global const int *Astride1s,
             __global const int *Astarts,
             __global const ${Atype} *Adata,
             __global const int *Xshape0s,
             __global const int *Xshape1s,
+            __global const int *Xstride0s,
             __global const int *Xstride1s,
             __global const int *Xstarts,
             __global const ${Xtype} *Xdata,
             __global const int *Yshape0s,
             __global const int *Yshape1s,
+            __global const int *Ystride0s,
             __global const int *Ystride1s,
             __global const int *Ystarts,
             __global ${Ytype} *Ydata
@@ -451,19 +471,17 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             __global const ${Xtype} *x = Xdata + Xstarts[n];
             __global ${Ytype} *y = Ydata + Ystarts[n];
 
-            const int Ystride1 = Ystride1s[n];
-            const int Yshape0 = Yshape0s[n];
-            const int Yshape1 = Yshape1s[n];
+            const int Yshape0 = ${Yshape0};
             const int i = ij % Yshape0;
             const int j = ij / Yshape0;
 
             ${Atype} aa = get_element(
-                a, Ashape0s[n], Ashape1s[n], Astride1s[n], i, j);
+                a, ${Ashape0}, ${Ashape1}, ${Astride0}, ${Astride1}, i, j);
             ${Xtype} xx = get_element(
-                x, Xshape0s[n], Xshape1s[n], Xstride1s[n], i, j);
+                x, ${Xshape0}, ${Xshape1}, ${Xstride0}, ${Xstride1}, i, j);
 
-            if (j < Yshape1)
-                y[i + j*Ystride1] += aa * xx;
+            if (j < ${Yshape1})
+                y[i*${Ystride0} + j*${Ystride1}] += aa * xx;
         }
         """
 
@@ -472,22 +490,28 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     sizes, inds, offsets = blockify_ij(lsize0, Y)
 
     textconf = dict(Atype=A.ctype, Xtype=X.ctype, Ytype=Y.ctype)
+    update_geometry(textconf, A, 'A', index='n')
+    update_geometry(textconf, X, 'X', index='n')
+    update_geometry(textconf, Y, 'Y', index='n')
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
         to_device(queue, offsets),
         to_device(queue, A.shape0s[inds]),
         to_device(queue, A.shape1s[inds]),
+        to_device(queue, A.stride0s[inds]),
         to_device(queue, A.stride1s[inds]),
         to_device(queue, A.starts[inds]),
         A.cl_buf,
         to_device(queue, X.shape0s[inds]),
         to_device(queue, X.shape1s[inds]),
+        to_device(queue, X.stride0s[inds]),
         to_device(queue, X.stride1s[inds]),
         to_device(queue, X.starts[inds]),
         X.cl_buf,
         to_device(queue, Y.shape0s[inds]),
         to_device(queue, Y.shape1s[inds]),
+        to_device(queue, Y.stride0s[inds]),
         to_device(queue, Y.stride1s[inds]),
         to_device(queue, Y.starts[inds]),
         Y.cl_buf,
@@ -515,22 +539,24 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     """
     assert len(X) == len(Y) == len(A) == len(B) == len(Xbuf) == len(Ybuf)
 
-    # X, Y
     assert (X.shape0s == Y.shape0s).all()
     assert (X.shape1s == Y.shape1s).all()
 
-    # A, B, Xbuf, Ybuf
-    for arr in [A, B, Xbuf, Ybuf]:  # contiguous
+    for arr in (Xbuf, Ybuf):  # contiguous
         assert (arr.shape0s == arr.stride1s).all()
         assert (arr.stride0s == 1).all()
-    for arr in [A, B]:  # vectors
+    for arr in (A, B):  # vectors
         assert (arr.shape1s == 1).all()
-    assert (B.shape0s >= 1).all()
-    assert ((B.shape0s == 1) | (Xbuf.shape0s == B.shape0s)).all()
-    assert ((A.shape0s == 1) | (Ybuf.shape0s == A.shape0s)).all()
+        assert (arr.stride0s == 1).all()
 
-    assert (Xbuf.shape1s == X.sizes).all()
-    assert (Ybuf.shape1s == Y.sizes).all()
+    assert (B.shape0s >= 1).all()
+    assert (Xbuf.shape1s == B.shape0s).all()
+    assert (Ybuf.shape1s == A.shape0s).all()
+    # assert ((B.shape0s == 1) | (Xbuf.shape1s == B.shape0s)).all()
+    # assert ((A.shape0s == 1) | (Ybuf.shape1s == A.shape0s)).all()
+
+    assert (Xbuf.shape0s == X.sizes).all()
+    assert (Ybuf.shape0s == Y.sizes).all()
     assert X.ctype == Xbuf.ctype
     assert Y.ctype == Ybuf.ctype
 
@@ -569,8 +595,8 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
             const int shape1 = shape1s[k];
             const int i = ij % shape0;
             const int j = ij / shape0;
-            const int xij = Xstarts[k] + i*Xstride0s[k] + j*Xstride1s[k];
-            const int yij = Ystarts[k] + i*Ystride0s[k] + j*Ystride1s[k];
+            const int xij = Xstarts[k] + i*${Xstride0} + j*${Xstride1};
+            const int yij = Ystarts[k] + i*${Ystride0} + j*${Ystride1};
 
             const int na = Ashape0s[k];
             const int nb = Bshape0s[k];
@@ -652,6 +678,8 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
         Xtype=X.ctype, Ytype=Y.ctype, Atype=A.ctype, Btype=B.ctype,
         na_max=na_max, nb_max=nb_max, uses_buf=uses_buf,
     )
+    update_geometry(textconf, X, 'X', index='k')
+    update_geometry(textconf, Y, 'Y', index='k')
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     max_len = X.sizes.max()
@@ -835,8 +863,8 @@ def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
     for x in inputs:
         assert len(x) == len(output)
     for x in inputs + [output]:
-        assert (x.shape1s == 1).all() and (x.stride1s == x.shape0s).all()
-        assert (x.stride0s == 1).all()
+        assert (x.shape1s == 1).all()  # vectors
+        assert (x.stride0s == 1).all()  # contiguous
 
     input_types = [x.ctype for x in inputs]
     output_type = output.ctype
@@ -1107,9 +1135,8 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         assert vname not in avars, "Name clash"
         assert len(v) == len(input0)
         assert (v.shape0s == input0.shape0s).all()
-        assert (v.stride0s == 1).all() # rows contiguous
-        assert (v.stride1s == v.shape0s).all() # columns contiguous
         assert (v.shape1s == 1).all()  # vectors only
+        assert (v.stride0s == 1).all()  # contiguous
 
         offset = '%(name)s_starts[gind1]' % {'name': vname}
         avars[vname] = (v.ctype, offset)
@@ -1339,10 +1366,9 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
     assert dist_enums.ctype == 'int'
     assert scale.ctype == inc.ctype == 'int'
 
-    for arr in [Y, dist_enums, dist_params]:
-        assert (arr.shape1s == 1).all()
-        assert (arr.stride0s == 1).all()
-        assert (arr.stride1s == arr.shape0s).all()
+    for arr in (Y, dist_enums, dist_params):
+        assert (arr.shape1s == 1).all()  # vectors
+        assert (arr.stride0s == 1).all()  # contiguous
 
     assert (dist_enums.shape0s == 1).all()
 
@@ -1433,16 +1459,12 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     assert len(Y) == len(t) == len(signals)
     assert pres_t is None or pres_t.shape == (N,)
 
-    for arr in [Y, t, signals]:
-        assert (arr.stride1s == 1).all()
+    assert (t.shape0s == 1).all() and (t.shape1s == 1).all()  # scalar
+    assert (Y.shape1s == 1).all()  # vector
+    for arr in [Y, signals]:
+        assert (arr.stride0s == 1).all()  # contiguous columns
 
-    assert (Y.shape1s == 1).all()
-    assert (Y.stride0s == 1).all()
-
-    assert (t.shape0s == 1).all()
-    assert (t.shape1s == 1).all()
-
-    assert (Y.shape0s == signals.shape1s).all()
+    assert (Y.shape0s == signals.shape0s).all()
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -1455,7 +1477,7 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
             __global ${Ytype} *Ydata,
             __global const int *Tstarts,
             __global ${Ttype} *Tdata,
-            __global const int *Sshape0s,
+            __global const int *Sshape1s,
             __global const int *Sstarts,
             __global ${Stype} *Sdata
         )
@@ -1469,7 +1491,7 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
             __global ${Ytype} *y = Ydata + Ystarts[k];
             __global ${Ytype} *s = Sdata + Sstarts[k];
             const int it = *(Tdata + Tstarts[k]);
-            const int nt = Sshape0s[k];
+            const int nt = Sshape1s[k];
     % if Ptype is not None:
             const float pt = Pdata[k];
             const int ti = (int)((it - 0.5f) * (${dt}f / pt)) % nt;
@@ -1493,7 +1515,7 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
         Y.cl_buf,
         t.cl_starts,
         t.cl_buf,
-        signals.cl_shape0s,
+        signals.cl_shape1s,
         signals.cl_starts,
         signals.cl_buf,
     )
@@ -1745,6 +1767,7 @@ def plan_pool2d(queue, X, Y, shape, pool_size, strides, tag=None):
 
 
 def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
+    # TODO: update for column-major
     assert len(pre) == len(post) == len(theta) == len(delta) == alpha.size
     N = len(pre)
 
@@ -1826,6 +1849,7 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
 
 
 def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
+    # TODO: update for column-major
     assert (len(pre) == len(post) == len(weights) == len(delta) ==
             alpha.size == beta.size)
     N = len(pre)
@@ -1911,6 +1935,7 @@ def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
 
 
 def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
+    # TODO: fix to work with column-major
     assert (len(pre) == len(post) == len(enc) == len(delta) ==
             len(learn) == alpha.size == len(scale))
     N = len(pre)
