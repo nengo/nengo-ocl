@@ -70,23 +70,36 @@ class ViewBuilder(object):
             # -- it is not a view, and not OK
             raise ValueError('can only append views of known signals', obj)
 
+        base = obj.base
+        bshape0 = base.shape[0] if base.ndim > 0 else 1
+        bshape1 = base.shape[1] if base.ndim > 1 else 1
+        if (base.elemstrides[0] != bshape1 or
+            base.ndim > 1 and base.elemstrides[1] != 1):
+            raise ValueError("base must be C-contiguous", obj)
+
+        def to_device_order(x):
+            # on device, we know base will be contiguous with given order
+            if self.order == 'C':
+                return x  # host signal already in C order
+            elif self.order == 'F':
+                j = x % bshape1
+                i = x // bshape1
+                return i + j*bshape0
+            else:
+                raise ValueError("Unknown order %r" % self.order, obj)
+
         assert obj.size and obj.ndim <= 2
-        idx = self.sidx[obj.base]
+        idx = self.sidx[base]
         shape0 = obj.shape[0] if obj.ndim > 0 else 1
         shape1 = obj.shape[1] if obj.ndim > 1 else 1
-        self.starts.append(self.rarray.starts[idx] + obj.elemoffset)
+        stride0 = obj.elemstrides[0] if shape0 > 1 else 1
+        stride1 = obj.elemstrides[1] if shape1 > 1 else 1
+        self.starts.append(
+            self.rarray.starts[idx] + to_device_order(obj.elemoffset))
         self.shape0s.append(shape0)
         self.shape1s.append(shape1)
-        if self.order == 'F':
-            assert 0, "TODO"
-            # This needs to account for strides, while making sure things are col-major
-            self.stride0s.append(1)
-            self.stride1s.append(shape0)
-            # self.stride0s.append(obj.elemstrides[0] if shape0 > 1 else 1)
-            # self.stride1s.append(obj.elemstrides[1] if shape1 > 1 else 1)
-        else:
-            self.stride0s.append(obj.elemstrides[0] if shape0 > 1 else 1)
-            self.stride1s.append(obj.elemstrides[1] if shape1 > 1 else 1)
+        self.stride0s.append(to_device_order(stride0))
+        self.stride1s.append(to_device_order(stride1))
         self.names.append(getattr(obj, 'name', ''))
         self.sidx[obj] = len(self.sidx)
 
