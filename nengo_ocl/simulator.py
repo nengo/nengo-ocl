@@ -13,7 +13,7 @@ import nengo
 import nengo.version
 import nengo.utils.numpy as npext
 from nengo.cache import get_default_decoder_cache
-from nengo.exceptions import ReadonlyError, SimulatorClosed
+from nengo.exceptions import ReadonlyError, SimulatorClosed, ValidationError
 from nengo.simulator import ProbeDict
 from nengo.builder.builder import Model
 from nengo.builder.operator import Reset
@@ -134,6 +134,10 @@ class Simulator(object):
     #     unsupported = [('test_pes*', 'PES rule not implemented')]
     # would skip all test whose names start with 'test_pes'.
     unsupported = [
+        # advanced indexing
+        ('nengo/tests/test_connection.py:test_list_indexing',
+         "Advanced indexing with repeated indices not implemented"),
+
         # neuron types
         ('nengo/tests/test_neurons.py:test_izhikevich',
          "Izhikevich neurons not implemented"),
@@ -155,6 +159,8 @@ class Simulator(object):
          "Filtered noise processes not yet implemented"),
         ('nengo/tests/test_simulator.py:test_noise_copies_ok',
          "Filtered noise processes not yet implemented"),
+        ('nengo/tests/test_processes.py:TestPiecewise.test_interpolation_?d',
+         "float32 rounding issues"),
 
         # synapses
         ('nengo/tests/test_synapses.py:test_triangle',
@@ -478,10 +484,19 @@ class Simulator(object):
     def run(self, time_in_seconds, progress_bar=None):
         """Simulate for the given length of time.
 
+        If the given length of time is not a multiple of ``dt``,
+        it will be rounded to the nearest ``dt``. For example, if ``dt``
+        is 0.001 and ``run`` is called with ``time_in_seconds=0.0006``,
+        the simulator will advance one timestep, resulting in the actual
+        simulator time being 0.001.
+
+        The given length of time must be positive. The simulator cannot
+        be run backwards.
+
         Parameters
         ----------
         time_in_seconds : float
-            Amount of time to run the simulation for.
+            Amount of time to run the simulation for. Must be positive.
         progress_bar : bool or `.ProgressBar` or `.ProgressUpdater`, optional \
                        (Default: True)
             Progress bar for displaying the progress of the simulation run.
@@ -491,10 +506,19 @@ class Simulator(object):
             For more control over the progress bar, pass in a `.ProgressBar`
             or `.ProgressUpdater` instance.
         """
+        if time_in_seconds < 0:
+            raise ValidationError("Must be positive (got %g)"
+                                  % (time_in_seconds,), attr="time_in_seconds")
+
         steps = int(np.round(float(time_in_seconds) / self.dt))
-        logger.info("Running %s for %f seconds, or %d steps",
-                    self.model.label, time_in_seconds, steps)
-        self.run_steps(steps, progress_bar=progress_bar)
+
+        if steps == 0:
+            warnings.warn("%g results in running for 0 timesteps. Simulator "
+                          "still at time %g." % (time_in_seconds, self.time))
+        else:
+            logger.info("Running %s for %f seconds, or %d steps",
+                        self.model.label, time_in_seconds, steps)
+            self.run_steps(steps, progress_bar=progress_bar)
 
     def run_steps(self, N, progress_bar=True):
         if self.closed:
