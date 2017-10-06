@@ -58,7 +58,7 @@ def blockify_matrices(max_size, ras):
         assert len(ra) == N
         assert (ra.shape1s == ra0.shape1s).all()
         assert (ra.shape0s == ra0.shape0s).all()
-        assert ((ra.shape1s == 1) | (ra.shape0s == ra.stride1s)).all(), "not contiguous"
+        assert ((ra.shape1s == 1) | (ra.shape0s == ra.stride1s)).all()
 
     sizes = []
     inds = []

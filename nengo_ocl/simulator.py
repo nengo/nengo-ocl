@@ -24,7 +24,7 @@ from nengo.utils.stdlib import groupby
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
-from nengo_ocl.clra_gemv import plan_pretuned_gemv, plan_one_thread_per_row_gemv
+from nengo_ocl.clra_gemv import plan_one_thread_per_row_gemv
 from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate, plan_reset, plan_copy, plan_slicedcopy,
     plan_direct, plan_lif, plan_lif_rate, plan_rectified_linear, plan_sigmoid,
@@ -74,7 +74,7 @@ class ViewBuilder(object):
         bshape0 = base.shape[0] if base.ndim > 0 else 1
         bshape1 = base.shape[1] if base.ndim > 1 else 1
         if (base.elemstrides[0] != bshape1 or
-            base.ndim > 1 and base.elemstrides[1] != 1):
+                base.ndim > 1 and base.elemstrides[1] != 1):
             raise ValueError("base must be C-contiguous", obj)
 
         def to_device_order(x):
@@ -456,10 +456,11 @@ class Simulator(object):
                 # XXX: this syntax retrieves *ALL* of Y from the device
                 #      because the :n_buffered only works on the ndarray
                 #      *after* it has been transferred.
-                raw = plan.Y[i][:,:n_buffered]
+                raw = plan.Y[i][:, :n_buffered]
                 shaped = raw.reshape(shape + (n_buffered,), order='F')
                 # Transpose to (n_buffered, shape).
-                shaped = shaped.transpose([len(shape)] + list(range(len(shape))))
+                shaped = shaped.transpose(
+                    [len(shape)] + list(range(len(shape))))
                 self._probe_outputs[probe].extend(shaped)
         plan.cl_bufpositions.fill(0)
         self.queue.finish()
@@ -587,7 +588,7 @@ class Simulator(object):
             X = self.all_data[
                 [self.sidx[self.model.sig[p]['in']] for p in probes]]
             Y = self.RaggedArray(
-                [np.zeros((self.model.sig[p]['in'].size, n_prealloc), order='F')
+                [np.zeros((self.model.sig[p]['in'].size, n_prealloc))
                  for p in probes], dtype=np.float32)
 
             cl_plan = plan_probes(self.queue, periods, X, Y)

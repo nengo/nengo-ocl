@@ -308,4 +308,4 @@ def test_speed(ctx, rng):
 
     t = np.min(times)
     print("nengo_ocl: %0.3f s, bandwidth: %.1f GB/s, load: %.1f GFlops"
-              % (t, total_mem_gb / t, total_gflops / t))
+          % (t, total_mem_gb / t, total_gflops / t))

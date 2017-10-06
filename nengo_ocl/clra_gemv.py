@@ -65,8 +65,8 @@ def bw_from_geometry(geometry, items):
         n_bytes += elemsize * gi.y_len
     return n_bytes
 
-class Dot(object):
 
+class Dot(object):
     def __init__(self, j, x_j, a_j, x_start, a_start, a_stride0, a_shape1):
         self.j = j
         self.x_j = x_j
@@ -76,8 +76,8 @@ class Dot(object):
         self.a_stride0 = a_stride0
         self.a_shape1 = a_shape1   # Columns of A
 
-class GeometryEntry(object):
 
+class GeometryEntry(object):
     def __init__(self, y_len, y_start, y_in_start, dots):
         self.y_len = y_len         # = Rows of A
         self.y_start = y_start
@@ -164,6 +164,7 @@ class Geometry(object):
         for dsi, count in sorted(counts.iteritems(), key=lambda x: x[1]):
             print('  %6s\t%s' % (count, dsi))
 
+
 class gemv_prog(object):
 
     def __init__(self, queue, alpha, A, A_js, X, X_js, beta, Y,
@@ -198,7 +199,7 @@ class gemv_prog(object):
                         self.Y.shape0s, self.X_js, self.A_js)
 
     def cl_geometry_and_textconf(self, items, padding=4, stride=0):
-        assert isinstance(stride, int) and stride in [0,1]
+        assert isinstance(stride, int) and stride in (0, 1)
 
         p = self
         max_n_dots = max(len(p.geometry[ii].dots) for ii in items)
@@ -434,7 +435,6 @@ def reduce_impl(p, items,
                 group_size=None,
                 segment_size=None,
                 ):
-
     #
     # Target use case: long inner products, small numbers of dots.
     #
@@ -480,7 +480,7 @@ def reduce_impl(p, items,
     gsize = (g_segments * segment_size, group_size, len(items))
     lsize = (segment_size, group_size, 1)
 
-    max_reduce_iters = int(np.ceil(float(max_reduce_len) / group_size))
+    # max_reduce_iters = int(np.ceil(float(max_reduce_len) / group_size))
     textconf.update({
         'n_items': len(items),
         'gsize': gsize,
@@ -492,10 +492,6 @@ def reduce_impl(p, items,
         'max_n_dots': max_n_dots,
         'log2_group_size': int(np.ceil(np.log2(group_size))),
     })
-    if 0:
-        for k, v in textconf.items():
-            print(k, v)
-
     textconf.update(p.__dict__)
 
     text = """
@@ -1190,9 +1186,8 @@ def one_thread_per_row_impl(p, items):
     {
     % if consecutive:
         const int global_i = get_global_id(0);
-
-        const int item_i = global_i / ${max_y_len};     // Item index
-        const int i = global_i - item_i * ${max_y_len}; // Row index within item
+        const int item_i = global_i / ${max_y_len};   // Item index
+        const int i = global_i - item_i*${max_y_len}; // Row index within item
     % else:
         const int item_i = get_global_id(1);  // Item index
         const int i = get_global_id(0);       // Row index within item
@@ -1202,7 +1197,8 @@ def one_thread_per_row_impl(p, items):
             gstructure + item_i * ${structure_vars_stride};
 
     % if not all_same_y_len:
-        if (i >= ${y_len}) return;
+        if (i >= ${y_len})
+            return;
     % endif
 
         ${Y.cl_buf.ctype} sum = 0;
@@ -1234,9 +1230,11 @@ def one_thread_per_row_impl(p, items):
     % endif
 
     % if float_beta is not None and float_beta != 0 :
-        Y_data[${y_offset} + i] = ${float_alpha} * sum + ${float_beta} * Y_in_data[${y_in_starts} + i] + gamma;
+        Y_data[${y_offset} + i] = ${float_alpha} * sum +
+            ${float_beta} * Y_in_data[${y_in_starts} + i] + gamma;
     % elif cl_beta is not None:
-        Y_data[${y_offset} + i] = ${float_alpha} * sum + betas[${bb}] * Y_in_data[${y_in_starts} + i] + gamma;
+        Y_data[${y_offset} + i] = ${float_alpha} * sum +
+            betas[${bb}] * Y_in_data[${y_in_starts} + i] + gamma;
     % else:
         Y_data[${y_offset} + i] = ${float_alpha} * sum + gamma;
     % endif
@@ -1266,7 +1264,6 @@ def one_thread_per_row_impl(p, items):
     rval.full_args = full_args  # prevent GC the args
     rval.description = p.geometry.summary(items)
     return rval
-
 
 
 class plan_ref_gemv(gemv_prog):
@@ -1335,73 +1332,70 @@ class plan_ragged_gather_gemv(gemv_prog):
 
         return plans
 
+
 class plan_one_thread_per_row_gemv(gemv_prog):
     def choose_plans(self):
         return [one_thread_per_row_impl(self, range(len(self.Y)))]
 
+
 class plan_pretuned_gemv(gemv_prog):
+    LOG_BASE = 4
+
     PLANS = (one_thread_per_row_impl, reduce_impl, many_dots_impl, block_impl)
 
     # Tuning grid obtained on a NVIDIA GTX 970.
     # The indices correspond to functions in PLANS above.
-    TUNING_GRID = np.array(
-        [  [[ 0, 0, 0, 0, 1, 2, 0]
-          , [ 0, 1, 1, 1, 1, 2, 0]
-          , [ 1, 1, 1, 1, 1, 0, 0]
-          , [ 0, 1, 1, 1, 1, 1, 0]
-          , [ 1, 1, 1, 1, 1, 1, 1]
-          , [ 3, 3, 3, 1, 1, 1, 1]
-          , [ 3, 3, 3, 3, 1, 1, 1]]
-         ,
-           [[ 1, 0, 2, 0, 1, 0, 0]
-          , [ 2, 0, 2, 0, 0, 0, 0]
-          , [ 1, 1, 1, 0, 1, 0, 0]
-          , [ 1, 1, 1, 1, 1, 0, 1]
-          , [ 1, 1, 1, 2, 1, 0, 1]
-          , [ 3, 3, 3, 3, 1, 1, 1]
-          , [ 3, 3, 3, 3, 2, 0, 2]]
-         ,
-           [[ 0, 0, 0, 1, 1, 0, 0]
-          , [ 2, 2, 2, 0, 2, 0, 0]
-          , [ 1, 0, 0, 2, 1, 0, 0]
-          , [ 1, 0, 1, 0, 0, 0, 1]
-          , [ 1, 1, 1, 1, 1, 0, 1]
-          , [ 3, 3, 3, 3, 1, 0, 1]
-          , [ 3, 3, 3, 3, 2, 0, 2]]
-         ,
-           [[ 1, 0, 0, 0, 0, 0, 0]
-          , [ 1, 2, 0, 0, 0, 0, 0]
-          , [ 0, 0, 0, 1, 0, 0, 0]
-          , [ 2, 1, 0, 0, 0, 0, 0]
-          , [ 1, 1, 0, 0, 0, 0, 0]
-          , [ 3, 3, 3, 1, 0, 3, 0]
-          , [ 3, 3, 3, 3, 0, 3, 0]]
-         ,
-           [[ 1, 2, 0, 0, 0, 0, 0]
-          , [ 2, 0, 0, 1, 0, 0, 0]
-          , [ 1, 0, 0, 0, 0, 0, 0]
-          , [ 2, 0, 1, 0, 0, 0, 0]
-          , [ 1, 1, 1, 0, 0, 0, 0]
-          , [ 3, 3, 1, 0, 0, 0, 0]
-          , [ 3, 3, 3, 0, 0, 0, 0]]
-         ,
-           [[ 0, 0, 0, 0, 0, 0, 0]
-          , [ 2, 0, 0, 0, 0, 0, 0]
-          , [ 1, 0, 0, 0, 0, 0, 0]
-          , [ 1, 0, 0, 0, 0, 0, 0]
-          , [ 1, 0, 0, 0, 0, 0, 0]
-          , [ 3, 3, 0, 3, 0, 0, 0]
-          , [ 3, 3, 0, 0, 0, 0, 0]]
-         ,
-           [[ 2, 0, 0, 0, 0, 0, 0]
-          , [ 1, 0, 0, 0, 0, 0, 0]
-          , [ 0, 0, 0, 0, 0, 0, 0]
-          , [ 0, 0, 0, 0, 0, 0, 0]
-          , [ 0, 0, 0, 3, 0, 0, 0]
-          , [ 3, 0, 0, 0, 0, 0, 0]
-          , [ 3, 0, 0, 0, 0, 0, 0]]]
-        , dtype='uint8')
-    LOG_BASE = 4
+    TUNING_GRID = np.array([
+        [[0, 0, 0, 0, 1, 2, 0],
+         [0, 1, 1, 1, 1, 2, 0],
+         [1, 1, 1, 1, 1, 0, 0],
+         [0, 1, 1, 1, 1, 1, 0],
+         [1, 1, 1, 1, 1, 1, 1],
+         [3, 3, 3, 1, 1, 1, 1],
+         [3, 3, 3, 3, 1, 1, 1]],
+        [[1, 0, 2, 0, 1, 0, 0],
+         [2, 0, 2, 0, 0, 0, 0],
+         [1, 1, 1, 0, 1, 0, 0],
+         [1, 1, 1, 1, 1, 0, 1],
+         [1, 1, 1, 2, 1, 0, 1],
+         [3, 3, 3, 3, 1, 1, 1],
+         [3, 3, 3, 3, 2, 0, 2]],
+        [[0, 0, 0, 1, 1, 0, 0],
+         [2, 2, 2, 0, 2, 0, 0],
+         [1, 0, 0, 2, 1, 0, 0],
+         [1, 0, 1, 0, 0, 0, 1],
+         [1, 1, 1, 1, 1, 0, 1],
+         [3, 3, 3, 3, 1, 0, 1],
+         [3, 3, 3, 3, 2, 0, 2]],
+        [[1, 0, 0, 0, 0, 0, 0],
+         [1, 2, 0, 0, 0, 0, 0],
+         [0, 0, 0, 1, 0, 0, 0],
+         [2, 1, 0, 0, 0, 0, 0],
+         [1, 1, 0, 0, 0, 0, 0],
+         [3, 3, 3, 1, 0, 3, 0],
+         [3, 3, 3, 3, 0, 3, 0]],
+        [[1, 2, 0, 0, 0, 0, 0],
+         [2, 0, 0, 1, 0, 0, 0],
+         [1, 0, 0, 0, 0, 0, 0],
+         [2, 0, 1, 0, 0, 0, 0],
+         [1, 1, 1, 0, 0, 0, 0],
+         [3, 3, 1, 0, 0, 0, 0],
+         [3, 3, 3, 0, 0, 0, 0]],
+        [[0, 0, 0, 0, 0, 0, 0],
+         [2, 0, 0, 0, 0, 0, 0],
+         [1, 0, 0, 0, 0, 0, 0],
+         [1, 0, 0, 0, 0, 0, 0],
+         [1, 0, 0, 0, 0, 0, 0],
+         [3, 3, 0, 3, 0, 0, 0],
+         [3, 3, 0, 0, 0, 0, 0]],
+        [[2, 0, 0, 0, 0, 0, 0],
+         [1, 0, 0, 0, 0, 0, 0],
+         [0, 0, 0, 0, 0, 0, 0],
+         [0, 0, 0, 0, 0, 0, 0],
+         [0, 0, 0, 3, 0, 0, 0],
+         [3, 0, 0, 0, 0, 0, 0],
+         [3, 0, 0, 0, 0, 0, 0]]
+    ], dtype='uint8')
 
     def choose_plans(self):
         items = range(len(self.Y))
@@ -1413,7 +1407,7 @@ class plan_pretuned_gemv(gemv_prog):
         logm, logn, logk = [
             min(int(round(math.log(x, plan_pretuned_gemv.LOG_BASE))),
                 plan_pretuned_gemv.TUNING_GRID.shape[i] - 1)
-            for i,x in enumerate((m,n,k))]
+            for i, x in enumerate((m, n, k))]
 
         ind = plan_pretuned_gemv.TUNING_GRID[logm, logn, logk]
         plan = plan_pretuned_gemv.PLANS[ind](self, range(len(self.Y)))
