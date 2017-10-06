@@ -689,6 +689,10 @@ class Simulator(object):
             plans.append(plan_copy(self.queue, X, Y, incs))
 
         if ops:
+            dupl = lambda s: s is not None and len(s) != len(set(s))
+            if any(dupl(op.src_slice) or dupl(op.dst_slice) for op in ops):
+                raise NotImplementedError("Duplicates in indices unsupported")
+
             X = self.all_data[[self.sidx[op.src] for op in ops]]
             Y = self.all_data[[self.sidx[op.dst] for op in ops]]
             inds = lambda ary, i: np.arange(ary.size, dtype=np.int32)[
