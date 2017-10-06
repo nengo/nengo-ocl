@@ -247,6 +247,15 @@ class Simulator(object):
         logger.info("Planning in %0.3f s" % planner_timer.duration)
 
         # --- create OpenCL signals (allocate memory on device)
+        self._dtype_map = {
+            np.int64: np.int32,
+            np.int32: np.int32,
+            np.uint64: np.int32,
+            np.uint32: np.int32,
+            np.float64: np.float32,
+            np.float32: np.float32,
+        }
+
         with Timer() as signals_timer:
             # Add built states to the probe dictionary
             self._probe_outputs = dict(self.model.params)
@@ -328,6 +337,15 @@ class Simulator(object):
 
         for rng, state in iteritems(self._python_rngs):
             rng.set_state(state)
+
+    def _get_data(self, signals):
+        if is_iterable(signals):
+            dtypes = [self._dtype_map[sig.dtype] for sig in signals]
+            assert (dtype == dtypes[0] for dtype in dtypes).all()
+            dtype = dtypes[0]
+        else:
+            dtype = self._dtype_map[signals.dtype]
+        return self.all_data[dtype][signals]
 
     def __del__(self):
         """Raise a ResourceWarning if we are deallocated while open."""
