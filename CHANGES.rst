@@ -18,10 +18,19 @@ Release History
    - Bugfixes
    - Documentation
 
-1.2.1 (unreleased)
-==================
+1.3.0 (October 6, 2017)
+=======================
 
+**Improvements**
 
+- Supports recent Nengo versions, up to 2.6.0.
+
+**Bugfixes**
+
+- Fixed an issue in which stochastic processes would not be
+  fully reset on simulator reset.
+- Fixed an issue in which building a model multiple times
+  could result in old probe data persisting.
 
 1.2.0 (February 23, 2017)
 =========================
