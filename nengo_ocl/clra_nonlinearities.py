@@ -29,6 +29,7 @@ def update_geometry(textconf, ra, raname, index='n'):
     update_param(textconf, raname, ra.shape1s, 'shape1', index=index)
     update_param(textconf, raname, ra.stride0s, 'stride0', index=index)
     update_param(textconf, raname, ra.stride1s, 'stride1', index=index)
+    textconf[raname + 'type'] = ra.ctype
 
 
 def blockify_ij(max_size, ra):
@@ -154,6 +155,7 @@ def plan_reset(queue, Y, values, tag=None):
     assert len(Y) == len(values)
 
     assert (Y.stride0s == 1).all()
+    assert ((Y.shape1s == 1) | (Y.stride1s == Y.shape0s)).all()
     assert Y.ctype == values.ctype
 
     text = """
@@ -269,7 +271,7 @@ def plan_copy(queue, X, Y, incs, tag=None):
     lsize = None
     gsize = (lsize0, len(sizes))
 
-    textconf = dict(Xtype=X.ctype, Ytype=Y.ctype, inc=None)
+    textconf = dict(inc=None)
     update_geometry(textconf, X, 'X', index='n')
     update_geometry(textconf, Y, 'Y', index='n')
 
@@ -373,7 +375,7 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
     lsize = (lsize0, lsize1)
     gsize = (lsize0, round_up(N, lsize1))
 
-    textconf = dict(Xtype=X.ctype, Ytype=Y.ctype, N=N, inc=None)
+    textconf = dict(N=N, inc=None)
     update_geometry(textconf, X, 'X', index='n')
     update_geometry(textconf, Y, 'Y', index='n')
 
@@ -420,8 +422,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     assert ((A.shape0s == 1) | (A.shape0s == Y.shape0s)).all()
     assert ((A.shape1s == 1) | (A.shape1s == Y.shape1s)).all()
 
-    assert X.ctype == Y.ctype
-    assert A.ctype == Y.ctype
+    assert A.ctype == X.ctype == Y.ctype
 
     text = """
         inline ${Ytype} get_element(
@@ -489,7 +490,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     lsize0 = get_mwgs(queue, cap=256)
     sizes, inds, offsets = blockify_ij(lsize0, Y)
 
-    textconf = dict(Atype=A.ctype, Xtype=X.ctype, Ytype=Y.ctype)
+    textconf = dict()
     update_geometry(textconf, A, 'A', index='n')
     update_geometry(textconf, X, 'X', index='n')
     update_geometry(textconf, Y, 'Y', index='n')
@@ -675,7 +676,7 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     uses_buf = na_max > 1 or nb_max > 1
 
     textconf = dict(
-        Xtype=X.ctype, Ytype=Y.ctype, Atype=A.ctype, Btype=B.ctype,
+        Atype=A.ctype, Btype=B.ctype,
         na_max=na_max, nb_max=nb_max, uses_buf=uses_buf,
     )
     update_geometry(textconf, X, 'X', index='k')
@@ -1478,6 +1479,7 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
             __global const int *Tstarts,
             __global ${Ttype} *Tdata,
             __global const int *Sshape1s,
+            __global const int *Sstride1s,
             __global const int *Sstarts,
             __global ${Stype} *Sdata
         )
@@ -1491,7 +1493,7 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
             __global ${Ytype} *y = Ydata + Ystarts[k];
             __global ${Ytype} *s = Sdata + Sstarts[k];
             const int it = *(Tdata + Tstarts[k]);
-            const int nt = Sshape1s[k];
+            const int nt = ${Sshape1};
     % if Ptype is not None:
             const float pt = Pdata[k];
             const int ti = (int)((it - 0.5f) * (${dt}f / pt)) % nt;
@@ -1500,13 +1502,14 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     % endif
 
             for (; i < m; i += get_global_size(0))
-                y[i] = s[m*ti + i];
+                y[i] = s[i + ti*${Sstride1}];
         }
         """
 
     textconf = dict(Ytype=Y.ctype, Ttype=t.ctype, Stype=signals.ctype,
                     Ptype=pres_t.ctype if pres_t is not None else None,
                     dt=dt)
+    update_geometry(textconf, signals, 'S', index='k')
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = ((pres_t,) if pres_t is not None else ()) + (
@@ -1516,6 +1519,7 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
         t.cl_starts,
         t.cl_buf,
         signals.cl_shape1s,
+        signals.cl_stride1s,
         signals.cl_starts,
         signals.cl_buf,
     )
@@ -1543,6 +1547,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
 
         conv : whether this is a convolution (true) or local filtering (false)
     """
+    # TODO: re-optimize for col-major
     for ary in [X, Y, filters, biases]:
         # assert that arrays are contiguous
         assert len(ary.shape) in [1, 2]
@@ -1668,6 +1673,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
 
 
 def plan_pool2d(queue, X, Y, shape, pool_size, strides, tag=None):
+    # TODO: re-optimize for col-major
     for ary in [X, Y]:
         # assert that arrays are contiguous
         assert len(ary.shape) in [1, 2]
@@ -1767,14 +1773,11 @@ def plan_pool2d(queue, X, Y, shape, pool_size, strides, tag=None):
 
 
 def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
-    # TODO: update for column-major
     assert len(pre) == len(post) == len(theta) == len(delta) == alpha.size
     N = len(pre)
 
     for arr in (pre, post, theta):  # vectors
         assert (arr.shape1s == 1).all()
-    for arr in (delta,):  # matrices
-        assert (arr.stride1s == 1).all()
 
     assert (post.shape0s == delta.shape0s).all()
     assert (pre.shape0s == delta.shape1s).all()
@@ -1797,6 +1800,7 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
         __global const int *theta_starts,
         __global const ${type} *theta_data,
         __global const int *delta_stride0s,
+        __global const int *delta_stride1s,
         __global const int *delta_starts,
         __global ${type} *delta_data,
         __global const ${type} *alphas
@@ -1807,24 +1811,28 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
 
         const int shape0 = shape0s[k];
         const int shape1 = shape1s[k];
-        const int i = ij / shape1;
-        const int j = ij % shape1;
+        const int i = ij % shape0;
+        const int j = ij / shape0;
 
         __global ${type} *delta = delta_data + delta_starts[k];
-        const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
-        const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
+        const ${type} pre = pre_data[pre_starts[k] + j*${pre_stride0}];
+        const ${type} post = post_data[post_starts[k] + i*${post_stride0}];
         const ${type} theta = theta_data[
-            theta_starts[k] + i*theta_stride0s[k]];
+            theta_starts[k] + i*${theta_stride0}];
         const ${type} alpha = alphas[k];
 
-        if (i < shape0) {
-            delta[i*delta_stride0s[k] + j] =
+        if (j < shape1) {
+            delta[i*${delta_stride0} + j*${delta_stride1}] =
                 alpha * post * (post - theta) * pre;
         }
     }
     """
 
     textconf = dict(type=pre.ctype)
+    update_geometry(textconf, pre, 'pre_', index='k')
+    update_geometry(textconf, post, 'post_', index='k')
+    update_geometry(textconf, theta, 'theta_', index='k')
+    update_geometry(textconf, delta, 'delta_', index='k')
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
@@ -1832,7 +1840,7 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
         pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
         post.cl_stride0s, post.cl_starts, post.cl_buf,
         theta.cl_stride0s, theta.cl_starts, theta.cl_buf,
-        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        delta.cl_stride0s, delta.cl_stride1s, delta.cl_starts, delta.cl_buf,
         alpha,
     )
     _fn = cl.Program(queue.context, text).build().bcm
@@ -1849,15 +1857,12 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
 
 
 def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
-    # TODO: update for column-major
     assert (len(pre) == len(post) == len(weights) == len(delta) ==
             alpha.size == beta.size)
     N = len(pre)
 
     for arr in (pre, post):  # vectors
         assert (arr.shape1s == 1).all()
-    for arr in (delta, weights):  # matrices
-        assert (arr.stride1s == 1).all()
 
     assert (post.shape0s == weights.shape0s).all()
     assert (pre.shape0s == weights.shape1s).all()
@@ -1878,9 +1883,11 @@ def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
         __global const int *post_starts,
         __global const ${type} *post_data,
         __global const int *weights_stride0s,
+        __global const int *weights_stride1s,
         __global const int *weights_starts,
         __global const ${type} *weights_data,
         __global const int *delta_stride0s,
+        __global const int *delta_stride1s,
         __global const int *delta_starts,
         __global ${type} *delta_data,
         __global const ${type} *alphas,
@@ -1892,33 +1899,38 @@ def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
 
         const int shape0 = shape0s[k];
         const int shape1 = shape1s[k];
-        const int i = ij / shape1;
-        const int j = ij % shape1;
+        const int i = ij % shape0;
+        const int j = ij / shape0;
 
         __global ${type} *delta = delta_data + delta_starts[k];
-        const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
-        const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
+        const ${type} pre = pre_data[pre_starts[k] + j*${pre_stride0}];
+        const ${type} post = post_data[post_starts[k] + i*${post_stride0}];
         const ${type} weight = weights_data[
-            weights_starts[k] + i*weights_stride0s[k] + j];
+            weights_starts[k] + i*${weights_stride0} + j*${weights_stride1}];
         const ${type} alpha = alphas[k];
         const ${type} beta = betas[k];
 
-        if (i < shape0) {
-            delta[i*delta_stride0s[k] + j] =
+        if (j < shape1) {
+            delta[i*${delta_stride0} + j*${delta_stride1}] =
                 alpha * post * (pre - beta * weight * post);
         }
     }
     """
 
     textconf = dict(type=pre.ctype)
+    update_geometry(textconf, pre, 'pre_', index='k')
+    update_geometry(textconf, post, 'post_', index='k')
+    update_geometry(textconf, weights, 'weights_', index='k')
+    update_geometry(textconf, delta, 'delta_', index='k')
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
         delta.cl_shape0s, delta.cl_shape1s,
         pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
         post.cl_stride0s, post.cl_starts, post.cl_buf,
-        weights.cl_stride0s, weights.cl_starts, weights.cl_buf,
-        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        weights.cl_stride0s, weights.cl_stride1s, weights.cl_starts,
+        weights.cl_buf,
+        delta.cl_stride0s, delta.cl_stride1s, delta.cl_starts, delta.cl_buf,
         alpha, beta,
     )
     _fn = cl.Program(queue.context, text).build().oja
@@ -1935,7 +1947,6 @@ def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
 
 
 def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
-    # TODO: fix to work with column-major
     assert (len(pre) == len(post) == len(enc) == len(delta) ==
             len(learn) == alpha.size == len(scale))
     N = len(pre)
@@ -1945,8 +1956,6 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
         assert (arr.shape1s == 1).all()
     for arr in (pre, post, scale):  # vectors
         assert (arr.shape1s == 1).all()
-    for arr in (enc, delta):  # matrices
-        assert (arr.stride1s == 1).all()
 
     assert (post.shape0s == enc.shape0s).all()
     assert (pre.shape0s == enc.shape1s).all()
@@ -1967,9 +1976,11 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
         __global const int *post_starts,
         __global const ${type} *post_data,
         __global const int *enc_stride0s,
+        __global const int *enc_stride1s,
         __global const int *enc_starts,
         __global const ${type} *enc_data,
         __global const int *delta_stride0s,
+        __global const int *delta_stride1s,
         __global const int *delta_starts,
         __global ${type} *delta_data,
         __global const int *learn_starts,
@@ -1985,34 +1996,39 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
 
         const int shape0 = shape0s[k];
         const int shape1 = shape1s[k];
-        const int i = ij / shape1;
-        const int j = ij % shape1;
+        const int i = ij % shape0;
+        const int j = ij / shape0;
 
         __global ${type} *delta = delta_data + delta_starts[k];
-        const ${type} pre = pre_data[pre_starts[k] + j*pre_stride0s[k]];
-        const ${type} post = post_data[post_starts[k] + i*post_stride0s[k]];
-        const ${type} enc = enc_data[enc_starts[k] + i*enc_stride0s[k] + j];
+        const ${type} pre = pre_data[pre_starts[k] + j*${pre_stride0}];
+        const ${type} post = post_data[post_starts[k] + i*${post_stride0}];
+        const ${type} enc = enc_data[
+            enc_starts[k] + i*${enc_stride0} + j*${enc_stride1}];
         const ${type} learn = learn_data[learn_starts[k]];
-        const ${type} scale = scale_data[scale_starts[k] +
-                                         i*scale_stride0s[k]];
+        const ${type} scale = scale_data[scale_starts[k] + i*${scale_stride0}];
         const ${type} alpha = alphas[k];
 
-        if (i < shape0) {
-            delta[i*delta_stride0s[k] + j] =
+        if (j < shape1) {
+            delta[i*${delta_stride0} + j*${delta_stride1}] =
                 alpha * learn * post * (scale * pre - enc);
         }
     }
     """
 
     textconf = dict(type=pre.ctype)
+    update_geometry(textconf, pre, 'pre_', index='k')
+    update_geometry(textconf, post, 'post_', index='k')
+    update_geometry(textconf, scale, 'scale_', index='k')
+    update_geometry(textconf, enc, 'enc_', index='k')
+    update_geometry(textconf, delta, 'delta_', index='k')
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
     full_args = (
         delta.cl_shape0s, delta.cl_shape1s,
         pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
         post.cl_stride0s, post.cl_starts, post.cl_buf,
-        enc.cl_stride0s, enc.cl_starts, enc.cl_buf,
-        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        enc.cl_stride0s, enc.cl_stride1s, enc.cl_starts, enc.cl_buf,
+        delta.cl_stride0s, delta.cl_stride1s, delta.cl_starts, delta.cl_buf,
         learn.cl_starts, learn.cl_buf,
         scale.cl_stride0s, scale.cl_starts, scale.cl_buf,
         alpha,
