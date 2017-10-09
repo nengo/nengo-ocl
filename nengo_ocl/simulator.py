@@ -31,6 +31,7 @@ from nengo_ocl.clra_nonlinearities import (
     plan_probes, plan_linearfilter, plan_elementwise_inc,
     create_rngs, init_rngs, get_dist_enums_params, plan_whitenoise,
     plan_presentinput, plan_conv2d, plan_pool2d, plan_bcm, plan_oja, plan_voja)
+from nengo_ocl.memory import basic_grouper, ViewBuilder
 from nengo_ocl.operators import MultiDotInc
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.planners import greedy_planner
@@ -41,62 +42,6 @@ from nengo_ocl.version import (
 
 logger = logging.getLogger(__name__)
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
-
-
-class ViewBuilder(object):
-
-    def __init__(self, bases, rarray):
-        self.sidx = {bb: ii for ii, bb in enumerate(bases)}
-        assert len(bases) == len(self.sidx)
-        self.rarray = rarray
-
-        self.starts = []
-        self.shape0s = []
-        self.shape1s = []
-        self.stride0s = []
-        self.stride1s = []
-        self.names = []
-
-        self._A_views = {}
-        self._X_views = {}
-        self._YYB_views = {}
-
-    def append_view(self, obj):
-        if obj in self.sidx:
-            return  # we already have this view
-
-        if not obj.is_view:
-            # -- it is not a view, and not OK
-            raise ValueError('can only append views of known signals', obj)
-
-        assert obj.size and obj.ndim <= 2
-        idx = self.sidx[obj.base]
-        shape0 = obj.shape[0] if obj.ndim > 0 else 1
-        shape1 = obj.shape[1] if obj.ndim > 1 else 1
-        self.starts.append(self.rarray.starts[idx] + obj.elemoffset)
-        self.shape0s.append(shape0)
-        self.shape1s.append(shape1)
-        self.stride0s.append(obj.elemstrides[0] if shape0 > 1 else 1)
-        self.stride1s.append(obj.elemstrides[1] if shape1 > 1 else 1)
-        self.names.append(getattr(obj, 'name', ''))
-        self.sidx[obj] = len(self.sidx)
-
-    def add_views_to(self, rarray):
-        rarray.add_views(self.starts, self.shape0s, self.shape1s,
-                         self.stride0s, self.stride1s, names=self.names)
-
-    def setup_views(self, ops):
-        all_views = [sig for op in ops for sig in op.all_signals]
-        for op in (op for op in ops if isinstance(op, MultiDotInc)):
-            A_views, X_views, Y_view, Y_in_view, beta_view = op.get_views()
-            all_views.extend(A_views + X_views + [Y_view, Y_in_view] +
-                             ([beta_view] if beta_view else []))
-            self._A_views[op] = A_views
-            self._X_views[op] = X_views
-            self._YYB_views[op] = [Y_view, Y_in_view, beta_view]
-
-        for view in all_views:
-            self.append_view(view)
 
 
 class Simulator(object):
@@ -177,7 +122,8 @@ class Simulator(object):
 
     def __init__(self, network, dt=0.001, seed=None, model=None, context=None,
                  n_prealloc_probes=32, profiling=None, if_python_code='none',
-                 planner=greedy_planner, progress_bar=True):
+                 planner=greedy_planner, grouper=basic_grouper,
+                 progress_bar=True):
         # --- check version
         if nengo.version.version_info in bad_nengo_versions:
             raise ValueError(
@@ -268,6 +214,10 @@ class Simulator(object):
                 sig for op in operators for sig in op.all_signals)
             all_bases = stable_unique(sig.base for sig in all_signals)
 
+            sig_groups = grouper(op_groups)
+            print(len(sig_groups))
+            assert 0
+
             sigdict = SignalDict()  # map from Signal.base -> ndarray
             for op in operators:
                 op.init_signals(sigdict)
@@ -339,13 +289,10 @@ class Simulator(object):
             rng.set_state(state)
 
     def _get_data(self, signals):
-        if is_iterable(signals):
-            dtypes = [self._dtype_map[sig.dtype] for sig in signals]
-            assert (dtype == dtypes[0] for dtype in dtypes).all()
-            dtype = dtypes[0]
-        else:
-            dtype = self._dtype_map[signals.dtype]
-        return self.all_data[dtype][signals]
+        signals = signals if is_iterable(signals) else [signals]
+        didx = self.data_idx[signals[0]]
+        assert all(self.data_idx[s] == didx for s in signals)
+        return self.all_data[didx][[self.sig_idx[didx][s] for s in signals]]
 
     def __del__(self):
         """Raise a ResourceWarning if we are deallocated while open."""

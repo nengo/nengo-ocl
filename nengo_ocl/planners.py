@@ -1,3 +1,7 @@
+"""
+Plan the order of operations, finding operators that can run simultaneously.
+"""
+
 from collections import defaultdict
 
 from nengo.builder.operator import Operator
