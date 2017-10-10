@@ -17,8 +17,8 @@ from nengo.exceptions import ReadonlyError, SimulatorClosed
 from nengo.simulator import ProbeDict
 from nengo.builder.builder import Model
 from nengo.builder.operator import Reset
-from nengo.builder.signal import SignalDict
-from nengo.utils.compat import iteritems, StringIO, range, ResourceWarning
+from nengo.builder.signal import SignalDict, Signal
+from nengo.utils.compat import is_iterable, iteritems, StringIO, range, ResourceWarning
 from nengo.utils.progress import ProgressTracker
 from nengo.utils.stdlib import groupby
 
@@ -42,6 +42,37 @@ from nengo_ocl.version import (
 
 logger = logging.getLogger(__name__)
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
+
+
+class PlanMaker(object):
+    def __init__(self, simulator, planning_fn, args=None, kwargs=None):
+        self.simulator = simulator
+        self.planning_fn = planning_fn
+        self.args = args if args is not None else ()
+        self.kwargs = kwargs if kwargs is not None else {}
+
+    def __repr__(self):
+        return "%s{%s}" % (self.__class__.__name__, self.planning_fn.__name__)
+
+    @staticmethod
+    def is_signals(arg):
+        return (is_iterable(arg) and len(arg) > 0 and
+                all(isinstance(s, Signal) for s in arg))
+
+    def signal_groups(self):
+        groups = []
+        for arg in list(self.args) + list(self.kwargs.values()):
+            if self.is_signals(arg):
+                groups.append(arg)
+
+        return groups
+
+    def make(self):
+        args = [self.simulator._get_data(a) if self.is_signals(a) else a
+                for a in self.args]
+        kwargs = {k: self.simulator._get_data(a) if self.is_signals(a) else a
+                  for k, a in iteritems(self.kwargs)}
+        return self.planning_fn(*args, **kwargs)
 
 
 class Simulator(object):
@@ -193,15 +224,6 @@ class Simulator(object):
         logger.info("Planning in %0.3f s" % planner_timer.duration)
 
         # --- create OpenCL signals (allocate memory on device)
-        self._dtype_map = {
-            np.int64: np.int32,
-            np.int32: np.int32,
-            np.uint64: np.int32,
-            np.uint32: np.int32,
-            np.float64: np.float32,
-            np.float32: np.float32,
-        }
-
         with Timer() as signals_timer:
             # Add built states to the probe dictionary
             self._probe_outputs = dict(self.model.params)
@@ -214,15 +236,9 @@ class Simulator(object):
                 sig for op in operators for sig in op.all_signals)
             all_bases = stable_unique(sig.base for sig in all_signals)
 
-            sig_groups = grouper(op_groups)
-            print(len(sig_groups))
-            assert 0
-
             sigdict = SignalDict()  # map from Signal.base -> ndarray
             for op in operators:
                 op.init_signals(sigdict)
-
-            self._cl_n_steps = self.Array(sigdict[self.model.step], dtype=np.int32)
 
             # Create data on host and add views
             host_data = RaggedArray(
@@ -259,11 +275,20 @@ class Simulator(object):
         self._python_rngs = {}
 
         # --- build OpenCL plans from operators
-        plans = []
+        plan_makers = []
         with Timer() as plans_timer:
             for op_type, op_list in op_groups:
-                plans.extend(self.plan_op_group(op_type, op_list))
-            plans.extend(self.plan_probes())
+                plan_makers.extend(self.plan_op_group(op_type, op_list))
+            plan_makers.extend(self.plan_probes())
+
+        print(plan_makers)
+
+        plans = []
+        for plan_maker in plan_makers:
+            if isinstance(plan_maker, PlanMaker):
+                plans.extend(plan_maker.make())
+            else:
+                plans.append(plan_maker)
 
         logger.info("Plans in %0.3f s" % plans_timer.duration)
 
@@ -290,9 +315,12 @@ class Simulator(object):
 
     def _get_data(self, signals):
         signals = signals if is_iterable(signals) else [signals]
-        didx = self.data_idx[signals[0]]
-        assert all(self.data_idx[s] == didx for s in signals)
-        return self.all_data[didx][[self.sig_idx[didx][s] for s in signals]]
+        return self.all_data[[self.sidx[s] for s in signals]]
+
+        # signals = signals if is_iterable(signals) else [signals]
+        # didx = self.data_idx[signals[0]]
+        # assert all(self.data_idx[s] == didx for s in signals)
+        # return self.all_data[didx][[self.sig_idx[didx][s] for s in signals]]
 
     def __del__(self):
         """Raise a ResourceWarning if we are deallocated while open."""
@@ -519,6 +547,9 @@ class Simulator(object):
         return dt * np.arange(1, n_steps + 1)
 
     # --- Planning
+    def plan(self, planning_fn, args=None, kwargs=None):
+        return [PlanMaker(self, planning_fn, args, kwargs)]
+
     def plan_probes(self):
         if len(self.model.probes) == 0:
             self._max_steps_between_probes = self.n_prealloc_probes
@@ -532,13 +563,17 @@ class Simulator(object):
                        p.sample_every / self.dt
                        for p in probes]
 
+            # X = [self.model.sig[p]['in'] for p in probes]
+            # Y = self.RaggedArray(
+            #     [np.zeros((n_prealloc, s.size)) for s in X], dtype=np.float32)
+
             X = self.all_data[
                 [self.sidx[self.model.sig[p]['in']] for p in probes]]
             Y = self.RaggedArray(
                 [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
                  for p in probes], dtype=np.float32)
 
-            cl_plan = plan_probes(self.queue, periods, X, Y)
+            cl_plan, = plan_probes(self.queue, periods, X, Y)
             self._max_steps_between_probes = n_prealloc * int(min(periods))
             self._cl_probe_plan = cl_plan
             return [cl_plan]
@@ -601,12 +636,13 @@ class Simulator(object):
         op, = ops
         step = self.all_data[[self.sidx[op.step]]]
         time = self.all_data[[self.sidx[op.time]]]
-        return [plan_timeupdate(self.queue, step, time, self.model.dt)]
+        return self.plan(
+            plan_timeupdate, (self.queue, step, time, self.model.dt))
 
     def plan_Reset(self, ops):
         targets = self.all_data[[self.sidx[op.dst] for op in ops]]
         values = self.Array([op.value for op in ops])
-        return [plan_reset(self.queue, targets, values)]
+        return self.plan(plan_reset, (self.queue, targets, values))
 
     def plan_SlicedCopy(self, ops):  # LEGACY
         # This op was removed in Nengo version 2.3.1+, but remains here
@@ -623,7 +659,7 @@ class Simulator(object):
             X = self.all_data[[self.sidx[op.src] for op in copies]]
             Y = self.all_data[[self.sidx[op.dst] for op in copies]]
             incs = np.array([op.inc for op in copies], dtype=np.int32)
-            plans.append(plan_copy(self.queue, X, Y, incs))
+            plans.extend(self.plan(plan_copy, (self.queue, X, Y, incs)))
 
         if ops:
             X = self.all_data[[self.sidx[op.src] for op in ops]]
@@ -635,7 +671,7 @@ class Simulator(object):
             Yinds = self.RaggedArray(
                 [inds(op.dst, op.dst_slice) for op in ops])
             incs = np.array([op.inc for op in ops], dtype=np.int32)
-            plans.append(plan_slicedcopy(self.queue, X, Y, Xinds, Yinds, incs))
+            plans.extend(self.plan(plan_slicedcopy, (self.queue, X, Y, Xinds, Yinds, incs)))
 
         return plans
 
@@ -643,7 +679,7 @@ class Simulator(object):
         A = self.all_data[[self.sidx[op.A] for op in ops]]
         X = self.all_data[[self.sidx[op.X] for op in ops]]
         Y = self.all_data[[self.sidx[op.Y] for op in ops]]
-        return [plan_elementwise_inc(self.queue, A, X, Y)]
+        return self.plan(plan_elementwise_inc, (self.queue, A, X, Y))
 
     def plan_SimPyFunc(self, ops):
         groups = groupby(ops, lambda op: op.fn)
@@ -689,10 +725,10 @@ class Simulator(object):
 
             # try to get OCL code
             if self.if_python_code == 'error':
-                plans.append(self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name))
+                plans.extend(self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name))
             else:
                 try:
-                    plans.append(self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name))
+                    plans.extend(self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name))
                 except Exception as e:
                     self._found_python_code(
                         "Function %r could not be converted to OCL due to %s%s"
@@ -702,7 +738,7 @@ class Simulator(object):
         # --- do remaining unplanned signals in Python
         if len(unplanned_signals) > 0:
             tt, xx, yy = zip(*unplanned_signals)
-            plans.append(self._plan_fn_in_python(fn, tt, xx, yy, fn_name))
+            plans.extend(self._plan_fn_in_python(fn, tt, xx, yy, fn_name))
 
         return plans
 
@@ -745,8 +781,10 @@ class Simulator(object):
             inputs.append(self.all_data[[self.sidx[x] for x in xx]])
         output = self.all_data[[self.sidx[y] for y in yy]]
 
-        return plan_direct(self.queue, ocl_fn.code, ocl_fn.init,
-                           input_names, inputs, output, tag=fn_name)
+        return self.plan(plan_direct,
+                         (self.queue, ocl_fn.code, ocl_fn.init,
+                          input_names, inputs, output),
+                         dict(tag=fn_name))
 
     def _plan_fn_in_python(self, fn, tt, xx, yy, fn_name):
         t_in = tt[0] is not None
@@ -770,7 +808,8 @@ class Simulator(object):
                 if iy is not None:
                     self.all_data[iy] = v2m(np.asarray(y))
 
-        return PythonPlan(step, name='python_fn', tag=fn_name)
+        plan_python = lambda: [PythonPlan(step, name='python_fn', tag=fn_name)]
+        return self.plan(plan_python)
 
     def plan_SimNeurons(self, all_ops):
         groups = groupby(all_ops, lambda op: op.neurons.__class__)
@@ -788,79 +827,89 @@ class Simulator(object):
         if not all(op.neurons.min_voltage == 0 for op in ops):
             raise NotImplementedError("LIF min voltage")
         dt = self.model.dt
-        J = self.all_data[[self.sidx[op.J] for op in ops]]
-        V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
-        W = self.all_data[[self.sidx[op.states[1]] for op in ops]]
-        S = self.all_data[[self.sidx[op.output] for op in ops]]
+        # J = self.all_data[[self.sidx[op.J] for op in ops]]
+        # V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
+        # W = self.all_data[[self.sidx[op.states[1]] for op in ops]]
+        # S = self.all_data[[self.sidx[op.output] for op in ops]]
+        J = [op.J for op in ops]
+        V = [op.states[0] for op in ops]
+        W = [op.states[1] for op in ops]
+        S = [op.output for op in ops]
         ref = self.RaggedArray([op.neurons.tau_ref * np.ones(op.J.size)
-                                for op in ops], dtype=J.dtype)
+                                for op in ops], dtype=np.float32)
         tau = self.RaggedArray([op.neurons.tau_rc * np.ones(op.J.size)
-                                for op in ops], dtype=J.dtype)
+                                for op in ops], dtype=np.float32)
         amp = (self.RaggedArray([op.neurons.amplitude * np.ones(op.J.size)
-                                 for op in ops], dtype=J.dtype)
+                                 for op in ops], dtype=np.float32)
                if any(hasattr(op.neurons, 'amplitude') for op in ops)
                else None)
-        return [plan_lif(self.queue, dt, J, V, W, S, ref, tau, amp=amp)]
+        return self.plan(plan_lif,
+                         (self.queue, dt, J, V, W, S, ref, tau),
+                         dict(amp=amp))
 
     def _plan_LIFRate(self, ops):
         dt = self.model.dt
-        J = self.all_data[[self.sidx[op.J] for op in ops]]
-        R = self.all_data[[self.sidx[op.output] for op in ops]]
+        J = [op.J for op in ops]
+        R = [op.output for op in ops]
         ref = self.RaggedArray([op.neurons.tau_ref * np.ones(op.J.size)
-                                for op in ops], dtype=J.dtype)
+                                for op in ops], dtype=np.float32)
         tau = self.RaggedArray([op.neurons.tau_rc * np.ones(op.J.size)
-                                for op in ops], dtype=J.dtype)
+                                for op in ops], dtype=np.float32)
         amp = (self.RaggedArray([op.neurons.amplitude * np.ones(op.J.size)
-                                 for op in ops], dtype=J.dtype)
+                                 for op in ops], dtype=np.float32)
                if any(hasattr(op.neurons, 'amplitude') for op in ops)
                else None)
-        return [plan_lif_rate(self.queue, dt, J, R, ref, tau, amp=amp)]
+        return self.plan(plan_lif_rate,
+                         (self.queue, dt, J, R, ref, tau),
+                         dict(amp=amp))
 
     def _plan_AdaptiveLIF(self, ops):
         dt = self.model.dt
-        J = self.all_data[[self.sidx[op.J] for op in ops]]
-        V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
-        W = self.all_data[[self.sidx[op.states[1]] for op in ops]]
-        N = self.all_data[[self.sidx[op.states[2]] for op in ops]]
-        S = self.all_data[[self.sidx[op.output] for op in ops]]
+        J = [op.J for op in ops]
+        V = [op.states[0] for op in ops]
+        W = [op.states[1] for op in ops]
+        N = [op.states[2] for op in ops]
+        S = [op.output for op in ops]
         ref = self.RaggedArray([op.neurons.tau_ref * np.ones(op.J.size)
-                                for op in ops], dtype=J.dtype)
+                                for op in ops], dtype=np.float32)
         tau = self.RaggedArray([op.neurons.tau_rc * np.ones(op.J.size)
-                                for op in ops], dtype=J.dtype)
+                                for op in ops], dtype=np.float32)
         tau_n = self.RaggedArray([op.neurons.tau_n * np.ones(op.J.size)
-                                  for op in ops], dtype=J.dtype)
+                                  for op in ops], dtype=np.float32)
         inc_n = self.RaggedArray([op.neurons.inc_n * np.ones(op.J.size)
-                                  for op in ops], dtype=J.dtype)
-        return [plan_lif(self.queue, dt, J, V, W, S, ref, tau,
-                         N=N, tau_n=tau_n, inc_n=inc_n)]
+                                  for op in ops], dtype=np.float32)
+        return self.plan(plan_lif,
+                         (self.queue, dt, J, V, W, S, ref, tau),
+                         dict(N=N, tau_n=tau_n, inc_n=inc_n))
 
     def _plan_AdaptiveLIFRate(self, ops):
         dt = self.model.dt
-        J = self.all_data[[self.sidx[op.J] for op in ops]]
-        R = self.all_data[[self.sidx[op.output] for op in ops]]
-        N = self.all_data[[self.sidx[op.states[0]] for op in ops]]
+        J = [op.J for op in ops]
+        R = [op.output for op in ops]
+        N = [op.states[0] for op in ops]
         ref = self.RaggedArray([op.neurons.tau_ref * np.ones(op.J.size)
-                                for op in ops], dtype=J.dtype)
+                                for op in ops], dtype=np.float32)
         tau = self.RaggedArray([op.neurons.tau_rc * np.ones(op.J.size)
-                                for op in ops], dtype=J.dtype)
+                                for op in ops], dtype=np.float32)
         tau_n = self.RaggedArray([op.neurons.tau_n * np.ones(op.J.size)
-                                  for op in ops], dtype=J.dtype)
+                                  for op in ops], dtype=np.float32)
         inc_n = self.RaggedArray([op.neurons.inc_n * np.ones(op.J.size)
-                                  for op in ops], dtype=J.dtype)
-        return [plan_lif_rate(self.queue, dt, J, R, ref, tau,
-                              N=N, tau_n=tau_n, inc_n=inc_n)]
+                                  for op in ops], dtype=np.float32)
+        return self.plan(plan_lif_rate,
+                         (self.queue, dt, J, R, ref, tau),
+                         dict(N=N, tau_n=tau_n, inc_n=inc_n))
 
     def _plan_RectifiedLinear(self, ops):
-        J = self.all_data[[self.sidx[op.J] for op in ops]]
-        R = self.all_data[[self.sidx[op.output] for op in ops]]
-        return [plan_rectified_linear(self.queue, J, R)]
+        J = [op.J for op in ops]
+        R = [op.output for op in ops]
+        return self.plan(plan_rectified_linear, (self.queue, J, R))
 
     def _plan_Sigmoid(self, ops):
-        J = self.all_data[[self.sidx[op.J] for op in ops]]
-        R = self.all_data[[self.sidx[op.output] for op in ops]]
+        J = [op.J for op in ops]
+        R = [op.output for op in ops]
         ref = self.RaggedArray([op.neurons.tau_ref * np.ones(op.J.size)
-                                for op in ops], dtype=J.dtype)
-        return [plan_sigmoid(self.queue, J, R, ref)]
+                                for op in ops], dtype=np.float32)
+        return self.plan(plan_sigmoid, (self.queue, J, R, ref))
 
     def plan_SimProcess(self, all_ops):
         class_groups = groupby(all_ops, lambda op: type(op.process))
@@ -886,29 +935,26 @@ class Simulator(object):
         rng = op.process.get_rng(self.rng)
         fn = op.process.make_step(
             shape(op.input), shape(op.output), self.model.dt, rng=rng)
-        plans = self._plan_python_fn(fn, [op.t], [op.input], [op.output])
-        plan, = plans  # should only be one
         self._python_rngs[rng] = rng.get_state()
-        return plans
+        return self._plan_python_fn(fn, [op.t], [op.input], [op.output])
 
     def _plan_LinearFilter(self, ops):
         steps = [op.process.make_step(op.input.shape, op.output.shape,
                                       self.model.dt, rng=None) for op in ops]
         A = self.RaggedArray([f.den for f in steps], dtype=np.float32)
         B = self.RaggedArray([f.num for f in steps], dtype=np.float32)
-        X = self.all_data[[self.sidx[op.input] for op in ops]]
-        Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        Xbuf0 = RaggedArray(
-            [np.zeros(shape) for shape in zip(B.sizes, X.sizes)],
-            dtype=np.float32)
-        Ybuf0 = RaggedArray(
-            [np.zeros(shape) for shape in zip(A.sizes, Y.sizes)],
-            dtype=np.float32)
+        X = [op.input for op in ops]
+        Y = [op.output for op in ops]
+        Xbuf0 = RaggedArray([np.zeros((b.size, x.size)) for b, x in zip(B, X)],
+                            dtype=np.float32)
+        Ybuf0 = RaggedArray([np.zeros((a.size, y.size)) for a, y in zip(A, Y)],
+                            dtype=np.float32)
         Xbuf = CLRaggedArray(self.queue, Xbuf0)
         Ybuf = CLRaggedArray(self.queue, Ybuf0)
         self._raggedarrays_to_reset[Xbuf] = Xbuf0
         self._raggedarrays_to_reset[Ybuf] = Ybuf0
-        return plan_linearfilter(self.queue, X, Y, A, B, Xbuf, Ybuf)
+        return self.plan(plan_linearfilter,
+                         (self.queue, X, Y, A, B, Xbuf, Ybuf))
 
     def _plan_WhiteNoise(self, ops):
         assert all(op.input is None for op in ops)
@@ -916,23 +962,22 @@ class Simulator(object):
         seeds = [op.process.seed for op in ops]
         cl_rngs = self._create_cl_rngs(seeds)
 
-        Y = self.all_data[[self.sidx[op.output] for op in ops]]
+        Y = [op.output for op in ops]
         scale = self.Array([op.process.scale for op in ops], dtype=np.int32)
         inc = self.Array([op.mode == 'inc' for op in ops], dtype=np.int32)
         enums, params = get_dist_enums_params([op.process.dist for op in ops])
         enums = CLRaggedArray(self.queue, enums)
         params = CLRaggedArray(self.queue, params)
         dt = self.model.dt
-        return [plan_whitenoise(
-            self.queue, Y, enums, params, scale, inc, dt, cl_rngs)]
+        return self.plan(plan_whitenoise, (
+            self.queue, Y, enums, params, scale, inc, dt, cl_rngs))
 
     def _plan_FilteredNoise(self, ops):
         raise NotImplementedError()
 
     def _plan_WhiteSignal(self, ops):
-        Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        s = self._cl_n_steps
-        # s = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        Y = [op.output for op in ops]
+        s = self.all_data[[self.sidx[self.model.step] for _ in ops]]
 
         dt = self.model.dt
         signals = []
@@ -943,17 +988,18 @@ class Simulator(object):
             signals.append(get_closures(f)['signal'])
 
         signals = self.RaggedArray(signals, dtype=np.float32)
-        return [plan_presentinput(self.queue, Y, t, signals, dt)]
+        return self.plan(plan_presentinput, (self.queue, Y, s, signals, dt))
 
     def _plan_PresentInput(self, ops):
         ps = [op.process for op in ops]
-        Y = self.all_data[[self.sidx[op.output] for op in ops]]
+        Y = [op.output for op in ops]
         t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
         inputs = self.RaggedArray([p.inputs.reshape(p.inputs.shape[0], -1)
                                    for p in ps], dtype=np.float32)
         pres_t = self.Array([p.presentation_time for p in ps])
         dt = self.model.dt
-        return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
+        return self.plan(plan_presentinput, (self.queue, Y, t, inputs, dt),
+                         dict(pres_t=pres_t))
 
     def _plan_Conv2d(self, ops):
         plans = []
@@ -968,7 +1014,7 @@ class Simulator(object):
                 f, (0, 1, 2, 3) if conv else (0, 3, 4, 5, 1, 2)), order='C')
             F = self.Array(ftrans.ravel())
             B = self.Array((np.zeros(p.shape_out) + b).ravel())
-            plans.append(plan_conv2d(
+            plans.extend(plan_conv2d(
                 self.queue, X, Y, F, B, p.shape_in, p.shape_out,
                 kernel_shape, conv, p.padding, p.strides))
 
@@ -982,39 +1028,42 @@ class Simulator(object):
             X = self.all_data.getitem_device(self.sidx[op.input])
             Y = self.all_data.getitem_device(self.sidx[op.output])
             shape = p.shape_out + p.shape_in[1:]
-            plans.append(plan_pool2d(
+            plans.extend(plan_pool2d(
                 self.queue, X, Y, shape, p.pool_size, p.strides))
 
         return plans
 
     def plan_SimBCM(self, ops):
-        pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
-        post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
-        theta = self.all_data[[self.sidx[op.theta] for op in ops]]
-        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        pre = [op.pre_filtered for op in ops]
+        post = [op.post_filtered for op in ops]
+        theta = [op.theta for op in ops]
+        delta = [op.delta for op in ops]
         alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
-        return [plan_bcm(self.queue, pre, post, theta, delta, alpha)]
+        return self.plan(plan_bcm,
+                         (self.queue, pre, post, theta, delta, alpha))
 
     def plan_SimOja(self, ops):
-        pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
-        post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
-        weights = self.all_data[[self.sidx[op.weights] for op in ops]]
-        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        pre = [op.pre_filtered for op in ops]
+        post = [op.post_filtered for op in ops]
+        weights = [op.weights for op in ops]
+        delta = [op.delta for op in ops]
         alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
         beta = self.Array([op.beta for op in ops])
-        return [plan_oja(self.queue, pre, post, weights, delta, alpha, beta)]
+        return self.plan(plan_oja,
+                         (self.queue, pre, post, weights, delta, alpha, beta))
 
     def plan_SimVoja(self, ops):
-        pre = self.all_data[[self.sidx[op.pre_decoded] for op in ops]]
-        post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
-        encoders = self.all_data[[self.sidx[op.scaled_encoders] for op in ops]]
-        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        pre = [op.pre_decoded for op in ops]
+        post = [op.post_filtered for op in ops]
+        encoders = [op.scaled_encoders for op in ops]
+        delta = [op.delta for op in ops]
         learning_signal = self.all_data[
             [self.sidx[op.learning_signal] for op in ops]]
         scale = self.RaggedArray([op.scale for op in ops], dtype=np.float32)
         alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
-        return [plan_voja(self.queue, pre, post, encoders, delta,
-                          learning_signal, scale, alpha)]
+        return self.plan(plan_voja,
+                         (self.queue, pre, post, encoders, delta,
+                          learning_signal, scale, alpha))
 
     def print_plans(self):
         print(" Plans ".center(80, '-'))

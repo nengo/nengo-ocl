@@ -8,6 +8,7 @@ from mako.template import Template
 import nengo.dists as nengod
 from nengo.utils.compat import is_number, itervalues, range
 
+import nengo_ocl.ast_conversion as astconv
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
@@ -134,7 +135,7 @@ def plan_timeupdate(queue, step, time, dt):
     lsize = None
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_timeupdate")
     plan.full_args = full_args     # prevent garbage-collection
-    return plan
+    return [plan]
 
 
 def plan_reset(queue, Y, values, tag=None):
@@ -201,7 +202,7 @@ def plan_reset(queue, Y, values, tag=None):
     plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
-    return plan
+    return [plan]
 
 
 def plan_copy(queue, X, Y, incs, tag=None):
@@ -287,7 +288,7 @@ def plan_copy(queue, X, Y, incs, tag=None):
     plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(X), X.sizes.sum(), X.sizes.mean(), X.sizes.min(), X.sizes.max()))
-    return plan
+    return [plan]
 
 
 def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
@@ -392,7 +393,7 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Xinds), Xinds.sizes.sum(),
          Xinds.sizes.mean(), Xinds.sizes.min(), Xinds.sizes.max()))
-    return plan
+    return [plan]
 
 
 def plan_elementwise_inc(queue, A, X, Y, tag=None):
@@ -509,7 +510,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
-    return plan
+    return [plan]
 
 
 def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
@@ -831,12 +832,10 @@ def plan_probes(queue, periods, X, Y, tag=None):
     plan.description = (
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(X), X.sizes.sum(), X.sizes.mean(), X.sizes.min(), X.sizes.max()))
-    return plan
+    return [plan]
 
 
 def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
-    from . import ast_conversion
-
     assert len(input_names) == len(inputs)
 
     N = len(inputs[0])
@@ -882,7 +881,7 @@ ${code}
     textconf = dict(init=indent(init, 12),
                     code=indent(code, 12),
                     N=N, input_names=input_names, input_types=input_types,
-                    oname=ast_conversion.OUTPUT_NAME, otype=output_type,
+                    oname=astconv.OUTPUT_NAME, otype=output_type,
                     )
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
 
@@ -900,7 +899,7 @@ ${code}
         "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
         (len(output), output.sizes.sum(),
          output.sizes.mean(), output.sizes.min(), output.sizes.max()))
-    return plan
+    return [plan]
 
 
 def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
@@ -1255,7 +1254,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
     plan.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
                         (gsize[1], input0.sizes.sum(), input0.sizes.mean(),
                          input0.sizes.min(), input0.sizes.max()))
-    return plan
+    return [plan]
 
 
 def create_rngs(queue, n):
@@ -1444,7 +1443,7 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
     lsize = (max_len, 1)
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitenoise", tag=tag)
     plan.full_args = full_args     # prevent garbage-collection
-    return plan
+    return [plan]
 
 
 def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
@@ -1525,7 +1524,7 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     plan = Plan(
         queue, _fn, gsize, lsize=lsize, name="cl_presentinput", tag=tag)
     plan.full_args = full_args     # prevent garbage-collection
-    return plan
+    return [plan]
 
 
 def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
@@ -1661,7 +1660,7 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     plan.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
     plan.description = "shape_in=%s, shape_out=%s, kernel=%s, conv=%s" % (
         shape_in, shape_out, kernel_shape, conv)
-    return plan
+    return [plan]
 
 
 def plan_pool2d(queue, X, Y, shape, pool_size, strides, tag=None):
@@ -1760,7 +1759,7 @@ def plan_pool2d(queue, X, Y, shape, pool_size, strides, tag=None):
     plan.full_args = full_args     # prevent garbage-collection
     plan.flops_per_call = X.size
     plan.bw_per_call = X.nbytes + Y.nbytes
-    return plan
+    return [plan]
 
 
 def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
@@ -1841,7 +1840,7 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
     plan.flops_per_call = 4 * delta.sizes.sum()
     plan.bw_per_call = (pre.nbytes + post.nbytes + theta.nbytes +
                         delta.nbytes + alpha.nbytes)
-    return plan
+    return [plan]
 
 
 def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
@@ -1926,7 +1925,7 @@ def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
     plan.flops_per_call = 6 * delta.sizes.sum()
     plan.bw_per_call = (pre.nbytes + post.nbytes + weights.nbytes +
                         delta.nbytes + alpha.nbytes + beta.nbytes)
-    return plan
+    return [plan]
 
 
 def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
@@ -2021,4 +2020,4 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
     plan.flops_per_call = 5 * delta.sizes.sum()
     plan.bw_per_call = (pre.nbytes + post.nbytes + enc.nbytes + delta.nbytes +
                         learn.nbytes + scale.nbytes + alpha.nbytes)
-    return plan
+    return [plan]
