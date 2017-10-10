@@ -46,7 +46,7 @@ infix_binary_ops = {
     ast.GtE: '>=',
     ast.Lt: '<',
     ast.LtE: '<=',
-    ast.Mod: '%',
+    # ast.Mod: '%',  # do this using fmod
     ast.Mult: '*',
     ast.NotEq: '!=',
     ast.Or: '||',
@@ -373,6 +373,8 @@ class BinExp(Expression):
                     elif right.value > 0:
                         return FuncExp("powr", left, right).to_ocl(wrap=wrap)
                 return FuncExp("pow", left, right).to_ocl(wrap=wrap)
+            elif op is None and opt is ast.Mod:
+                return FuncExp("fmod", left, right)
             elif op is None:
                 raise NotImplementedError(
                     "'%s' operator is not supported" % opt.__name__)
