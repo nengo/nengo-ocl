@@ -1540,14 +1540,17 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
         conv : whether this is a convolution (true) or local filtering (false)
     """
     for ary in [X, Y, filters, biases]:
+        assert isinstance(ary, cl.array.Array)
         # assert that arrays are contiguous
-        assert len(ary.shape) in [1, 2]
+        assert len(ary.shape) in (1, 2)
         assert ary.strides[-1] == ary.dtype.itemsize
         if len(ary.shape) == 2:
             assert ary.strides[0] == ary.dtype.itemsize * ary.shape[1]
 
     assert filters.start == biases.start == 0
     assert X.ctype == Y.ctype == filters.ctype == biases.ctype
+
+    print(type(X))
 
     text = """
     __kernel void conv2d(

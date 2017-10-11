@@ -54,10 +54,24 @@ class PlanMaker(object):
     def __repr__(self):
         return "%s{%s}" % (self.__class__.__name__, self.planning_fn.__name__)
 
-    @staticmethod
-    def is_signals(arg):
-        return (is_iterable(arg) and len(arg) > 0 and
-                all(isinstance(s, Signal) for s in arg))
+    @classmethod
+    def is_signal(cls, arg):
+        return isinstance(arg, Signal)
+
+    @classmethod
+    def signals_to_data(cls, xx, get_data):
+        if isinstance(xx, (tuple, list)) and all(cls.is_signal(x) for x in xx):
+            return get_data(xx)
+        elif cls.is_signal(xx):
+            return get_data(xx)
+        if isinstance(xx, tuple):
+            return tuple(cls.signals_to_data(x, get_data) for x in xx)
+        elif isinstance(xx, list):
+            return [cls.signals_to_data(x, get_data) for x in xx]
+        elif isinstance(xx, dict):
+            return {k: cls.signals_to_data(v, get_data) for k, v in xx.items()}
+        else:
+            return xx
 
     def signal_groups(self):
         groups = []
@@ -67,11 +81,12 @@ class PlanMaker(object):
 
         return groups
 
-    def make(self):
-        args = [self.simulator._get_data(a) if self.is_signals(a) else a
-                for a in self.args]
-        kwargs = {k: self.simulator._get_data(a) if self.is_signals(a) else a
-                  for k, a in iteritems(self.kwargs)}
+    def make(self, get_data):
+        args = self.signals_to_data(self.args, get_data)
+        kwargs = self.signals_to_data(self.kwargs, get_data)
+        # args = [get_data(a) if self.is_signal(a) else a for a in self.args]
+        # kwargs = {k: get_data(a) if self.is_signal(a) else a
+        #           for k, a in iteritems(self.kwargs)}
         return self.planning_fn(*args, **kwargs)
 
 
@@ -286,7 +301,7 @@ class Simulator(object):
         plans = []
         for plan_maker in plan_makers:
             if isinstance(plan_maker, PlanMaker):
-                plans.extend(plan_maker.make())
+                plans.extend(plan_maker.make(self.get_device_data))
             else:
                 plans.append(plan_maker)
 
@@ -313,9 +328,22 @@ class Simulator(object):
         for rng, state in iteritems(self._python_rngs):
             rng.set_state(state)
 
-    def _get_data(self, signals):
-        signals = signals if is_iterable(signals) else [signals]
-        return self.all_data[[self.sidx[s] for s in signals]]
+    def get_host_item(self, signal):
+        raw = self.all_data[self.sidx[signal]]
+        return (raw[0, 0] if signal.ndim == 0 else
+                raw.ravel() if signal.ndim == 1 else raw)
+
+    def set_device_item(self, signal, value):
+        value = np.asarray(value)
+        assert value.size == signal.size
+        value = value.reshape(signal.shape)
+        self.all_data[self.sidx[signal]] = value
+
+    def get_device_data(self, signals):
+        if is_iterable(signals):
+            return self.all_data[[self.sidx[s] for s in signals]]
+        else:
+            return self.all_data.getitem_device(self.sidx[signals])
 
         # signals = signals if is_iterable(signals) else [signals]
         # didx = self.data_idx[signals[0]]
@@ -336,11 +364,13 @@ class Simulator(object):
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
-    def __getitem__(self, item):
+    def __getitem__(self, signal):
         """
         Return internally shaped signals, which are always 2d
         """
-        return self.all_data[self.sidx[item]]
+        warnings.warn("Simulator getitem syntax deprecated, use get_host_item",
+                      DeprecationWarning)
+        return self.get_host_item(signal)
 
     @property
     def dt(self):
@@ -366,34 +396,14 @@ class Simulator(object):
         """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)
         """
         class Accessor(object):
-
             def __iter__(_):
                 return iter(self.all_bases)
 
             def __getitem__(_, item):
-                raw = self.all_data[self.sidx[item]]
-                if item.ndim == 0:
-                    return raw[0, 0]
-                elif item.ndim == 1:
-                    return raw.ravel()
-                elif item.ndim == 2:
-                    return raw
-                else:
-                    raise NotImplementedError()
+                return self.get_host_item(item)
 
-            def __setitem__(_, item, val):
-                incoming = np.asarray(val)
-                if item.ndim == 0:
-                    assert incoming.size == 1
-                    self.all_data[self.sidx[item]] = incoming
-                elif item.ndim == 1:
-                    assert (item.size,) == incoming.shape
-                    self.all_data[self.sidx[item]] = incoming[:, None]
-                elif item.ndim == 2:
-                    assert item.shape == incoming.shape
-                    self.all_data[self.sidx[item]] = incoming
-                else:
-                    raise NotImplementedError()
+            def __setitem__(_, item, value):
+                self.set_device_item(item, value)
 
             def __str__(self_):
                 sio = StringIO()
@@ -462,7 +472,7 @@ class Simulator(object):
         for base in self.all_bases:
             # TODO: copy all data on at once
             if not base.readonly:
-                self.all_data[self.sidx[base]] = base.initial_value
+                self.set_device_item(base, base.initial_value)
 
         for clra, ra in iteritems(self._raggedarrays_to_reset):
             # TODO: copy all data on at once
@@ -617,9 +627,19 @@ class Simulator(object):
         if len(ops) == 0:
             return []
 
+        def get_arrays_and_indices(js_fn):
+            # Return view of A/X arrays used, with indices to that array
+            xidx = [[self.sidx[ss] for ss in js_fn(op)] for op in ops]
+            uidx = np.unique(xidx)
+            xmap = dict(zip(uidx, range(len(uidx))))
+            Xs = self.all_data[uidx]
+            X_js = RaggedArray([[xmap[idx] for idx in row] for row in xidx],
+                               dtype=np.int32)
+            return Xs, X_js
+
         all_data, sidx = self.all_data, self.sidx
-        A_js = RaggedArray([[sidx[ss] for ss in A_js_fn(op)] for op in ops])
-        X_js = RaggedArray([[sidx[ss] for ss in X_js_fn(op)] for op in ops])
+        A, A_js = get_arrays_and_indices(A_js_fn)
+        X, X_js = get_arrays_and_indices(X_js_fn)
         Y_sigs = [Y_fn(item) for item in ops]
         Y_in_sigs = [Y_in_fn(item) for item in ops] if Y_in_fn else Y_sigs
         Y = all_data[[sidx[sig] for sig in Y_sigs]]
@@ -628,19 +648,19 @@ class Simulator(object):
             beta = RaggedArray([sidx[beta(o)] for o in ops], dtype=np.float32)
 
         rval = plan_block_gemv(
-            self.queue, alpha, all_data, A_js, all_data, X_js, beta, Y,
+            self.queue, alpha, A, A_js, X, X_js, beta, Y,
             Y_in=Y_in, gamma=gamma, tag=tag)
         return rval.plans
 
     def plan_TimeUpdate(self, ops):
         op, = ops
-        step = self.all_data[[self.sidx[op.step]]]
-        time = self.all_data[[self.sidx[op.time]]]
+        step = [op.step]
+        time = [op.time]
         return self.plan(
             plan_timeupdate, (self.queue, step, time, self.model.dt))
 
     def plan_Reset(self, ops):
-        targets = self.all_data[[self.sidx[op.dst] for op in ops]]
+        targets = [op.dst for op in ops]
         values = self.Array([op.value for op in ops])
         return self.plan(plan_reset, (self.queue, targets, values))
 
@@ -656,14 +676,14 @@ class Simulator(object):
 
         plans = []
         if copies:
-            X = self.all_data[[self.sidx[op.src] for op in copies]]
-            Y = self.all_data[[self.sidx[op.dst] for op in copies]]
+            X = [op.src for op in copies]
+            Y = [op.dst for op in copies]
             incs = np.array([op.inc for op in copies], dtype=np.int32)
             plans.extend(self.plan(plan_copy, (self.queue, X, Y, incs)))
 
         if ops:
-            X = self.all_data[[self.sidx[op.src] for op in ops]]
-            Y = self.all_data[[self.sidx[op.dst] for op in ops]]
+            X = [op.src for op in ops]
+            Y = [op.dst for op in ops]
             inds = lambda ary, i: np.arange(ary.size, dtype=np.int32)[
                 Ellipsis if i is None else i]
             Xinds = self.RaggedArray(
@@ -676,9 +696,9 @@ class Simulator(object):
         return plans
 
     def plan_ElementwiseInc(self, ops):
-        A = self.all_data[[self.sidx[op.A] for op in ops]]
-        X = self.all_data[[self.sidx[op.X] for op in ops]]
-        Y = self.all_data[[self.sidx[op.Y] for op in ops]]
+        A = [op.A for op in ops]
+        X = [op.X for op in ops]
+        Y = [op.Y for op in ops]
         return self.plan(plan_elementwise_inc, (self.queue, A, X, Y))
 
     def plan_SimPyFunc(self, ops):
@@ -776,10 +796,10 @@ class Simulator(object):
         input_names = ocl_fn.translator.arg_names
         inputs = []
         if t_in:  # append time
-            inputs.append(self.all_data[[self.sidx[t] for t in tt]])
+            inputs.append(tt)
         if x_in:  # append x
-            inputs.append(self.all_data[[self.sidx[x] for x in xx]])
-        output = self.all_data[[self.sidx[y] for y in yy]]
+            inputs.append(xx)
+        output = yy
 
         return self.plan(plan_direct,
                          (self.queue, ocl_fn.code, ocl_fn.init,
@@ -787,26 +807,18 @@ class Simulator(object):
                          dict(tag=fn_name))
 
     def _plan_fn_in_python(self, fn, tt, xx, yy, fn_name):
-        t_in = tt[0] is not None
-        t_idx = self.sidx[self.model.time]
-        x_idx = [self.sidx[x] if x is not None else None for x in xx]
-        y_idx = [self.sidx[y] if y is not None else None for y in yy]
-        ix_iy = list(zip(x_idx, y_idx))
-
-        def m2v(x):  # matrix to vector, if appropriate
-            return x[:, 0] if x.ndim == 2 and x.shape[1] == 1 else x
-
-        def v2m(x):  # vector to matrix, if appropriate
-            return x[:, None] if x.ndim == 1 else x
+        st = tt[0]
+        assert all(t == st for t in tt)
+        t_in = st is not None
 
         def step():
-            t = float(self.all_data[t_idx][0, 0] if t_in else 0)
-            for ix, iy in ix_iy:
+            t = float(self.get_host_item(st) if t_in else 0)
+            for sx, sy in zip(xx, yy):
                 args = [t] if t_in else []
-                args += [m2v(self.all_data[ix])] if ix is not None else []
+                args += [self.get_host_item(sx)] if sx is not None else []
                 y = fn(*args)
-                if iy is not None:
-                    self.all_data[iy] = v2m(np.asarray(y))
+                if sy is not None:
+                    self.set_device_item(sy, y)
 
         plan_python = lambda: [PythonPlan(step, name='python_fn', tag=fn_name)]
         return self.plan(plan_python)
@@ -827,10 +839,6 @@ class Simulator(object):
         if not all(op.neurons.min_voltage == 0 for op in ops):
             raise NotImplementedError("LIF min voltage")
         dt = self.model.dt
-        # J = self.all_data[[self.sidx[op.J] for op in ops]]
-        # V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
-        # W = self.all_data[[self.sidx[op.states[1]] for op in ops]]
-        # S = self.all_data[[self.sidx[op.output] for op in ops]]
         J = [op.J for op in ops]
         V = [op.states[0] for op in ops]
         W = [op.states[1] for op in ops]
@@ -1008,15 +1016,15 @@ class Simulator(object):
             assert f.ndim in [4, 6]
             conv = (f.ndim == 4)
             kernel_shape = f.shape[-2:]
-            X = self.all_data.getitem_device(self.sidx[op.input])
-            Y = self.all_data.getitem_device(self.sidx[op.output])
+            X = op.input
+            Y = op.output
             ftrans = np.asarray(np.transpose(
                 f, (0, 1, 2, 3) if conv else (0, 3, 4, 5, 1, 2)), order='C')
             F = self.Array(ftrans.ravel())
             B = self.Array((np.zeros(p.shape_out) + b).ravel())
-            plans.extend(plan_conv2d(
+            plans.extend(self.plan(plan_conv2d, (
                 self.queue, X, Y, F, B, p.shape_in, p.shape_out,
-                kernel_shape, conv, p.padding, p.strides))
+                kernel_shape, conv, p.padding, p.strides)))
 
         return plans
 
@@ -1025,11 +1033,11 @@ class Simulator(object):
         for op in ops:
             assert op.process.kind == 'avg'
             p = op.process
-            X = self.all_data.getitem_device(self.sidx[op.input])
-            Y = self.all_data.getitem_device(self.sidx[op.output])
+            X = op.input
+            Y = op.output
             shape = p.shape_out + p.shape_in[1:]
-            plans.extend(plan_pool2d(
-                self.queue, X, Y, shape, p.pool_size, p.strides))
+            plans.extend(self.plan(plan_pool2d, (
+                self.queue, X, Y, shape, p.pool_size, p.strides)))
 
         return plans
 
@@ -1057,8 +1065,7 @@ class Simulator(object):
         post = [op.post_filtered for op in ops]
         encoders = [op.scaled_encoders for op in ops]
         delta = [op.delta for op in ops]
-        learning_signal = self.all_data[
-            [self.sidx[op.learning_signal] for op in ops]]
+        learning_signal = [op.learning_signal for op in ops]
         scale = self.RaggedArray([op.scale for op in ops], dtype=np.float32)
         alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
         return self.plan(plan_voja,
