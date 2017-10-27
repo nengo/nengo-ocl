@@ -744,16 +744,11 @@ class Simulator(object):
                 continue
 
             # try to get OCL code
-            if self.if_python_code == 'error':
-                plans.extend(self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name))
+            ocl_plan = self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name)
+            if ocl_plan is not None:
+                plans.extend(ocl_plan)
             else:
-                try:
-                    plans.extend(self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name))
-                except Exception as e:
-                    self._found_python_code(
-                        "Function %r could not be converted to OCL due to %s%s"
-                        % (fn_name, type(e).__name__, e.args))
-                    unplanned_signals.extend(zip(tt, xx, yy))
+                unplanned_signals.extend(zip(tt, xx, yy))
 
         # --- do remaining unplanned signals in Python
         if len(unplanned_signals) > 0:
@@ -790,10 +785,6 @@ class Simulator(object):
         assert all(vector_dims(y.shape, y_dim) for y in yy)
         assert all(unit_stride(y.shape, y.elemstrides) for y in yy)
 
-        # try to get OCL code
-        in_dims = ([1] if t_in else []) + ([x_dim] if x_in else [])
-        ocl_fn = OCL_Function(fn, in_dims=in_dims, out_dim=y_dim)
-        input_names = ocl_fn.translator.arg_names
         inputs = []
         if t_in:  # append time
             inputs.append(tt)
@@ -801,10 +792,20 @@ class Simulator(object):
             inputs.append(xx)
         output = yy
 
-        return self.plan(plan_direct,
-                         (self.queue, ocl_fn.code, ocl_fn.init,
-                          input_names, inputs, output),
-                         dict(tag=fn_name))
+        # try to get OCL code
+        try:
+            in_dims = ([1] if t_in else []) + ([x_dim] if x_in else [])
+            ocl_fn = OCL_Function(fn, in_dims=in_dims, out_dim=y_dim)
+            input_names = ocl_fn.translator.arg_names
+            return self.plan(plan_direct,
+                             (self.queue, ocl_fn.code, ocl_fn.init,
+                              input_names, inputs, output),
+                             dict(tag=fn_name))
+        except Exception as e:
+            self._found_python_code(
+                "Function %r could not be converted to OCL due to %s%s"
+                % (fn_name, type(e).__name__, e.args))
+            return None
 
     def _plan_fn_in_python(self, fn, tt, xx, yy, fn_name):
         st = tt[0]
