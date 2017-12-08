@@ -193,6 +193,60 @@ def compute_J(queue, X, gain, bias):
     return fn(queue, gsize, lsize, X.data, gain.data, bias.data)
 
 
+if pyopencl_blas:
+    @Builder.register_ocl_solver(nengo.solvers.LstsqL2)
+    def solve_LstsqL2(solver, queue, clA, Y, rng=None, E=None):
+        pyopencl_blas.setup()
+
+        dtype = np.float32
+        # dtype = np.float64
+
+        tstart = time.time()
+
+        A = clA.get()
+        if clA.dtype != dtype:
+            clA = clA.astype(dtype)
+        clY = cl.array.to_device(queue, Y.astype(dtype))
+
+        sigma = solver.reg * cl.array.max(clA).get()
+
+        m, n = clA.shape
+        _, d = Y.shape
+
+        transpose = solver.solver.transpose
+        if transpose is None:
+            transpose = m < n  # transpose if matrix is fat
+
+        if transpose:
+            # substitution: x = A'*xbar, G*xbar = b where G = A*A' + lambda*I
+            clG = cl.array.Array(queue, (m, m), dtype=dtype)
+            pyopencl_blas.gemm(queue, clA, clA, clG, transB=True)
+            G, B = clG.get(), Y
+        else:
+            # multiplication by A': G*x = A'*b where G = A'*A + lambda*I
+            clG = cl.array.Array(queue, (n, n), dtype=dtype)
+            clB = cl.array.Array(queue, (n, d), dtype=dtype)
+            pyopencl_blas.gemm(queue, clA, clA, clG, transA=True)
+            pyopencl_blas.gemm(queue, clA, clY, clB, transA=True)
+            G, B = clG.get(), clB.get()
+
+        # pyopencl_blas.teardown()
+
+        np.fill_diagonal(G, G.diagonal() + 2*m * sigma**2)
+
+        # X = cho_solve(G, B, overwrite=True)
+        # X = scipy.linalg.solve(G, B)
+        X = np.linalg.solve(G, B)
+        # ^ Using Cholesky can fail due to near-singular.
+        #  See tests.test_builder.test_LstsqL2_solver
+
+        X = np.dot(A.T, X) if transpose else X
+        tend = time.time()
+
+        info = {'rmses': rmses(A, X, Y), 'time': tend - tstart}
+        return solver.mul_encoders(X, E), info
+
+
 def plan_softmax(queue, X, Y):
     from mako.template import Template
     from nengo_ocl.utils import as_ascii
