@@ -14,7 +14,9 @@ from nengo_ocl.utils import equal_strides
 
 # add 'ctype' property to Array (returned by 'to_device')
 Array.ctype = property(lambda self: cl.tools.dtype_to_ctype(self.dtype))
-Array.start = property(lambda self: self.offset / self.dtype.itemsize)
+Array.start = property(lambda self: self.offset // self.dtype.itemsize)
+Array.elemstrides = property(
+    lambda self: tuple(s // self.dtype.itemsize for s in self.strides))
 
 
 def data_ptr(array):
@@ -79,6 +81,21 @@ class CLRaggedArray(object):
     def from_arrays(cls, queue, arrays, names=None, dtype=None, align=False):
         return cls(queue, RaggedArray(
             arrays, names=names, dtype=dtype, align=align))
+
+    @classmethod
+    def from_clarray_rows(cls, queue, array, names=None):
+        """Each row of the array becomes one entry in the CLRaggedArray"""
+        itemsize = array.dtype.itemsize
+        offset = array.offset // itemsize
+        shape0, shape1 = array.shape
+        stride0, stride1 = (s // itemsize for s in array.strides)
+        return cls.from_buffer(
+            queue,
+            array,
+            starts=[offset + i*stride0 for i in range(shape0)],
+            shape0s=[shape1] * shape0, shape1s=[1] * shape0,
+            stride0s=[stride1] * shape0, stride1s=[1] * shape0,
+            names=names)
 
     @classmethod
     def from_buffer(cls, queue, cl_buf, starts, shape0s, shape1s,
