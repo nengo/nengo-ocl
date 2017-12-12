@@ -223,6 +223,18 @@ if pyopencl_blas:
             pyopencl_blas.gemm(queue, clA, clA, clG, transB=True)
             G, B = clG.get(), Y
         else:
+            A = clA.get()
+            # maxA = A.max(0)
+            maxA = npext.norm(A, axis=0)
+            sclA = 1. / maxA.clip(1e-8, None)
+            # maxA[np.abs(maxA) < 1e-8] = 1.
+            # maxA[np.abs(maxA) < 1e-8] = maxA.max()
+            # maxA[np.abs(maxA) < 1] = 1.
+            # print((maxA < 1e-8).sum())
+            # A = A / maxA[None, :]
+            A = A * sclA[None, :]
+            clA.set(A)
+
             # multiplication by A': G*x = A'*b where G = A'*A + lambda*I
             clG = cl.array.Array(queue, (n, n), dtype=dtype)
             clB = cl.array.Array(queue, (n, d), dtype=dtype)
@@ -230,13 +242,73 @@ if pyopencl_blas:
             pyopencl_blas.gemm(queue, clA, clY, clB, transA=True)
             G, B = clG.get(), clB.get()
 
+            GG = G.T - G
+            print(npext.rms(GG))
+
+            A = clA.get()
+            # A = clA.get() * maxA[None, :]
+            # Y = clY.get()
+            G2 = np.dot(A.T, A)
+            # B2 = np.dot(A.T, Y)
+
+            GG = G2 - G
+
+            # print(A.shape)
+            # print(A[:5, :5])
+            print("RMS: %s %s" % (npext.rms(GG), np.abs(GG).max()))
+            # print((np.abs(GG) > 0.1).sum())
+            # print("RMS: %s" % npext.rms(B2 - B))
+
+            # nz = (np.abs(GG) > 0.1).nonzero()
+            # for i, j in zip(*nz):
+            #     print((i, j, GG[i, j]))
+
+            print(G[:5, :5])
+            print(G2[:5, :5])
+            print(GG[:5, :5])
+            print(GG[-5:, -5:])
+
+            filler = 2*m*(sigma*sclA)**2
+            print(filler.min(), filler.max())
+            print(maxA.max())
+            print(sigma)
+
+            # np.fill_diagonal(G, G.diagonal() + 2*m*sigma**2)
+            # np.fill_diagonal(G, G.diagonal() + 2*m*(sigma/maxA)**2)
+            # np.fill_diagonal(G, G.diagonal() + 0.05)
+            # np.fill_diagonal(G, np.maximum(G.diagonal(), 1) + 0.05)
+
+            np.fill_diagonal(G, G.diagonal() +
+                             np.maximum(2*m*(sigma*sclA)**2, 1./m))
+
+            np.fill_diagonal(G, np.maximum(G.diagonal(), 1) +
+                             np.maximum(2*m*(sigma*sclA)**2, 1./m))
+            # print(G.diagonal().min())
+
+            # G *= maxA[:, None]
+            # G *= maxA[None, :]
+            # G *= (maxA[:, None] * maxA[None, :])
+            # B *= maxA[:, None]
+
+            GG = G.T - G
+            print(npext.rms(GG))
+
+
+
+            # G = G2
+            # B = B2
+
         # pyopencl_blas.teardown()
 
-        np.fill_diagonal(G, G.diagonal() + 2*m * sigma**2)
+        # print(G.diagonal())
+        # np.fill_diagonal(G, G.diagonal() + 2*m * sigma**2)
 
         # X = cho_solve(G, B, overwrite=True)
+        # X = cho_solve(G, B, overwrite=True) / maxA[:, None]
+        X = cho_solve(G, B, overwrite=True) * sclA[:, None]
         # X = scipy.linalg.solve(G, B)
-        X = np.linalg.solve(G, B)
+        # X = np.linalg.solve(G, B)
+        # X = np.linalg.solve(G, B) / maxA[:, None]
         # ^ Using Cholesky can fail due to near-singular.
         #  See tests.test_builder.test_LstsqL2_solver
 
