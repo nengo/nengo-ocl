@@ -40,14 +40,14 @@ if testing and '--addopts' not in sys.argv:
     sysargs_overridden = True
 
 setup(
-    name="nengo_ocl",
+    name="nengo-ocl",
     version=version_module.version,
     author="Applied Brain Research",
     author_email="info@appliedbrainresearch.com",
     packages=find_packages(),
     scripts=[],
     data_files=[],
-    url="https://github.com/nengo/nengo_ocl",
+    url="https://github.com/nengo/nengo-ocl",
     license="Free for non-commercial use",
     description=("OpenCL-backed neural simulations using the "
                  "Neural Engineering Framework"),

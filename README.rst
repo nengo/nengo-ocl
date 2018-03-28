@@ -39,8 +39,8 @@ but use ``nengo_ocl.Simulator`` when creating a simulator for your model::
     plt.plot(sim.trange(), sim.data[probe_b])
     plt.show()
 
-If you are running within ``nengo_gui`` make sure the ``PYOPENCL_CTX`` 
-environment variable has been set. If this variable is not set it will open 
+If you are running within ``nengo_gui`` make sure the ``PYOPENCL_CTX``
+environment variable has been set. If this variable is not set it will open
 an interactive prompt which will cause ``nengo_gui`` to get stuck during build.
 
 Dependencies and Installation
@@ -70,7 +70,7 @@ will be automatically installed when installing ``nengo_ocl`` with
 
 .. code-block:: bash
 
-   pip install nengo_ocl
+   pip install nengo-ocl
 
 If that doesn't work, then do a developer install
 to figure out what's going wrong.
@@ -87,8 +87,8 @@ This repository can then be installed with:
 
 .. code-block:: bash
 
-   git clone https://github.com/nengo/nengo_ocl.git
-   cd nengo_ocl
+   git clone https://github.com/nengo/nengo-ocl.git
+   cd nengo-ocl
    python setup.py develop --user
 
 If you’re using a ``virtualenv`` (recommended!)
@@ -147,7 +147,7 @@ for instructions.
 Running Tests
 =============
 
-From the ``nengo_ocl`` source directory, run:
+From the ``nengo-ocl`` source directory, run:
 
 .. code-block:: bash
 
