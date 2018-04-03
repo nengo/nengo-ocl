@@ -38,6 +38,7 @@ def test_lif_step(ctx, upsample):
 
     ref = 2e-3
     taus = rng.uniform(low=15e-3, high=80e-3, size=len(n_neurons))
+    amp = 1.
 
     queue = cl.CommandQueue(ctx)
     clJ = CLRA(queue, J)
@@ -60,7 +61,7 @@ def test_lif_step(ctx, upsample):
 
     # simulate device
     plan = plan_lif(
-        queue, dt, clJ, clV, clW, clOS, ref, clTaus, upsample=upsample)
+        queue, dt, clJ, clV, clW, clOS, ref, clTaus, amp, upsample=upsample)
     plan()
 
     if 1:
@@ -93,6 +94,7 @@ def test_lif_speed(ctx, rng, heterogeneous):
     dt = 1e-3
     ref = 2e-3
     tau = 20e-3
+    amp = 1.
 
     n_iters = 10
     if heterogeneous:
@@ -117,7 +119,7 @@ def test_lif_speed(ctx, rng, heterogeneous):
     clOS = CLRA(queue, OS)
 
     for i, blockify in enumerate([False, True]):
-        plan = plan_lif(queue, dt, clJ, clV, clW, clOS, ref, tau,
+        plan = plan_lif(queue, dt, clJ, clV, clW, clOS, ref, tau, amp,
                         blockify=blockify)
 
         with Timer() as timer:
@@ -140,6 +142,7 @@ def test_lif_rate(ctx, blockify):
 
     ref = 2e-3
     taus = list(rng.uniform(low=15e-3, high=80e-3, size=len(n_neurons)))
+    amp = 1.
 
     queue = cl.CommandQueue(ctx)
     clJ = CLRA(queue, J)
@@ -153,7 +156,8 @@ def test_lif_rate(ctx, blockify):
         nl.step_math(dt, J[i], R[i])
 
     # simulate device
-    plan = plan_lif_rate(queue, dt, clJ, clR, ref, clTaus, blockify=blockify)
+    plan = plan_lif_rate(queue, dt, clJ, clR, ref, clTaus, amp,
+                         blockify=blockify)
     plan()
 
     rate_sum = np.sum([np.sum(r) for r in R])

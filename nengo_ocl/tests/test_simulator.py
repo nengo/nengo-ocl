@@ -5,7 +5,6 @@ import nengo
 from nengo.builder import Model
 from nengo.builder.operator import DotInc, Reset
 from nengo.builder.signal import Signal
-from nengo.utils.testing import warns
 
 import nengo_ocl
 from nengo_ocl.version import latest_nengo_version_info
@@ -55,7 +54,7 @@ def test_warn_on_future_version(monkeypatch):
 
     future_version = tuple(v + 1 for v in latest_nengo_version_info)
     monkeypatch.setattr(nengo.version, 'version_info', future_version)
-    with warns(UserWarning):
+    with pytest.warns(UserWarning):
         with nengo_ocl.Simulator(model):
             pass
 

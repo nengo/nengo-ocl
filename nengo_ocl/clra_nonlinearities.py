@@ -903,18 +903,18 @@ ${code}
     return plan
 
 
-def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
+def plan_lif(queue, dt, J, V, W, outS, ref, tau, amp, N=None, tau_n=None,
              inc_n=None, upsample=1, fastlif=False, **kwargs):
     adaptive = N is not None
     assert J.ctype == 'float'
-    for array in [V, W, outS]:
-        assert V.ctype == J.ctype
+    for x in [V, W, outS]:
+        assert x.ctype == J.ctype
 
     inputs = dict(J=J, V=V, W=W)
     outputs = dict(outV=V, outW=W, outS=outS)
-    parameters = dict(tau=tau, ref=ref)
+    parameters = dict(tau=tau, ref=ref, amp=amp)
     if adaptive:
-        assert all(ary is not None for ary in [N, tau_n, inc_n])
+        assert all(x is not None for x in [N, tau_n, inc_n])
         assert N.ctype == J.ctype
         inputs.update(dict(N=N))
         outputs.update(dict(outN=N))
@@ -982,7 +982,7 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
 % endfor
         outV = V;
         outW = W;
-        outS = (spiked) ? dt_inv : 0;
+        outS = (spiked) ? amp*dt_inv : 0;
 % if adaptive:
         outN = N + (dt / tau_n) * (inc_n * outS - N);
 % endif
@@ -995,18 +995,19 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, N=None, tau_n=None,
         inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
 
 
-def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
-                  **kwargs):
+def plan_lif_rate(queue, dt, J, R, ref, tau, amp,
+                  N=None, tau_n=None, inc_n=None, **kwargs):
     assert J.ctype == 'float'
-    assert R.ctype == J.ctype
+    for x in [R]:
+        assert x.ctype == J.ctype
     adaptive = N is not None
 
     inputs = dict(J=J)
     outputs = dict(R=R)
-    parameters = dict(tau=tau, ref=ref)
+    parameters = dict(tau=tau, ref=ref, amp=amp)
     textconf = dict(type=J.ctype, dt=dt, adaptive=adaptive)
     if adaptive:
-        assert all(ary is not None for ary in [N, tau_n, inc_n])
+        assert all(x is not None for x in [N, tau_n, inc_n])
         assert N.ctype == J.ctype
         inputs.update(dict(N=N))
         outputs.update(dict(outN=N))
@@ -1014,7 +1015,9 @@ def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
 
     decs = """
         const ${type} c0 = 0, c1 = 1;
+    % if adaptive:
         const ${type} dt = ${dt};
+    % endif
         """
     text = """
     % if adaptive:
@@ -1022,7 +1025,7 @@ def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
     % else:
         J = max(J - 1, c0);
     % endif
-        R = c1 / (ref + tau * log1p(c1/J));
+        R = amp / (ref + tau * log1p(c1/J));
     % if adaptive:
         outN = N + (dt / tau_n) * (inc_n*R - N);
     % endif
@@ -1035,20 +1038,53 @@ def plan_lif_rate(queue, dt, J, R, ref, tau, N=None, tau_n=None, inc_n=None,
         inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
 
 
-def plan_rectified_linear(queue, J, R, **kwargs):
+def plan_spiking_rectified_linear(queue, dt, J, V, outS, amp, **kwargs):
     assert J.ctype == 'float'
-    assert R.ctype == J.ctype
+    for x in [V, outS, amp]:
+        assert x.ctype == J.ctype
+
+    inputs = dict(J=J, V=V)
+    outputs = dict(outV=V, outS=outS)
+    parameters = dict(amp=amp)
+
+    dt = float(dt)
+    textconf = dict(type=J.ctype, dt=dt, dt_inv=1./dt)
+    decs = """
+        const ${type} c0 = 0;
+        const ${type} dt = ${dt}, dt_inv = ${dt_inv};
+        ${type} n_spikes;
+        """
+    text = """
+        V += (J > 0) ? dt*J : 0;
+        n_spikes = floor(V);
+
+        outV = V - n_spikes;
+        outS = amp * n_spikes * dt_inv;
+        """
+    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    cl_name = "cl_spikingrelu"
+    return _plan_template(
+        queue, cl_name, text, declares=decs,
+        inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
+
+
+def plan_rectified_linear(queue, J, R, amp, **kwargs):
+    assert J.ctype == 'float'
+    for x in [R, amp]:
+        assert x.ctype == J.ctype
 
     textconf = dict(type=J.ctype)
     decs = "const ${type} c0 = 0;"
-    text = "R = max(J, c0);"
+    text = "R = amp*max(J, c0);"
 
     decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
     text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
-    cl_name = "cl_rectified_linear"
+    cl_name = "cl_relu"
     return _plan_template(
         queue, cl_name, text, declares=decs,
-        inputs=dict(J=J), outputs=dict(R=R), **kwargs)
+        inputs=dict(J=J), outputs=dict(R=R), parameters=dict(amp=amp),
+        **kwargs)
 
 
 def plan_sigmoid(queue, J, R, ref, **kwargs):
