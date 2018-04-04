@@ -682,21 +682,22 @@ class Simulator(object):
             plans.append(plan_copy(self.queue, X, Y, incs))
 
         if ops:
+            inds = lambda ary, i: np.arange(ary.size, dtype=np.int32)[
+                Ellipsis if i is None else i]
+            xinds = [inds(op.src, op.src_slice) for op in ops]
+            yinds = [inds(op.dst, op.dst_slice) for op in ops]
+
             dupl = lambda s: (
                 s is not None
                 and not (isinstance(s, np.ndarray) and s.dtype == np.bool)
                 and len(s) != len(set(s)))
-            if any(dupl(op.src_slice) or dupl(op.dst_slice) for op in ops):
+            if any(dupl(i) for i in xinds) or any(dupl(i) for i in yinds):
                 raise NotImplementedError("Duplicates in indices")
 
             X = self.all_data[[self.sidx[op.src] for op in ops]]
             Y = self.all_data[[self.sidx[op.dst] for op in ops]]
-            inds = lambda ary, i: np.arange(ary.size, dtype=np.int32)[
-                Ellipsis if i is None else i]
-            Xinds = self.RaggedArray(
-                [inds(op.src, op.src_slice) for op in ops])
-            Yinds = self.RaggedArray(
-                [inds(op.dst, op.dst_slice) for op in ops])
+            Xinds = self.RaggedArray(xinds)
+            Yinds = self.RaggedArray(yinds)
             incs = np.array([op.inc for op in ops], dtype=np.int32)
             plans.append(plan_slicedcopy(self.queue, X, Y, Xinds, Yinds, incs))
 
