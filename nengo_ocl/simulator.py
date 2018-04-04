@@ -136,7 +136,7 @@ class Simulator(object):
     # would skip all test whose names start with 'test_pes'.
     unsupported = [
         # advanced indexing
-        ('nengo/tests/test_connection.py:test_list_indexing',
+        ('nengo/tests/test_connection.py:test_list_indexing*',
          "Advanced indexing with repeated indices not implemented"),
 
         # neuron types
@@ -148,8 +148,8 @@ class Simulator(object):
         # nodes
         ('nengo/tests/test_node.py:test_none',
          "No error if nodes output None"),
-        ('nengo/tests/test_node.py:test_non_finite_values',
-         "No error for non-finite values"),
+        ('nengo/tests/test_node.py:test_invalid_values*',
+         "No error for invalid node values"),
         ('nengo/tests/test_neurons.py:test_direct_mode_nonfinite_value',
          "No error for non-finite values"),
 
@@ -170,6 +170,10 @@ class Simulator(object):
         # learning rules
         ('nengo/tests/test_learning_rules.py:test_custom_type',
          "Copying 2-D arrays not implemented"),
+
+        # simulator features
+        ('nengo/tests/test_simulator.py:test_probe_cache',
+         "Changing simulator seed not implemented"),
 
         # specific to nengo.Simulator (functionality does not need testing)
         ('nengo/tests/test_builder.py:test_commonsig_readonly',
@@ -448,8 +452,8 @@ class Simulator(object):
         self.queue.finish()
 
     def _probe_step_time(self):
-        self._n_steps = self.signals[self.model.step].copy()
-        self._time = self.signals[self.model.time].copy()
+        self._n_steps = self.signals[self.model.step].item()
+        self._time = self.signals[self.model.time].item()
 
     def _reset_probes(self):
         if self._cl_probe_plan is not None:
