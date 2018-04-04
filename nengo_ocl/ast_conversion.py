@@ -34,6 +34,7 @@ def is_symbolic(x):
     return isinstance(x, Expression) or (
         is_iterable(x) and all(isinstance(xx, Expression) for xx in x))
 
+
 infix_binary_ops = {
     ast.Add: '+',
     ast.And: '&&',
@@ -231,6 +232,7 @@ def _prod_func(x):
 
 def _sum_func(x):
     return _recurse_binexp('+', x)
+
 
 vector_funcs = {
     all: _all_func,

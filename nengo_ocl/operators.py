@@ -15,18 +15,19 @@ class MultiDotInc(Operator):
         self.Y_in = Y_in
         if Y.shape != Y_in.shape:
             raise TypeError()
-        try:
-            if hasattr(beta, 'value'):
-                self._float_beta = float(beta.value)
-            else:
-                self._float_beta = float(beta)
-            self._signal_beta = None
-        except:
-            assert isinstance(beta, Signal)
+
+        if isinstance(beta, Signal):
             self._float_beta = None
             self._signal_beta = beta
             if beta.shape != Y.shape:
                 raise NotImplementedError('', (beta.shape, Y.shape))
+        elif hasattr(beta, 'value'):
+            self._float_beta = float(beta.value)
+            self._signal_beta = None
+        else:
+            self._float_beta = float(beta)
+            self._signal_beta = None
+
         self.gamma = float(gamma)
         self.tag = tag
         self.As = []
