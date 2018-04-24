@@ -21,7 +21,9 @@ Release History
 1.3.1 (unreleased)
 ==================
 
+**Improvements**
 
+- Supports recent Nengo versions, up to 2.8.0
 
 
 1.3.0 (October 6, 2017)

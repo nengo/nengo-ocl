@@ -23,5 +23,5 @@ bad_nengo_versions = [
 ]
 
 # --- latest Nengo version at time of release
-latest_nengo_version_info = (2, 7, 0)  # (major, minor, patch)
+latest_nengo_version_info = (2, 8, 0)  # (major, minor, patch)
 latest_nengo_version = '.'.join(str(v) for v in latest_nengo_version_info)

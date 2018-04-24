@@ -19,7 +19,7 @@ from nengo.builder.builder import Model
 from nengo.builder.operator import Reset
 from nengo.builder.signal import SignalDict
 from nengo.utils.compat import iteritems, StringIO, range, ResourceWarning
-from nengo.utils.progress import ProgressTracker
+from nengo.utils.progress import ProgressTracker, Progress
 from nengo.utils.stdlib import groupby
 
 from nengo_ocl.raggedarray import RaggedArray
@@ -541,9 +541,13 @@ class Simulator(object):
         if progress_bar is None:
             progress_bar = self.progress_bar
         try:
-            progress = ProgressTracker(N, progress_bar, "Simulating")
+            progress = ProgressTracker(progress_bar, Progress(
+                "Simulating", "Simulation", N))
         except TypeError:
-            progress = ProgressTracker(N, progress_bar)
+            try:
+                progress = ProgressTracker(N, progress_bar, "Simulating")
+            except TypeError:
+                progress = ProgressTracker(N, progress_bar)
 
         with progress:
             # -- we will go through N steps of the simulator
@@ -554,7 +558,10 @@ class Simulator(object):
                 self._plans.call_n_times(B)
                 self._probe()
                 N -= B
-                progress.step(n=B)
+                if hasattr(progress, 'total_progress'):
+                    progress.total_progress.step(n=B)
+                else:
+                    progress.step(n=B)
 
         if self.profiling > 1:
             self.print_profiling()
