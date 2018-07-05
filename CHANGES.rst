@@ -18,12 +18,13 @@ Release History
    - Bugfixes
    - Documentation
 
-1.3.1 (unreleased)
-==================
+1.4.0 (July 4, 2018)
+====================
 
 **Improvements**
 
-- Supports recent Nengo versions, up to 2.8.0
+- Supports recent Nengo versions, up to 2.8.0.
+- Supports the new ``SpikingRectifiedLinear`` neuron type.
 
 
 1.3.0 (October 6, 2017)
