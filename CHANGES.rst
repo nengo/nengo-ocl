@@ -18,6 +18,11 @@ Release History
    - Bugfixes
    - Documentation
 
+1.4.1 (unreleased)
+==================
+
+
+
 1.4.0 (July 4, 2018)
 ====================
 
