@@ -305,6 +305,40 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
     assert Xinds.ctype == Yinds.ctype == 'int'
 
     text = """
+% if atomic:
+    #pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable
+
+    void safe_add(volatile global float *source, const float operand) {
+        // source: http://suhorukov.blogspot.ca/
+        //     2011/12/opencl-11-atomic-operations-on-floating.html
+        union {
+            unsigned int intVal;
+            float floatVal;
+        } newVal;
+        union {
+            unsigned int intVal;
+            float floatVal;
+        } prevVal;
+
+        do {
+            prevVal.floatVal = *source;
+            newVal.floatVal = prevVal.floatVal + operand;
+        } while (atomic_cmpxchg(
+            (volatile global unsigned int*)source, prevVal.intVal, newVal.intVal)
+            != prevVal.intVal);
+    }
+    inline void safe_xchg(global float *source, const float operand) {
+        atom_xchg(source, operand);
+    }
+% else:
+    inline void safe_add(global float *source, const float operand) {
+        *source += operand;
+    }
+    inline void safe_xchg(global float *source, const float operand) {
+        *source = operand;
+    }
+% endif
+
         ////////// MAIN FUNCTION //////////
         __kernel void slicedcopy(
     % if inc is None:
@@ -336,14 +370,14 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
 
             if (i < Isizes[n]) {
     % if inc is True:
-                b[bind[i]*Ystride0] += a[aind[i]*Xstride0];
+                safe_add(&b[bind[i]*Ystride0], a[aind[i]*Xstride0]);
     % elif inc is False:
-                b[bind[i]*Ystride0] = a[aind[i]*Xstride0];
+                safe_xchg(&b[bind[i]*Ystride0], a[aind[i]*Xstride0]);
     % else:
                 if (incdata[n])
-                    b[bind[i]*Ystride0] += a[aind[i]*Xstride0];
+                    safe_add(&b[bind[i]*Ystride0], a[aind[i]*Xstride0]);
                 else
-                    b[bind[i]*Ystride0] = a[aind[i]*Xstride0];
+                    safe_xchg(&b[bind[i]*Ystride0], a[aind[i]*Xstride0]);
     % endif
             }
         }
@@ -359,7 +393,8 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
     lsize = (lsize0, lsize1)
     gsize = (lsize0, round_up(N, lsize1))
 
-    textconf = dict(Xtype=X.ctype, Ytype=Y.ctype, N=N, inc=None)
+    atomic = any(np.unique(i).size < i.size for i in Yinds)  # duplicates
+    textconf = dict(Xtype=X.ctype, Ytype=Y.ctype, N=N, inc=None, atomic=atomic)
 
     full_args = [
         to_device(queue, X.stride0s[inds]),

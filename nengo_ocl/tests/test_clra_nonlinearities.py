@@ -281,6 +281,39 @@ def test_slicedcopy(ctx, rng):
         assert np.allclose(y, yy)
 
 
+@pytest.mark.slow
+def test_slicedcopy_speed(ctx, rng):
+    sizes = rng.randint(20000, 200000, size=100)
+    A = RA([rng.uniform(-1, 1, size=size) for size in sizes])
+    B = RA([rng.uniform(-1, 1, size=size) for size in sizes])
+    incs = rng.randint(0, 2, size=len(sizes))
+
+    Ainds = []
+    Binds = []
+    for size in sizes:
+        n = rng.randint(2, size - 2)
+        Ainds.append(rng.permutation(size)[:n])
+        Binds.append(rng.permutation(size)[:n])
+
+    Ainds = RA(Ainds, dtype=np.int32)
+    Binds = RA(Binds, dtype=np.int32)
+
+    queue = cl.CommandQueue(ctx)
+    clA = CLRA(queue, A)
+    clB = CLRA(queue, B)
+    clAinds = CLRA(queue, Ainds)
+    clBinds = CLRA(queue, Binds)
+
+    # compute on device
+    plan = plan_slicedcopy(queue, clA, clB, clAinds, clBinds, incs)
+
+    with Timer() as timer:
+        plan()
+        queue.finish()
+
+    print("Slicedcopy in %f s" % (timer.duration,))
+
+
 @pytest.mark.parametrize('n_per_kind', [
     (100000, 0, 0), (0, 100000, 0), (0, 0, 100000), (10000, 10000, 10000)])
 def test_linearfilter(ctx, n_per_kind, rng):

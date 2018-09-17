@@ -135,10 +135,6 @@ class Simulator(object):
     #     unsupported = [('test_pes*', 'PES rule not implemented')]
     # would skip all test whose names start with 'test_pes'.
     unsupported = [
-        # advanced indexing
-        ('nengo/tests/test_connection.py:test_list_indexing*',
-         "Advanced indexing with repeated indices not implemented"),
-
         # neuron types
         ('nengo/tests/test_neurons.py:test_izhikevich',
          "Izhikevich neurons not implemented"),
@@ -697,13 +693,6 @@ class Simulator(object):
                 Ellipsis if i is None else i]
             xinds = [inds(op.src, op.src_slice) for op in ops]
             yinds = [inds(op.dst, op.dst_slice) for op in ops]
-
-            dupl = lambda s: (
-                s is not None
-                and not (isinstance(s, np.ndarray) and s.dtype == np.bool)
-                and len(s) != len(set(s)))
-            if any(dupl(i) for i in xinds) or any(dupl(i) for i in yinds):
-                raise NotImplementedError("Duplicates in indices")
 
             X = self.all_data[[self.sidx[op.src] for op in ops]]
             Y = self.all_data[[self.sidx[op.dst] for op in ops]]
