@@ -18,7 +18,8 @@ from nengo.simulator import ProbeDict
 from nengo.builder.builder import Model
 from nengo.builder.operator import Reset
 from nengo.builder.signal import SignalDict
-from nengo.utils.compat import iteritems, StringIO, range, ResourceWarning
+from nengo.utils.compat import (
+    is_integer, iteritems, StringIO, range, ResourceWarning)
 from nengo.utils.progress import ProgressTracker, Progress
 from nengo.utils.stdlib import groupby
 
@@ -220,8 +221,11 @@ class Simulator(object):
         if if_python_code not in ['none', 'warn', 'error']:
             raise ValueError("%r not a valid value for `if_python_code`"
                              % if_python_code)
+        if not is_integer(n_prealloc_probes) or n_prealloc_probes <= 0:
+            raise ValueError("n_prealloc_probes must be a positive integer "
+                             "(got %r)" % n_prealloc_probes)
         self.if_python_code = if_python_code
-        self.n_prealloc_probes = n_prealloc_probes
+        self.n_prealloc_probes = int(n_prealloc_probes)
         self.progress_bar = progress_bar
 
         # --- Nengo build
@@ -598,24 +602,22 @@ class Simulator(object):
             self._max_steps_between_probes = self.n_prealloc_probes
             self._cl_probe_plan = None
             return []
-        else:
-            n_prealloc = self.n_prealloc_probes
 
-            probes = self.model.probes
-            periods = [1 if p.sample_every is None else
-                       p.sample_every / self.dt
-                       for p in probes]
+        n_prealloc = self.n_prealloc_probes
+        probes = self.model.probes
+        periods = [1 if p.sample_every is None else p.sample_every / self.dt
+                   for p in probes]
 
-            X = self.all_data[
-                [self.sidx[self.model.sig[p]['in']] for p in probes]]
-            Y = self.RaggedArray(
-                [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
-                 for p in probes], dtype=np.float32)
+        X = self.all_data[
+            [self.sidx[self.model.sig[p]['in']] for p in probes]]
+        Y = self.RaggedArray(
+            [np.zeros((n_prealloc, self.model.sig[p]['in'].size))
+             for p in probes], dtype=np.float32)
 
-            cl_plan = plan_probes(self.queue, periods, X, Y)
-            self._max_steps_between_probes = n_prealloc * int(min(periods))
-            self._cl_probe_plan = cl_plan
-            return [cl_plan]
+        cl_plan = plan_probes(self.queue, periods, X, Y)
+        self._max_steps_between_probes = n_prealloc * max(int(min(periods)), 1)
+        self._cl_probe_plan = cl_plan
+        return [cl_plan]
 
     def plan_op_group(self, op_type, ops):
         return getattr(self, 'plan_' + op_type.__name__)(ops)
