@@ -4,8 +4,6 @@ import sys
 import numpy as np
 import pyopencl as cl
 
-from nengo.utils.logging import log
-
 from .version import version as __version__
 from .simulator import Simulator
 
