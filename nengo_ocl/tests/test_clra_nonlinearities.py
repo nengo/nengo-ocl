@@ -298,8 +298,18 @@ def test_linearfilter(ctx, n_per_kind, rng):
         state = kind.make_state((n,), (n,), dt, dtype=np.float32)
         step = kind.make_step((n,), (n,), dt, rng=None, state=state)
         steps.append(step)
-    A = RA([step.den for step in steps])
-    B = RA([step.num for step in steps])
+    # The original converts transfer function to state space filter, but
+    # this OneX filter is now state space.
+    # Patch by converting back to TF. In the future, get rid of this double conversion.
+    from nengo.utils.filter_design import ss2tf
+    dens = list()
+    nums = list()
+    for f in steps:
+        den, num = ss2tf(f.A, f.B, f.C, f.D)
+        dens.append(den[0])
+        nums.append(num)
+    A = RA(dens)
+    B = RA(nums)
 
     X = RA([rng.normal(size=n) for kind, n in kinds_n])
     Y = RA([np.zeros(n) for kind, n in kinds_n])
