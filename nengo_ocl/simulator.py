@@ -14,7 +14,7 @@ import nengo.version
 import nengo.utils.numpy as npext
 from nengo.cache import get_default_decoder_cache
 from nengo.exceptions import ReadonlyError, SimulatorClosed, ValidationError
-from nengo.simulator import ProbeDict
+from nengo.simulator import SimulationData
 from nengo.builder.builder import Model
 from nengo.builder.operator import Reset
 from nengo.builder.signal import SignalDict
@@ -271,7 +271,7 @@ class Simulator(object):
             self._probe_outputs = dict(self.model.params)
 
             # Provide a nicer interface to probe outputs
-            self.data = ProbeDict(self._probe_outputs)
+            self.data = SimulationData(self._probe_outputs)
 
             # Create data on host and add views
             self.all_data = RaggedArray(
