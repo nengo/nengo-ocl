@@ -15,6 +15,7 @@ def OclOnlySimulator(request, ctx):
     """A nengo_ocl.Simulator that only allows OCL python functions"""
 
     def OclOnlySimulator(*args, **kwargs):
+        # return nengo.Simulator(*args, **kwargs)
         return nengo_ocl.Simulator(
             *args, context=ctx, if_python_code='error', **kwargs)
 

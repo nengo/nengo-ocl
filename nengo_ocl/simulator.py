@@ -988,13 +988,15 @@ class Simulator(object):
         # The original converts transfer function to state space filter, but
         # this OneX filter is now state space.
         # Patch by converting back to TF. In the future, get rid of this double conversion.
-        from nengo.utils.filter_design import ss2tf
-        dens = list()
-        nums = list()
-        for f in steps:
-            den, num = ss2tf(f.A, f.B, f.C, f.D)
-            dens.append(den[0])
-            nums.append(num)
+        # from nengo.utils.filter_design import ss2tf
+        # dens = list()
+        # nums = list()
+        # for f in steps:
+        #     den, num = ss2tf(f.A, f.B, f.C, f.D)
+        #     dens.append(den[0])
+        #     nums.append(num)
+        dens = [f.den for f in steps]
+        nums = [f.num for f in steps]
         A = self.RaggedArray(dens, dtype=np.float32)
         B = self.RaggedArray(nums, dtype=np.float32)
         X = self.all_data[[self.sidx[op.input] for op in ops]]
