@@ -6,8 +6,7 @@ import numpy as np
 import pyopencl as cl
 from mako.template import Template
 import nengo.dists as nengod
-from nengo.utils.compat import is_number, itervalues, range
-
+from nengo.utils.numpy import is_number
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
@@ -1237,21 +1236,21 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         clsizes = to_device(queue, sizes)
         get_starts = lambda ras: [to_device(queue, starts) for starts in
                                   blockify_vectors(block_size, ras)[2]]
-        Istarts = get_starts(itervalues(inputs))
-        Ostarts = get_starts(itervalues(outputs))
-        Pstarts = get_starts(itervalues(params))
+        Istarts = get_starts(inputs.values())
+        Ostarts = get_starts(outputs.values())
+        Pstarts = get_starts(params.values())
         Pshape0s = [
-            to_device(queue, x.shape0s[inds]) for x in itervalues(params)]
+            to_device(queue, x.shape0s[inds]) for x in params.values()]
 
         lsize = None
         gsize = (block_size, len(sizes))
 
         full_args = []
-        for vstarts, v in zip(Istarts, itervalues(inputs)):
+        for vstarts, v in zip(Istarts, inputs.values()):
             full_args.extend([vstarts, v.cl_buf])
-        for vstarts, v in zip(Ostarts, itervalues(outputs)):
+        for vstarts, v in zip(Ostarts, outputs.values()):
             full_args.extend([vstarts, v.cl_buf])
-        for vstarts, vshape0s, v in zip(Pstarts, Pshape0s, itervalues(params)):
+        for vstarts, vshape0s, v in zip(Pstarts, Pshape0s, params.values()):
             full_args.extend([vstarts, vshape0s, v.cl_buf])
         full_args.append(clsizes)
     else:
@@ -1260,9 +1259,9 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         gsize = (input0.shape0s.max(), len(input0))
 
         full_args = []
-        for v in itervalues(inputs):
+        for v in inputs.values():
             full_args.extend([v.cl_starts, v.cl_buf])
-        for v in itervalues(outputs):
+        for v in outputs.values():
             full_args.extend([v.cl_starts, v.cl_buf])
         for vname, v in params.items():
             full_args.extend([v.cl_starts, v.cl_shape0s, v.cl_buf])

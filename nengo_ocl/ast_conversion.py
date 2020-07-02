@@ -27,7 +27,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-from nengo.utils.compat import is_iterable, is_number, range
+from nengo.utils.numpy import is_iterable, is_number
 
 
 def is_symbolic(x):

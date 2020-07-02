@@ -6,7 +6,8 @@ from __future__ import print_function
 
 import numpy as np
 import pyopencl as cl
-from nengo.utils.compat import is_iterable, StringIO
+from nengo.utils.numpy import is_iterable
+from io import StringIO
 from pyopencl.array import Array, to_device
 
 from nengo_ocl.raggedarray import RaggedArray

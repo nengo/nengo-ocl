@@ -4,7 +4,8 @@ Numpy implementation of RaggedArray data structure.
 """
 from __future__ import print_function
 
-from nengo.utils.compat import is_iterable, StringIO
+from nengo.utils.numpy import is_iterable
+from io import StringIO
 import numpy as np
 
 from nengo_ocl.utils import round_up

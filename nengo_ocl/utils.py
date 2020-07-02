@@ -2,7 +2,6 @@ from collections import OrderedDict
 
 import numpy as np
 
-from nengo.utils.compat import PY2
 try:
     from nengo.utils.stdlib import Timer
 except ImportError:
@@ -10,7 +9,7 @@ except ImportError:
 
 
 def as_ascii(string):
-    if not PY2 and isinstance(string, bytes):  # Python 3
+    if isinstance(string, bytes):  # Python 3
         return string.decode('ascii')
     elif not isinstance(string, str):
         return str(string)
