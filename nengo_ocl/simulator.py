@@ -1165,7 +1165,7 @@ class Simulator(object):
 
         # totals totals
         print('-' * 80)
-        col = lambda c: np.asarray(map(lambda x: x[c], table))
+        col = lambda c: np.fromiter(map(lambda x: x[c], table), dtype=np.float32)
         times = col(1)
 
         def wmean(x):
