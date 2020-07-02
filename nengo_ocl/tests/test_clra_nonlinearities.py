@@ -4,7 +4,6 @@ import pyopencl as cl
 import pytest
 
 import nengo
-from nengo.utils.compat import range
 from nengo.utils.stdlib import Timer
 
 import nengo_ocl

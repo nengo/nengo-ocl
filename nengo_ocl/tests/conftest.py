@@ -1,6 +1,6 @@
 import nengo
 import nengo.tests.test_synapses
-from nengo.utils.testing import allclose
+from nengo.utils.testing import signals_allclose
 import pyopencl as cl
 import pytest
 
@@ -16,7 +16,7 @@ def ctx(request):
 def allclose_tol(*args, **kwargs):
     """Use looser tolerance"""
     kwargs.setdefault('atol', 2e-7)
-    return allclose(*args, **kwargs)
+    return signals_allclose(*args, **kwargs)
 
 
-nengo.tests.test_synapses.allclose = allclose_tol  # looser tolerances
+nengo.tests.test_synapses.signals_allclose = allclose_tol  # looser tolerances

@@ -4,7 +4,6 @@ import pytest
 
 import nengo
 from nengo.dists import Uniform
-from nengo.utils.compat import range
 
 import nengo_ocl
 import nengo_ocl.ast_conversion as ast_conversion

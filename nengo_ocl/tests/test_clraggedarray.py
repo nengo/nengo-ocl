@@ -1,8 +1,6 @@
 import numpy as np
 import pyopencl as cl
 
-from nengo.utils.compat import range
-
 from nengo_ocl import raggedarray as ra
 from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
