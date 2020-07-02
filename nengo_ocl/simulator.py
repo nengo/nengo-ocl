@@ -970,16 +970,21 @@ class Simulator(object):
     def _plan_python_process(self, op):
         shape = lambda s: s.shape if s is not None else (0,)
         rng = op.process.get_rng(self.rng)
-        fn = op.process.make_step(
-            shape(op.input), shape(op.output), self.model.dt, rng=rng)
+        state = op.process.make_state(shape(op.input), shape(op.output), self.model.dt, dtype=None)
+        fn = op.process.make_step(shape(op.input), shape(op.output),
+                                  self.model.dt, rng=rng, state=state)
         plans = self._plan_python_fn(fn, [op.t], [op.input], [op.output])
         plan, = plans  # should only be one
         self._python_rngs[rng] = rng.get_state()
         return plans
 
     def _plan_LinearFilter(self, ops):
-        steps = [op.process.make_step(op.input.shape, op.output.shape,
-                                      self.model.dt, rng=None) for op in ops]
+        steps = list()
+        for op in ops:
+            state = op.process.make_state(op.input.shape, op.output.shape, self.model.dt, dtype=None)
+            step = op.process.make_step(op.input.shape, op.output.shape,
+                                        self.model.dt, rng=None, state=state)
+            steps.append(step)
         A = self.RaggedArray([f.den for f in steps], dtype=np.float32)
         B = self.RaggedArray([f.num for f in steps], dtype=np.float32)
         X = self.all_data[[self.sidx[op.input] for op in ops]]
@@ -1024,7 +1029,8 @@ class Simulator(object):
         for op in ops:
             assert op.input is None and op.output is not None
             rng = op.process.get_rng(self.rng)
-            f = op.process.make_step((0,), op.output.shape, dt, rng)
+            state = op.process.make_state((0,), op.output.shape, dt, dtype=None)
+            f = op.process.make_step((0,), op.output.shape, dt, rng, state)
             signals.append(get_closures(f)['signal'])
 
         signals = self.RaggedArray(signals, dtype=np.float32)

@@ -293,8 +293,11 @@ def test_linearfilter(ctx, n_per_kind, rng):
     kinds_n = [(kind, n) for kind, n in zip(kinds, n_per_kind) if n > 0]
 
     dt = 0.001
-    steps = [kind.make_step((n,), (n,), dt, None, dtype=np.float32)
-             for kind, n in kinds_n]
+    steps = list()
+    for kind, n in kinds_n:
+        state = kind.make_state((n,), (n,), dt, dtype=np.float32)
+        step = kind.make_step((n,), (n,), dt, rng=None, state=state)
+        steps.append(step)
     A = RA([step.den for step in steps])
     B = RA([step.num for step in steps])
 
@@ -321,7 +324,8 @@ def test_linearfilter(ctx, n_per_kind, rng):
 
     for i, [kind, n] in enumerate(kinds_n):
         n = min(n, 100)
-        step = kind.make_step((n, 1), (n, 1), dt, None, dtype=np.float32)
+        state = kind.make_state((n, 1), (n, 1), dt, dtype=np.float32)
+        step = kind.make_step((n, 1), (n, 1), dt, rng=None, state=state)
 
         x = X[i][:n]
         y = np.zeros_like(x)
