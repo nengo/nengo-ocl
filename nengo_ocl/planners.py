@@ -1,21 +1,14 @@
 from collections import defaultdict
 
 from nengo.builder.operator import Operator
-from nengo.utils.compat import iteritems
-
-try:
-    from nengo.utils.simulator import operator_dependency_graph
-except ImportError:
-    from nengo.utils.simulator import (
-        operator_depencency_graph as operator_dependency_graph,
-    )
+from nengo.utils.simulator import operator_dependency_graph
 
 
 def greedy_planner(operators):
     edges = operator_dependency_graph(operators)
 
     is_op = lambda op: isinstance(op, Operator)
-    for op, dests in iteritems(edges):
+    for op, dests in edges.items():
         assert is_op(op) and all(is_op(op2) for op2 in dests)
 
     # map unscheduled ops to their direct predecessors and successors
@@ -24,14 +17,14 @@ def greedy_planner(operators):
     for op in operators:
         predecessors_of[op] = set()
         successors_of[op] = set()
-    for op, dests in iteritems(edges):
+    for op, dests in edges.items():
         for op2 in dests:
             predecessors_of[op2].add(op)
         successors_of[op].update(dests)
 
     # available ops are ready to be scheduled (all predecessors scheduled)
     available = defaultdict(set)
-    for op in (op for op, dep in iteritems(predecessors_of) if not dep):
+    for op in (op for op, dep in predecessors_of.items() if not dep):
         available[type(op)].add(op)
 
     rval = []

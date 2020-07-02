@@ -2,12 +2,13 @@
 OpenCL-based implementation of RaggedArray data structure.
 
 """
-from __future__ import print_function
 
-import numpy as np
+from io import StringIO
+
 import pyopencl as cl
-from nengo.utils.compat import is_iterable, StringIO
 from pyopencl.array import Array, to_device
+from nengo.utils.numpy import is_iterable
+import numpy as np
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.utils import equal_strides

@@ -131,8 +131,8 @@ class Plans(object):
                 p.update_profiling()
 
     def enqueue_n_times(self, n):
+        last_event = None
         for _ in range(n):
-            last_event = None
             for plan in self.plans:
                 if hasattr(plan, "enqueue"):
                     last_event = plan.enqueue(profiling=self.profiling)

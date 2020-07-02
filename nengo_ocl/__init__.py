@@ -4,8 +4,6 @@ import sys
 import numpy as np
 import pyopencl as cl
 
-from nengo.utils.logging import log
-
 from .version import version as __version__
 from .simulator import Simulator
 
@@ -18,8 +16,8 @@ if numpy_relaxed_strides and not pyopencl_relaxed_strides:
         % (np.__version__, cl.version.VERSION_TEXT)
     )
 
-# logging (default to no handler; use imported `log` fn to change this)
 try:
+    # Prevent output if no handler set
     logging.root.addHandler(logging.NullHandler())
 except AttributeError:
     # No NullHandler in Python 2.6

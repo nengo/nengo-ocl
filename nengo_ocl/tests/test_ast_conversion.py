@@ -4,7 +4,6 @@ import pytest
 
 import nengo
 from nengo.dists import Uniform
-from nengo.utils.compat import range
 
 import nengo_ocl
 import nengo_ocl.ast_conversion as ast_conversion
@@ -80,7 +79,7 @@ def test_t(OclOnlySimulator):
 
 @pytest.mark.parametrize("size_in", [1, 3, 5])
 def test_identity(OclOnlySimulator, size_in):
-    _test_node(OclOnlySimulator, lambda t, x: x, size_in=1)
+    _test_node(OclOnlySimulator, lambda t, x: x, size_in=size_in)
 
 
 def test_raw(OclOnlySimulator):
@@ -140,14 +139,18 @@ def test_lambda_double(OclOnlySimulator):
         _test_node(OclOnlySimulator, d, size_in=1)
 
 
-def test_direct_connection(OclOnlySimulator):
+from nengo.synapses import Lowpass
+
+
+@pytest.mark.parametrize("synapse", [None, Lowpass(tau=0.005)])
+def test_direct_connection(OclOnlySimulator, synapse):
     """Test a direct-mode connection"""
 
     model = nengo.Network("test_connection", seed=124)
     with model:
         a = nengo.Ensemble(1, dimensions=1, neuron_type=nengo.Direct())
         b = nengo.Ensemble(1, dimensions=1, neuron_type=nengo.Direct())
-        nengo.Connection(a, b, function=lambda x: x ** 2)
+        nengo.Connection(a, b, function=lambda x: x ** 2, synapse=synapse)
 
     OclOnlySimulator(model)
 
@@ -199,7 +202,7 @@ def test_sin_conn(OclOnlySimulator):
     _test_conn(OclOnlySimulator, np.sin, 1, n=10)
 
 
-def test_functions(OclOnlySimulator, logger, n_points=10):
+def test_functions(OclOnlySimulator, capsys, n_points=10):
     """Test the function maps in ast_converter.py"""
     # TODO: split this into one test per function using py.test utilities
 
@@ -279,18 +282,19 @@ def test_functions(OclOnlySimulator, logger, n_points=10):
                     dist_in=arggens.get(fn, None),
                     n=n_points,
                 )
-            logger.info("Function `%s` passed" % fn.__name__)
+            print("Function `%s` passed" % fn.__name__)
         except Exception as e:
             all_passed = False
-            logger.warning(
-                "Function `%s` failed with:\n    %s%s"
-                % (fn.__name__, e.__class__.__name__, e.args)
-            )
+            with capsys.disabled():
+                print(
+                    "Function `%s` failed with:\n    %s%s"
+                    % (fn.__name__, e.__class__.__name__, e.args)
+                )
 
     assert all_passed, "Some functions failed, " "see logger warnings for details"
 
 
-def test_vector_functions(OclOnlySimulator, logger):
+def test_vector_functions(OclOnlySimulator, capsys):
     d = 5
     boolean = [any, all, np.any, np.all]
     funcs = ast_conversion.vector_funcs.keys()
@@ -309,12 +313,13 @@ def test_vector_functions(OclOnlySimulator, logger):
 
             _test_conn(OclOnlySimulator, wrapper, d, n=10)
 
-            logger.info("Function `%s` passed" % fn.__name__)
+            print("Function `%s` passed" % fn.__name__)
         except Exception as e:
             all_passed = False
-            logger.warning(
-                "Function `%s` failed with:\n    %s: %s"
-                % (fn.__name__, e.__class__.__name__, e)
-            )
+            with capsys.disabled():
+                print(
+                    "Function `%s` failed with:\n    %s: %s"
+                    % (fn.__name__, e.__class__.__name__, e)
+                )
 
     assert all_passed, "Some functions failed, " "see logger warnings for details"

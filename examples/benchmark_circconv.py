@@ -34,7 +34,6 @@ import pyopencl as cl
 
 import nengo
 from nengo.networks.circularconvolution import circconv
-# nengo.log('debug')
 
 import nengo_ocl
 

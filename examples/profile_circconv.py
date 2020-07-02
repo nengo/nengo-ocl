@@ -70,7 +70,7 @@ def plot(sim, a, A, title=""):
     a_ref = np.tile(a, (len(t), 1))
     a_sim = sim.data[A]
     colors = ["b", "g", "r", "c", "m", "y"]
-    for i in xrange(min(dim, len(colors))):
+    for i in range(min(dim, len(colors))):
         plt.plot(t, a_ref[:, i], "--", color=colors[i])
         plt.plot(t, a_sim[:, i], "-", color=colors[i])
         plt.title(title)

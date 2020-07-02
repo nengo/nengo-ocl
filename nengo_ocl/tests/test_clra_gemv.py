@@ -3,7 +3,6 @@ import numpy as np
 import pyopencl as cl
 import pyopencl.array  # noqa: F401
 
-from nengo.utils.compat import range
 from nengo.utils.stdlib import Timer
 
 from nengo_ocl.raggedarray import RaggedArray
