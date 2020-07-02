@@ -156,3 +156,20 @@ From the ``nengo-ocl`` source directory, run:
 This will run the tests using the default context. If you wish to use another
 context, configure it with the ``PYOPENCL_CTX`` environment variable
 (run the Python command ``pyopencl.create_some_context()`` for more info).
+
+Nengo3
+------
+
+* nengo 3.0.0 implements a hook to add options to pytest. If options are added twice, i.e. multiple hooks are hit, then pytest will error. There are three possible ways to setup a hook
+
+  * /usr/local/lib/python3.x/site-packages/pytest_nengo.py
+  * ~/.local/lib/python3.x/site-packages/pytest_nengo.py
+  * <path-to-nengo-development-installation>/pytest_nengo.py
+
+Make sure that only *one* of these exists.
+
+Make sure to pip install:
+
+  * pytest_rng
+  * pytest_plt
+  * pytest-allclose
