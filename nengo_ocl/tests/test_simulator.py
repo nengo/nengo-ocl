@@ -62,7 +62,10 @@ def test_reset():
     seed = 3
 
     class CustomProcess(nengo.Process):
-        def make_step(self, shape_in, shape_out, dt, rng):
+        def make_state(self, shape_in, shape_out, dt, dtype=None):
+            return {}
+
+        def make_step(self, shape_in, shape_out, dt, rng, state):
             def step(t):
                 return rng.uniform(size=shape_out).ravel()
 

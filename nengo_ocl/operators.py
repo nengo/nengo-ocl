@@ -2,7 +2,6 @@ from collections import OrderedDict
 
 from nengo.builder.operator import Operator, Copy, DotInc
 from nengo.builder.signal import Signal
-from nengo.utils.compat import iteritems
 from nengo.version import version_info as nengo_version
 
 
@@ -112,7 +111,7 @@ class MultiDotInc(Operator):
                 rval.append(op)
 
         # combine incs into sets if on same view
-        for view, set_ops in iteritems(sets):
+        for view, set_ops in sets.items():
             (set_op,) = set_ops
             inc_ops = incs.get(view, [])
             for inc_op in inc_ops[:]:
@@ -122,7 +121,7 @@ class MultiDotInc(Operator):
             rval.append(set_op)
 
         # combine remaining incs if on same view
-        for view, inc_ops in iteritems(incs):
+        for view, inc_ops in incs.items():
             if len(inc_ops) > 0:
                 inc_op0 = inc_ops[0]
                 for inc_op in inc_ops[1:]:

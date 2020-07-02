@@ -14,13 +14,14 @@ import nengo.version
 import nengo.utils.numpy as npext
 from nengo.cache import get_default_decoder_cache
 from nengo.exceptions import ReadonlyError, SimulatorClosed, ValidationError
-from nengo.simulator import ProbeDict
+from nengo.simulator import SimulationData
 from nengo.builder.builder import Model
 from nengo.builder.operator import Reset
 from nengo.builder.signal import SignalDict
-from nengo.utils.compat import iteritems, StringIO, range, ResourceWarning
+from io import StringIO
 from nengo.utils.progress import ProgressTracker, Progress
 from nengo.utils.stdlib import groupby
+from nengo.utils.filter_design import ss2tf
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
@@ -265,7 +266,7 @@ class Simulator(object):
             self._probe_outputs = dict(self.model.params)
 
             # Provide a nicer interface to probe outputs
-            self.data = ProbeDict(self._probe_outputs)
+            self.data = SimulationData(self._probe_outputs)
 
             # Create data on host and add views
             self.all_data = RaggedArray(
@@ -281,7 +282,7 @@ class Simulator(object):
             view_builder.add_views_to(self.all_data)
 
             self.all_bases = all_bases
-            self.sidx = {k: np.int32(v) for k, v in iteritems(view_builder.sidx)}
+            self.sidx = {k: np.int32(v) for k, v in view_builder.sidx.items()}
             self._A_views = view_builder._A_views
             self._X_views = view_builder._X_views
             self._YYB_views = view_builder._YYB_views
@@ -323,10 +324,10 @@ class Simulator(object):
         return cl_rngs
 
     def _reset_rngs(self):
-        for rngs, seeds in iteritems(self._cl_rngs):
+        for rngs, seeds in self._cl_rngs.items():
             init_rngs(self.queue, rngs, seeds)
 
-        for rng, state in iteritems(self._python_rngs):
+        for rng, state in self._python_rngs.items():
             rng.set_state(state)
 
     def __del__(self):
@@ -473,7 +474,7 @@ class Simulator(object):
             if not base.readonly:
                 self.all_data[self.sidx[base]] = base.initial_value
 
-        for clra, ra in iteritems(self._raggedarrays_to_reset):
+        for clra, ra in self._raggedarrays_to_reset.items():
             # TODO: copy all data on at once
             for i in range(len(clra)):
                 clra[i] = ra[i]
@@ -1033,7 +1034,7 @@ class Simulator(object):
                 python_ops.extend(ops)
 
         process_plans = [
-            p for attr, ops in iteritems(plan_groups) for p in getattr(self, attr)(ops)
+            p for attr, ops in plan_groups.items() for p in getattr(self, attr)(ops)
         ]
         python_plans = [p for op in python_ops for p in self._plan_python_process(op)]
         return process_plans + python_plans
@@ -1041,8 +1042,11 @@ class Simulator(object):
     def _plan_python_process(self, op):
         shape = lambda s: s.shape if s is not None else (0,)
         rng = op.process.get_rng(self.rng)
+        state = op.process.make_state(
+            shape(op.input), shape(op.output), self.model.dt, dtype=None
+        )
         fn = op.process.make_step(
-            shape(op.input), shape(op.output), self.model.dt, rng=rng
+            shape(op.input), shape(op.output), self.model.dt, rng=rng, state=state
         )
         plans = self._plan_python_fn(fn, [op.t], [op.input], [op.output])
         (plan,) = plans  # should only be one
@@ -1050,14 +1054,43 @@ class Simulator(object):
         return plans
 
     def _plan_LinearFilter(self, ops):
-        steps = [
-            op.process.make_step(
-                op.input.shape, op.output.shape, self.model.dt, rng=None
+        steps = list()
+        for op in ops:
+            state = op.process.make_state(
+                op.input.shape, op.output.shape, self.model.dt, dtype=None
             )
-            for op in ops
-        ]
-        A = self.RaggedArray([f.den for f in steps], dtype=np.float32)
-        B = self.RaggedArray([f.num for f in steps], dtype=np.float32)
+            step = op.process.make_step(
+                op.input.shape, op.output.shape, self.model.dt, rng=None, state=state
+            )
+            steps.append(step)
+
+        # Nengo 3 uses state space filters. Patch here by converting back to transfer function spec.
+        # Getting rid of this conversion would require reimplementation of plan_linearfilter.
+        dens = list()
+        nums = list()
+        for f in steps:
+            if type(f).__name__ == "NoX":  # special case for a feedthrough
+                den = np.array([1.0])
+                num = f.D
+            else:
+                num, den = ss2tf(f.A, f.B, f.C, f.D)
+
+            ## This preprocessing copied out of nengo2.8/synapses.LinearFilter.make_step
+            num = num.flatten()
+
+            if den[0] != 1.0:
+                raise ValidationError(
+                    "First element of the denominator must be 1", attr="den", obj=self
+                )
+            num = num[1:] if num[0] == 0 else num
+            den = den[1:]  # drop first element (equal to 1)
+            num, den = num.astype(np.float32), den.astype(np.float32)
+            ##
+            dens.append(den)
+            nums.append(num)
+
+        A = self.RaggedArray(dens, dtype=np.float32)
+        B = self.RaggedArray(nums, dtype=np.float32)
         X = self.all_data[[self.sidx[op.input] for op in ops]]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
         Xbuf0 = RaggedArray(
@@ -1099,7 +1132,8 @@ class Simulator(object):
         for op in ops:
             assert op.input is None and op.output is not None
             rng = op.process.get_rng(self.rng)
-            f = op.process.make_step((0,), op.output.shape, dt, rng)
+            state = op.process.make_state((0,), op.output.shape, dt, dtype=None)
+            f = op.process.make_step((0,), op.output.shape, dt, rng, state)
             signals.append(get_closures(f)["signal"])
 
         signals = self.RaggedArray(signals, dtype=np.float32)
@@ -1239,7 +1273,7 @@ class Simulator(object):
 
         # totals totals
         print("-" * 80)
-        col = lambda c: np.asarray(map(lambda x: x[c], table))
+        col = lambda c: np.fromiter(map(lambda x: x[c], table), dtype=np.float32)
         times = col(1)
 
         def wmean(x):

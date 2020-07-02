@@ -9,7 +9,7 @@ def count_op_group(sim, op_group):
 
 
 def check_op_groups(sim):
-    # print([op_group for op_group, _ in sim.op_groups])
+    [print(op_group) for op_group, _ in sim.op_groups]
     # sim.print_plans()
 
     # all resets planned together

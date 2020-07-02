@@ -4,8 +4,8 @@ import pyopencl as cl
 import pytest
 
 import nengo
-from nengo.utils.compat import range
 from nengo.utils.stdlib import Timer
+from nengo.utils.filter_design import ss2tf
 
 import nengo_ocl
 from nengo_ocl import raggedarray as ra
@@ -299,11 +299,39 @@ def test_linearfilter(ctx, n_per_kind, rng):
     kinds_n = [(kind, n) for kind, n in zip(kinds, n_per_kind) if n > 0]
 
     dt = 0.001
-    steps = [
-        kind.make_step((n,), (n,), dt, None, dtype=np.float32) for kind, n in kinds_n
-    ]
-    A = RA([step.den for step in steps])
-    B = RA([step.num for step in steps])
+    steps = list()
+    for kind, n in kinds_n:
+        state = kind.make_state((n,), (n,), dt, dtype=np.float32)
+        step = kind.make_step((n,), (n,), dt, rng=None, state=state)
+        steps.append(step)
+
+    # Nengo 3 uses state space filters. Patch here by converting back to transfer function spec.
+    # Getting rid of this conversion would require reimplementation of plan_linearfilter.
+    dens = list()
+    nums = list()
+    for f in steps:
+        if type(f).__name__ == "NoX":  # special case for a feedthrough
+            den = np.array([1.0])
+            num = f.D
+        else:
+            num, den = ss2tf(f.A, f.B, f.C, f.D)
+
+        ## This preprocessing copied out of nengo2.8/synapses.LinearFilter.make_step
+        num = num.flatten()
+
+        if den[0] != 1.0:
+            raise ValidationError(
+                "First element of the denominator must be 1", attr="den", obj=self
+            )
+        num = num[1:] if num[0] == 0 else num
+        den = den[1:]  # drop first element (equal to 1)
+        num, den = num.astype(np.float32), den.astype(np.float32)
+        ##
+        dens.append(den)
+        nums.append(num)
+
+    A = RA(dens)
+    B = RA(nums)
 
     X = RA([rng.normal(size=n) for kind, n in kinds_n])
     Y = RA([np.zeros(n) for kind, n in kinds_n])
@@ -328,14 +356,15 @@ def test_linearfilter(ctx, n_per_kind, rng):
 
     for i, [kind, n] in enumerate(kinds_n):
         n = min(n, 100)
-        step = kind.make_step((n, 1), (n, 1), dt, None, dtype=np.float32)
+        state = kind.make_state((n,), (n,), dt, dtype=np.float32)
+        step = kind.make_step((n,), (n,), dt, rng=None, state=state)
 
-        x = X[i][:n]
+        x = X[i][:n].T
         y = np.zeros_like(x)
         for _ in range(n_calls):
             y[:] = step(0, x)
 
-        z = clY[i][:n]
+        z = clY[i][:n].T
         assert np.allclose(z, y, atol=1e-7, rtol=1e-5), kind
 
 
