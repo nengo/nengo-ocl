@@ -21,6 +21,7 @@ from nengo.builder.signal import SignalDict
 from io import StringIO
 from nengo.utils.progress import ProgressTracker, Progress
 from nengo.utils.stdlib import groupby
+from nengo.utils.filter_design import ss2tf
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
@@ -337,12 +338,12 @@ class Simulator(object):
             rng.set_state(state)
 
     def __del__(self):
-        """Raise a DeprecationWarning if we are deallocated while open."""
+        """Raise a ResourceWarning if we are deallocated while open."""
         if not self.closed:
             warnings.warn(
                 "Simulator with model=%s was deallocated while open. Please "
                 "close simulators manually to ensure resources are properly "
-                "freed." % self.model, DeprecationWarning)
+                "freed." % self.model, ResourceWarning)
 
     def __enter__(self):
         return self
@@ -985,33 +986,17 @@ class Simulator(object):
             step = op.process.make_step(op.input.shape, op.output.shape,
                                         self.model.dt, rng=None, state=state)
             steps.append(step)
-        # The original converts transfer function to state space filter, but
-        # this NoX and OneX filter is now state space.
-        # Patch by converting back to TF.
-        # Getting rid of this double conversion would require reimplementation of plan_linearfilter.
-        # Note: num,den in nengo3 LinearFilter are not the same as num,den produced by converting back via ss2tf. I think the denominator is reversed
 
-        from nengo.utils.filter_design import ss2tf
-        from nengo.utils.filter_design import cont2discrete
-        starts_ss = True  # True for public version of nengo 3. False for a debug version
-        method = 'zoh'
+        # Nengo 3 uses state space filters. Patch here by converting back to transfer function spec.
+        # Getting rid of this conversion would require reimplementation of plan_linearfilter.
         dens = list()
         nums = list()
         for f in steps:
-            if starts_ss:
-                if type(f).__name__ == 'NoX':  # special case for a feedthrough
-                    den = np.array([1.])
-                    num = f.D
-                else:
-                    num, den = ss2tf(f.A, f.B, f.C, f.D)
-                    # num, den = ss2tf(*cont2discrete((f.A, f.B, f.C, f.D), self.model.dt, method=method)[:4])
+            if type(f).__name__ == 'NoX':  # special case for a feedthrough
+                den = np.array([1.])
+                num = f.D
             else:
-                num, den = f.num, f.den
-                # if np.all(den == np.array([0., 1.])):  # special case for a feedthrough
-                if type(f).__name__ == 'NoX':  # special case for a feedthrough
-                    den = np.array([1.])
-                else:
-                    num, den, _ = cont2discrete((num, den), self.model.dt, method=method)
+                num, den = ss2tf(f.A, f.B, f.C, f.D)
 
             ## This preprocessing copied out of nengo2.8/synapses.LinearFilter.make_step
             num = num.flatten()
@@ -1025,6 +1010,7 @@ class Simulator(object):
             ##
             dens.append(den)
             nums.append(num)
+
         A = self.RaggedArray(dens, dtype=np.float32)
         B = self.RaggedArray(nums, dtype=np.float32)
         X = self.all_data[[self.sidx[op.input] for op in ops]]

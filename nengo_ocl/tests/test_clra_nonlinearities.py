@@ -5,6 +5,7 @@ import pytest
 
 import nengo
 from nengo.utils.stdlib import Timer
+from nengo.utils.filter_design import ss2tf
 
 import nengo_ocl
 from nengo_ocl import raggedarray as ra
@@ -297,10 +298,31 @@ def test_linearfilter(ctx, n_per_kind, rng):
         state = kind.make_state((n,), (n,), dt, dtype=np.float32)
         step = kind.make_step((n,), (n,), dt, rng=None, state=state)
         steps.append(step)
-    # The original converts transfer function to state space filter, but
-    # this OneX filter is now state space.
-    dens = [np.concatenate((f.A, f.B)) for f in steps]
-    nums = [np.concatenate((f.C, f.D)) for f in steps]
+
+    # Nengo 3 uses state space filters. Patch here by converting back to transfer function spec.
+    # Getting rid of this conversion would require reimplementation of plan_linearfilter.
+    dens = list()
+    nums = list()
+    for f in steps:
+        if type(f).__name__ == 'NoX':  # special case for a feedthrough
+            den = np.array([1.])
+            num = f.D
+        else:
+            num, den = ss2tf(f.A, f.B, f.C, f.D)
+
+        ## This preprocessing copied out of nengo2.8/synapses.LinearFilter.make_step
+        num = num.flatten()
+
+        if den[0] != 1.:
+            raise ValidationError("First element of the denominator must be 1",
+                                  attr='den', obj=self)
+        num = num[1:] if num[0] == 0 else num
+        den = den[1:]  # drop first element (equal to 1)
+        num, den = num.astype(np.float32), den.astype(np.float32)
+        ##
+        dens.append(den)
+        nums.append(num)
+
     A = RA(dens)
     B = RA(nums)
 
