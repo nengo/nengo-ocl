@@ -8,25 +8,6 @@ from pytest_plt.plugin import plt
 from pytest_rng.plugin import rng
 
 
-# copied out of nengo 2.8.0. Might have a pytest builtin version...
-@pytest.fixture
-def logger(request):
-    """A logging.Logger object.
-
-    Please use this if your test emits log messages.
-
-    This will keep saved logs organized in a simulator-specific folder,
-    with an automatically generated name.
-    """
-    dirname = recorder_dirname(request, 'logs')
-    logger = Logger(
-        dirname, request.module.__name__,
-        parametrize_function_name(request, request.function.__name__))
-    request.addfinalizer(lambda: logger.__exit__(None, None, None))
-    return logger.__enter__()
-##
-
-
 @pytest.fixture(scope="session")
 def ctx(request):
     return cl.create_some_context()
