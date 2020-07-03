@@ -79,7 +79,7 @@ def test_t(OclOnlySimulator):
 
 @pytest.mark.parametrize("size_in", [1, 3, 5])
 def test_identity(OclOnlySimulator, size_in):
-    _test_node(OclOnlySimulator, lambda t, x: x, size_in=1)
+    _test_node(OclOnlySimulator, lambda t, x: x, size_in=size_in)
 
 
 def test_raw(OclOnlySimulator):
