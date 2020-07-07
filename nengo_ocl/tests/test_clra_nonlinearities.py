@@ -327,15 +327,15 @@ def test_linearfilter(ctx, n_per_kind, rng):
 
     for i, [kind, n] in enumerate(kinds_n):
         n = min(n, 100)
-        state = kind.make_state((n, 1), (n, 1), dt, dtype=np.float32)
-        step = kind.make_step((n, 1), (n, 1), dt, rng=None, state=state)
+        state = kind.make_state((n,), (n,), dt, dtype=np.float32)
+        step = kind.make_step((n,), (n,), dt, rng=None, state=state)
 
-        x = X[i][:n]
+        x = X[i][:n].T
         y = np.zeros_like(x)
         for _ in range(n_calls):
             y[:] = step(0, x)
 
-        z = clY[i][:n]
+        z = clY[i][:n].T
         assert np.allclose(z, y, atol=1e-7, rtol=1e-5), kind
 
 

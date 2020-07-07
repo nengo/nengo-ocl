@@ -9,7 +9,7 @@ def count_op_group(sim, op_group):
 
 
 def check_op_groups(sim):
-    # print([op_group for op_group, _ in sim.op_groups])
+    [print(op_group) for op_group, _ in sim.op_groups]
     # sim.print_plans()
 
     # all resets planned together
@@ -39,7 +39,11 @@ def feedforward_network(extra_node=False):
 def test_greedy_planner_feedforward():
     model = feedforward_network()
 
+    with nengo.Simulator(model) as sim:
+        [print(type(step)) for step in sim.step_order]
+
     with nengo_ocl.Simulator(model, planner=greedy_planner) as sim:
         check_op_groups(sim)
         assert count_op_group(sim, nengo.builder.neurons.SimNeurons) == 1
+        # [print(op[0]) for op in sim.op_groups]
         assert len(sim.op_groups) == 10
