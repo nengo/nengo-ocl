@@ -20,7 +20,7 @@ RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
 
 
 def pytest_generate_tests(metafunc):
-    if "planner" in metafunc.funcargnames:
+    if "planner" in metafunc.fixturenames:
         metafunc.parametrize(
             "planner",
             [
