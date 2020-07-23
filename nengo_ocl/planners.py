@@ -2,11 +2,13 @@ from collections import defaultdict
 
 from nengo.builder.operator import Operator
 from nengo.utils.compat import iteritems
+
 try:
     from nengo.utils.simulator import operator_dependency_graph
 except ImportError:
     from nengo.utils.simulator import (
-        operator_depencency_graph as operator_dependency_graph)
+        operator_depencency_graph as operator_dependency_graph,
+    )
 
 
 def greedy_planner(operators):

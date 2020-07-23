@@ -31,13 +31,13 @@ def flops_from_geometry(geometry, items):
     flops = 0
     for ii in items:
         gi = geometry[ii]
-        for dotinfo in gi['dots']:
+        for dotinfo in gi["dots"]:
             # -- for every value of A, we
             #    (1) mult with some x
             #    (2) add to a resulting inner-product
-            flops += dotinfo['a_shape1'] * gi['y_len'] * 2
+            flops += dotinfo["a_shape1"] * gi["y_len"] * 2
         # XXX Generously assuming alpha & beta in use
-        flops += gi['y_len'] * 3
+        flops += gi["y_len"] * 3
     return flops
 
 
@@ -46,11 +46,11 @@ def bw_from_geometry(geometry, items):
     elemsize = 4
     for ii in items:
         gi = geometry[ii]
-        for dotinfo in gi['dots']:
+        for dotinfo in gi["dots"]:
             # -- load A
-            n_bytes += elemsize * dotinfo['a_shape1'] * gi['y_len']
+            n_bytes += elemsize * dotinfo["a_shape1"] * gi["y_len"]
             # -- load X
-            n_bytes += elemsize * dotinfo['a_shape1']
+            n_bytes += elemsize * dotinfo["a_shape1"]
 
         # -- load alpha scalar, beta scalar
         #    XXX: Account for a possible full vector read
@@ -58,24 +58,24 @@ def bw_from_geometry(geometry, items):
         n_bytes += 2 * elemsize
 
         # -- load Y_in
-        n_bytes += elemsize * gi['y_len']
+        n_bytes += elemsize * gi["y_len"]
 
         # -- write Y_out
-        n_bytes += elemsize * gi['y_len']
+        n_bytes += elemsize * gi["y_len"]
     return n_bytes
 
 
 class DotSignature(object):
-
     def __init__(self, dct):
-        self.y_len = dct['y_len']
-        self.Ax_dims = tuple(
-            [(d['a_shape1'], d['a_stride0']) for d in dct['dots']])
+        self.y_len = dct["y_len"]
+        self.Ax_dims = tuple([(d["a_shape1"], d["a_stride0"]) for d in dct["dots"]])
 
     def __eq__(self, other):
-        return type(self) == type(other) \
-            and self.y_len == other.y_len \
+        return (
+            type(self) == type(other)
+            and self.y_len == other.y_len
             and self.Ax_dims == other.Ax_dims
+        )
 
     def __hash__(self):
         return hash((self.y_len, self.Ax_dims))
@@ -84,23 +84,28 @@ class DotSignature(object):
         counts = defaultdict(lambda: 0)
         for dim_stride in self.Ax_dims:
             counts[dim_stride] += 1
-        return 'yd=%s <- %s' % (
+        return "yd=%s <- %s" % (
             self.y_len,
-            ', '.join(('(%s x d=%s,s=%s)' % (counts[(d, s)], d, s))
-                      for (d, s) in counts))
+            ", ".join(
+                ("(%s x d=%s,s=%s)" % (counts[(d, s)], d, s)) for (d, s) in counts
+            ),
+        )
 
 
 class gemv_prog(object):
+    def __init__(
+        self, queue, alpha, A, A_js, X, X_js, beta, Y, Y_in=None, gamma=0.0, tag=None
+    ):
 
-    def __init__(self, queue, alpha, A, A_js, X, X_js, beta, Y,
-                 Y_in=None, gamma=0.0, tag=None):
-
-        self.float_alpha, self.cl_alpha, self.clra_alpha = \
-            float_cl_clra(queue, alpha, Y.dtype, len(Y))
-        self.float_beta, self.cl_beta, self.clra_beta = \
-            float_cl_clra(queue, beta, Y.dtype, len(Y))
-        self.float_gamma, self.cl_gamma, self.clra_gamma = \
-            float_cl_clra(queue, gamma, Y.dtype, len(Y))
+        self.float_alpha, self.cl_alpha, self.clra_alpha = float_cl_clra(
+            queue, alpha, Y.dtype, len(Y)
+        )
+        self.float_beta, self.cl_beta, self.clra_beta = float_cl_clra(
+            queue, beta, Y.dtype, len(Y)
+        )
+        self.float_gamma, self.cl_gamma, self.clra_gamma = float_cl_clra(
+            queue, gamma, Y.dtype, len(Y)
+        )
 
         if Y_in is None:
             self.Y_in = Y
@@ -125,17 +130,28 @@ class gemv_prog(object):
             gg = [self.geometry[i] for i in items]
 
         outputs = len(gg)
-        dots = np.array([len(g['dots']) for g in gg])
-        shape0s = np.array([g['y_len'] for g in gg])
-        shape1s = np.hstack([[d['a_shape1'] for d in g['dots']] for g in gg])
-        return ("outputs: %d; dots: %0.1f [%d, %d]; "
-                "shape: %0.1f [%d, %d] x %0.1f [%d, %d]"
-                % (outputs, dots.mean(), dots.min(), dots.max(),
-                   shape0s.mean(), shape0s.min(), shape0s.max(),
-                   shape1s.mean(), shape1s.min(), shape1s.max()))
+        dots = np.array([len(g["dots"]) for g in gg])
+        shape0s = np.array([g["y_len"] for g in gg])
+        shape1s = np.hstack([[d["a_shape1"] for d in g["dots"]] for g in gg])
+        return (
+            "outputs: %d; dots: %0.1f [%d, %d]; "
+            "shape: %0.1f [%d, %d] x %0.1f [%d, %d]"
+            % (
+                outputs,
+                dots.mean(),
+                dots.min(),
+                dots.max(),
+                shape0s.mean(),
+                shape0s.min(),
+                shape0s.max(),
+                shape1s.mean(),
+                shape1s.min(),
+                shape1s.max(),
+            )
+        )
 
     def print_geometry_summary(self, items=None, full=False):
-        print('geometry_summary: tag=%s' % self.tag)
+        print("geometry_summary: tag=%s" % self.tag)
         if items is None:
             gg = self.geometry
         else:
@@ -146,7 +162,7 @@ class gemv_prog(object):
         for dsi in ds:
             counts[dsi] += 1
         for dsi in sorted(counts):
-            print('  %6s\t%s' % (counts[dsi], dsi))
+            print("  %6s\t%s" % (counts[dsi], dsi))
 
     def _geometry(self):
         A_starts = self.A.starts
@@ -160,10 +176,10 @@ class gemv_prog(object):
         rval = []
         for bb in range(len(Y_shape0s)):
             dbb = {
-                'y_len': Y_shape0s[bb],
-                'dots': [],
-                'y_start': Y_starts[bb],
-                'y_in_start': Y_in_starts[bb],
+                "y_len": Y_shape0s[bb],
+                "dots": [],
+                "y_start": Y_starts[bb],
+                "y_in_start": Y_in_starts[bb],
             }
             if self.X_js:
                 x_js_i = self.X_js[bb]
@@ -172,27 +188,29 @@ class gemv_prog(object):
                 for jj, (xj, aj) in enumerate(zip(x_js_i, A_js_i)):
                     assert xj.size == 1 and aj.size == 1
                     xj, aj = xj[0], aj[0]  # to ignore numpy DeprecationWarning
-                    dbb['dots'].append({
-                        'j': jj,
-                        'x_j': xj,
-                        'a_j': aj,
-                        'x_start': X_starts[xj],
-                        'a_start': A_starts[aj],
-                        'a_stride0': A_stride0s[aj],
-                        'a_shape1': A_shape1s[aj],
-                    })
+                    dbb["dots"].append(
+                        {
+                            "j": jj,
+                            "x_j": xj,
+                            "a_j": aj,
+                            "x_start": X_starts[xj],
+                            "a_start": A_starts[aj],
+                            "a_stride0": A_stride0s[aj],
+                            "a_shape1": A_shape1s[aj],
+                        }
+                    )
             rval.append(dbb)
 
         return rval
 
     def cl_geometry_and_textconf(self, items, padding=4):
         p = self
-        max_n_dots = max(len(p.geometry[ii]['dots']) for ii in items)
+        max_n_dots = max(len(p.geometry[ii]["dots"]) for ii in items)
         n_structure_vars = 4 * max_n_dots + 5
         structure_vars_stride = int(
-            padding * np.ceil(float(n_structure_vars) / padding))
-        gstructure = np.zeros(
-            (len(items), structure_vars_stride), dtype='int32')
+            padding * np.ceil(float(n_structure_vars) / padding)
+        )
+        gstructure = np.zeros((len(items), structure_vars_stride), dtype="int32")
         A_starts = p.A.starts
         X_starts = p.X.starts
         Y_starts = p.Y.starts
@@ -223,17 +241,17 @@ class gemv_prog(object):
         cl_gstructure = to_device(p.queue, gstructure)
 
         textconf = {
-            'n_structure_vars': n_structure_vars,
-            'structure_vars_stride': structure_vars_stride,
-            'x_starts': 'lstructure[0 * %s + ii]' % max_n_dots,
-            'a_starts': 'lstructure[1 * %s + ii]' % max_n_dots,
-            'a_s0': 'lstructure[2 * %s + ii]' % max_n_dots,
-            'N_i': 'lstructure[3 * %s + ii]' % max_n_dots,
-            'y_in_starts': 'lstructure[4 * %s + 0]' % max_n_dots,
-            'y_offset': 'lstructure[4 * %s + 1]' % max_n_dots,
-            'n_dot_products': 'lstructure[4 * %s + 2]' % max_n_dots,
-            'y_len': 'lstructure[4 * %s + 3]' % max_n_dots,
-            'bb': 'lstructure[4 * %s + 4]' % max_n_dots,
+            "n_structure_vars": n_structure_vars,
+            "structure_vars_stride": structure_vars_stride,
+            "x_starts": "lstructure[0 * %s + ii]" % max_n_dots,
+            "a_starts": "lstructure[1 * %s + ii]" % max_n_dots,
+            "a_s0": "lstructure[2 * %s + ii]" % max_n_dots,
+            "N_i": "lstructure[3 * %s + ii]" % max_n_dots,
+            "y_in_starts": "lstructure[4 * %s + 0]" % max_n_dots,
+            "y_offset": "lstructure[4 * %s + 1]" % max_n_dots,
+            "n_dot_products": "lstructure[4 * %s + 2]" % max_n_dots,
+            "y_len": "lstructure[4 * %s + 3]" % max_n_dots,
+            "bb": "lstructure[4 * %s + 4]" % max_n_dots,
         }
         return cl_gstructure, textconf
 
@@ -252,14 +270,13 @@ def ref_impl(p, items):
         raise NotImplementedError()
     if p.clra_gamma is not None:
         raise NotImplementedError()
-    cl_items = to_device(p.queue,
-                         np.asarray(items, dtype='int32'))
+    cl_items = to_device(p.queue, np.asarray(items, dtype="int32"))
     if 0:
         if len(items) < 10:
-            print('Falling back on reference implementation')
+            print("Falling back on reference implementation")
             p.print_geometry_summary(items, full=True)
         else:
-            print('Falling back on reference implementation')
+            print("Falling back on reference implementation")
             p.print_geometry_summary(items)
 
     assert all(s == 1 for s in p.A.stride1s)
@@ -365,12 +382,9 @@ def ref_impl(p, items):
         }
     """
 
-    text = as_ascii(
-        Template(text, output_encoding='ascii').render(**p.__dict__))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**p.__dict__))
 
-    gsize = (
-        max(p.geometry[ii]['y_len'] for ii in items),
-        len(items))
+    gsize = (max(p.geometry[ii]["y_len"] for ii in items), len(items))
     lsize = None
     fn = cl.Program(p.queue.context, text).build().gemv_ref
     full_args = [cl_items]
@@ -406,22 +420,28 @@ def ref_impl(p, items):
         p.Y_in.cl_buf,
         p.Y.cl_starts,
         p.Y.cl_shape0s,
-        p.Y.cl_buf]
+        p.Y.cl_buf,
+    ]
 
     # print([str(arr.dtype)[0] for arr in full_args])
     fn.set_args(*[arr.data for arr in full_args])
-    rval = Plan(p.queue, fn, gsize, lsize, name="clra_gemv.ref_impl",
-                tag=p.tag,
-                bw_per_call=bw_from_geometry(p.geometry, items),
-                flops_per_call=flops_from_geometry(p.geometry, items))
+    rval = Plan(
+        p.queue,
+        fn,
+        gsize,
+        lsize,
+        name="clra_gemv.ref_impl",
+        tag=p.tag,
+        bw_per_call=bw_from_geometry(p.geometry, items),
+        flops_per_call=flops_from_geometry(p.geometry, items),
+    )
     rval.full_args = full_args  # prevent GC the args
     return rval
 
 
-def reduce_impl(p, items,
-                group_size=None,
-                segment_size=None,
-                ):
+def reduce_impl(
+    p, items, group_size=None, segment_size=None,
+):
 
     #
     # Target use case: long inner products, small numbers of dots.
@@ -446,11 +466,11 @@ def reduce_impl(p, items,
     assert p.float_gamma is not None
 
     cl_gstructure, textconf = p.cl_geometry_and_textconf(items)
-    max_n_dots = max([len(p.geometry[ii]['dots']) for ii in items])
-    max_reduce_len = max(max([gg['a_shape1']
-                              for gg in p.geometry[ii]['dots']])
-                         for ii in items)
-    max_y_len = max([p.geometry[ii]['y_len'] for ii in items])
+    max_n_dots = max([len(p.geometry[ii]["dots"]) for ii in items])
+    max_reduce_len = max(
+        max([gg["a_shape1"] for gg in p.geometry[ii]["dots"]]) for ii in items
+    )
+    max_y_len = max([p.geometry[ii]["y_len"] for ii in items])
 
     # segment means the piece of Y written by a work-group
     # group_size is the number of values that we're reducing over
@@ -470,17 +490,19 @@ def reduce_impl(p, items,
     lsize = (group_size, segment_size, 1)
 
     max_reduce_iters = int(np.ceil(float(max_reduce_len) / group_size))
-    textconf.update({
-        'n_items': len(items),
-        'gsize': gsize,
-        'segment_size': segment_size,
-        'max_y_len': max_y_len,
-        'group_size': group_size,
-        'local_count': group_size * segment_size,
-        'max_reduce_len': max_reduce_len,
-        'N_cutoff': max_reduce_iters * group_size,
-        'max_n_dots': max_n_dots,
-    })
+    textconf.update(
+        {
+            "n_items": len(items),
+            "gsize": gsize,
+            "segment_size": segment_size,
+            "max_y_len": max_y_len,
+            "group_size": group_size,
+            "local_count": group_size * segment_size,
+            "max_reduce_len": max_reduce_len,
+            "N_cutoff": max_reduce_iters * group_size,
+            "max_n_dots": max_n_dots,
+        }
+    )
     if 0:
         for k, v in textconf.items():
             print(k, v)
@@ -613,7 +635,7 @@ def reduce_impl(p, items,
     }
         """
 
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     fn = cl.Program(p.queue.context, text).build().gemv_reduce
 
@@ -630,12 +652,16 @@ def reduce_impl(p, items,
     ]
 
     fn.set_args(*[arr.data for arr in full_args])
-    rval = Plan(p.queue, fn, gsize, lsize,
-                name='clra_gemv.reduce_impl',
-                tag=p.tag,
-                bw_per_call=bw_from_geometry(p.geometry, items),
-                flops_per_call=flops_from_geometry(p.geometry, items),
-                )
+    rval = Plan(
+        p.queue,
+        fn,
+        gsize,
+        lsize,
+        name="clra_gemv.reduce_impl",
+        tag=p.tag,
+        bw_per_call=bw_from_geometry(p.geometry, items),
+        flops_per_call=flops_from_geometry(p.geometry, items),
+    )
     rval.full_args = full_args  # prevent GC the args
     rval.description = p.geometry_summary(items)
     return rval
@@ -683,33 +709,32 @@ def many_dots_impl(p, items):
     # min_n_dots = min(A_js_shape0s)
     max_n_dots = max(A_js_shape0s)
 
-    max_y_len = max(p.geometry[ii]['y_len'] for ii in items)
+    max_y_len = max(p.geometry[ii]["y_len"] for ii in items)
     MAX_SEGMENT_SIZE = 16  # tricky to tune?
 
-    segment_size = min(
-        max_y_len,
-        MAX_SEGMENT_SIZE)
+    segment_size = min(max_y_len, MAX_SEGMENT_SIZE)
     dot_block_size = min(
-        max(max_n_dots, 1),
-        int(p.queue.device.max_work_group_size / segment_size),
+        max(max_n_dots, 1), int(p.queue.device.max_work_group_size / segment_size),
     )
 
     n_segments = int(np.ceil(float(max_y_len) / segment_size))
     gsize = (n_segments * segment_size, dot_block_size, len(items))
     lsize = (segment_size, dot_block_size, 1)
 
-    textconf.update({
-        'gsize': gsize,
-        'lsize': lsize,
-        'segment_size': segment_size,
-        'dot_block_size': dot_block_size,
-        'max_y_len': max_y_len,
-        'n_locals': segment_size * dot_block_size,
-        # 'segment_idx': 'get_local_id(0)',
-        # 'dot_block_idx': 'get_local_id(1)',
-        'segment_idx': 'segment_idx',
-        'dot_block_idx': 'dot_block_idx',
-    })
+    textconf.update(
+        {
+            "gsize": gsize,
+            "lsize": lsize,
+            "segment_size": segment_size,
+            "dot_block_size": dot_block_size,
+            "max_y_len": max_y_len,
+            "n_locals": segment_size * dot_block_size,
+            # 'segment_idx': 'get_local_id(0)',
+            # 'dot_block_idx': 'get_local_id(1)',
+            "segment_idx": "segment_idx",
+            "dot_block_idx": "dot_block_idx",
+        }
+    )
     if 0:
         for k, v in textconf.items():
             print(k, v)
@@ -799,7 +824,7 @@ def many_dots_impl(p, items):
     }
         """
 
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     fn = cl.Program(p.queue.context, text).build().gemv_many_dots
 
     full_args = [
@@ -815,12 +840,16 @@ def many_dots_impl(p, items):
     ]
 
     fn.set_args(*[arr.data for arr in full_args])
-    rval = Plan(p.queue, fn, gsize, lsize,
-                name='clra_gemv.many_dots_impl',
-                tag=p.tag,
-                bw_per_call=bw_from_geometry(p.geometry, items),
-                flops_per_call=flops_from_geometry(p.geometry, items),
-                )
+    rval = Plan(
+        p.queue,
+        fn,
+        gsize,
+        lsize,
+        name="clra_gemv.many_dots_impl",
+        tag=p.tag,
+        bw_per_call=bw_from_geometry(p.geometry, items),
+        flops_per_call=flops_from_geometry(p.geometry, items),
+    )
     rval.full_args = full_args  # prevent GC the args
     rval.description = p.geometry_summary(items)
     return rval
@@ -901,10 +930,11 @@ def block_impl(p, items):
                     shape1s.append(min(shape1n - j, block_x))
                     Astride0s.append(p.A.stride0s[aj])
                     Astride1s.append(p.A.stride1s[aj])
-                    Astarts.append(p.A.starts[aj] +
-                                   i*p.A.stride0s[aj] + j*p.A.stride1s[aj])
+                    Astarts.append(
+                        p.A.starts[aj] + i * p.A.stride0s[aj] + j * p.A.stride1s[aj]
+                    )
                     Xstride0s.append(p.X.stride0s[xj])
-                    Xstarts.append(p.X.starts[xj] + j*p.X.stride0s[xj])
+                    Xstarts.append(p.X.starts[xj] + j * p.X.stride0s[xj])
 
                     Ybufstarts.append(Ybufstart)
                     Ybufind_reduce.append(Ybufstart)
@@ -914,15 +944,25 @@ def block_impl(p, items):
             # --- Y-blocking for reduce
             Yshape0s_reduce.append(shape0i)
             Yinstride0s_reduce.append(p.Y_in.stride0s[n])
-            Yinstarts_reduce.append(p.Y_in.starts[n] + i*p.Y_in.stride0s[n])
+            Yinstarts_reduce.append(p.Y_in.starts[n] + i * p.Y_in.stride0s[n])
             Ystride0s_reduce.append(p.Y.stride0s[n])
-            Ystarts_reduce.append(p.Y.starts[n] + i*p.Y.stride0s[n])
+            Ystarts_reduce.append(p.Y.starts[n] + i * p.Y.stride0s[n])
             Ybufinds_reduce.append(Ybufind_reduce)
-            bw_reduce += shape0i*(len(Ybufind_reduce) + 1) * p.Y.dtype.itemsize
+            bw_reduce += shape0i * (len(Ybufind_reduce) + 1) * p.Y.dtype.itemsize
 
     # --- create structure
-    gstructure = np.column_stack([shape0s, shape1s, Astride0s, Astride1s,
-                                  Astarts, Xstride0s, Xstarts, Ybufstarts])
+    gstructure = np.column_stack(
+        [
+            shape0s,
+            shape1s,
+            Astride0s,
+            Astride1s,
+            Astarts,
+            Xstride0s,
+            Xstarts,
+            Ybufstarts,
+        ]
+    )
     cl_gstructure = to_device(p.queue, gstructure.astype(np.int32))
 
     # --- create Y buffer
@@ -931,7 +971,7 @@ def block_impl(p, items):
     lsize0 = 4
     # lsize0 = 8
     lsize0_log2 = int(np.log2(lsize0))
-    assert 2**lsize0_log2 == lsize0
+    assert 2 ** lsize0_log2 == lsize0
 
     lsize = (lsize0, block_y, 1)
     gsize = (lsize[0], lsize[1], gstructure.shape[0])
@@ -942,14 +982,14 @@ def block_impl(p, items):
         X=p.X,
         Ybuf=clYbuf,
         n_structure_vars=gstructure.shape[1],
-        shape0='lstructure[0]',
-        shape1='lstructure[1]',
-        Astride0='lstructure[2]',
-        Astride1='lstructure[3]',
-        Astart='lstructure[4]',
-        Xstride0='lstructure[5]',
-        Xstart='lstructure[6]',
-        Ybufstart='lstructure[7]',
+        shape0="lstructure[0]",
+        shape1="lstructure[1]",
+        Astride0="lstructure[2]",
+        Astride1="lstructure[3]",
+        Astart="lstructure[4]",
+        Xstride0="lstructure[5]",
+        Xstart="lstructure[6]",
+        Ybufstart="lstructure[7]",
         block_y=block_y,
         block_x=block_x,
         lsize0=lsize0,
@@ -1016,16 +1056,20 @@ def block_impl(p, items):
     }
     """
 
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     kernel = cl.Program(p.queue.context, text).build().fn
     kernel.set_args(*[arr.data for arr in full_args])
 
-    plan = Plan(p.queue, kernel, gsize, lsize,
-                name='clra_gemv.block_impl',
-                tag=p.tag,
-                bw_per_call=bw_from_geometry(p.geometry, items),
-                flops_per_call=flops_from_geometry(p.geometry, items),
-                )
+    plan = Plan(
+        p.queue,
+        kernel,
+        gsize,
+        lsize,
+        name="clra_gemv.block_impl",
+        tag=p.tag,
+        bw_per_call=bw_from_geometry(p.geometry, items),
+        flops_per_call=flops_from_geometry(p.geometry, items),
+    )
     plan.full_args = full_args  # prevent GC the args
     plan.description = p.geometry_summary(items)
     plan.Ybuf = clYbuf
@@ -1034,18 +1078,16 @@ def block_impl(p, items):
     align = False
 
     Nreduce = len(Yshape0s_reduce)
-    clYshape0s_reduce = to_device(
-        p.queue, np.array(Yshape0s_reduce, dtype=np.int32))
+    clYshape0s_reduce = to_device(p.queue, np.array(Yshape0s_reduce, dtype=np.int32))
     clYinstride0s_reduce = to_device(
-        p.queue, np.array(Yinstride0s_reduce, dtype=np.int32))
-    clYinstarts_reduce = to_device(
-        p.queue, np.array(Yinstarts_reduce, dtype=np.int32))
-    clYstride0s_reduce = to_device(
-        p.queue, np.array(Ystride0s_reduce, dtype=np.int32))
-    clYstarts_reduce = to_device(
-        p.queue, np.array(Ystarts_reduce, dtype=np.int32))
+        p.queue, np.array(Yinstride0s_reduce, dtype=np.int32)
+    )
+    clYinstarts_reduce = to_device(p.queue, np.array(Yinstarts_reduce, dtype=np.int32))
+    clYstride0s_reduce = to_device(p.queue, np.array(Ystride0s_reduce, dtype=np.int32))
+    clYstarts_reduce = to_device(p.queue, np.array(Ystarts_reduce, dtype=np.int32))
     clYbufinds_reduce = CLRaggedArray.from_arrays(
-        p.queue, Ybufinds_reduce, dtype=np.int32, align=align)
+        p.queue, Ybufinds_reduce, dtype=np.int32, align=align
+    )
     assert len(clYbufinds_reduce) == Nreduce
     assert (clYbufinds_reduce.shape1s == 1).all()
 
@@ -1109,13 +1151,20 @@ def block_impl(p, items):
     }
     """
 
-    text_reduce = as_ascii(Template(
-        text_reduce, output_encoding='ascii').render(**textconf_reduce))
+    text_reduce = as_ascii(
+        Template(text_reduce, output_encoding="ascii").render(**textconf_reduce)
+    )
     kernel_reduce = cl.Program(p.queue.context, text_reduce).build().reduce
     kernel_reduce.set_args(*[arr.data for arr in full_args_reduce])
 
-    plan_reduce = Plan(p.queue, kernel_reduce, gsize_reduce, lsize_reduce,
-                       name='clra_gemv.block_impl_reduce', tag=p.tag)
+    plan_reduce = Plan(
+        p.queue,
+        kernel_reduce,
+        gsize_reduce,
+        lsize_reduce,
+        name="clra_gemv.block_impl_reduce",
+        tag=p.tag,
+    )
     plan_reduce.full_args = full_args_reduce  # prevent GC of the args
     plan_reduce.bw_per_call = bw_reduce
     # plan_reduce.description = p.geometry_summary(items)
@@ -1152,39 +1201,36 @@ class plan_ragged_gather_gemv(gemv_prog):
         plans = []
 
         long_dots = [
-            ii for ii in remaining_items
-            if len(self.geometry[ii]['dots']) <= 2
-            and max([0] + [dct['a_shape1']
-                           for dct in self.geometry[ii]['dots']]) > 16]
+            ii
+            for ii in remaining_items
+            if len(self.geometry[ii]["dots"]) <= 2
+            and max([0] + [dct["a_shape1"] for dct in self.geometry[ii]["dots"]]) > 16
+        ]
         if long_dots:
             try:
                 long_plan = reduce_impl(self, long_dots)
             except NotImplementedError:
                 long_plan = ref_impl(self, long_dots)
-            long_plan.tag += '-long%i' % len(long_dots)
+            long_plan.tag += "-long%i" % len(long_dots)
             plans.append(long_plan)
-            remaining_items = [ii
-                               for ii in remaining_items
-                               if ii not in long_dots]
+            remaining_items = [ii for ii in remaining_items if ii not in long_dots]
 
         # many_dots = [ii
-            # for ii in remaining_items
-            # if len(self.geometry[ii]['dots']) > 3]
+        # for ii in remaining_items
+        # if len(self.geometry[ii]['dots']) > 3]
         many_dots = remaining_items
         if many_dots:
             try:
                 many_plan = many_dots_impl(self, many_dots)
-                many_plan.tag += '-many%i' % len(many_dots)
+                many_plan.tag += "-many%i" % len(many_dots)
                 plans.append(many_plan)
-                remaining_items = [ii
-                                   for ii in remaining_items
-                                   if ii not in many_dots]
+                remaining_items = [ii for ii in remaining_items if ii not in many_dots]
             except NotImplementedError:
                 pass
 
         if remaining_items:
             remaining_plan = ref_impl(self, remaining_items)
-            remaining_plan.tag += '-remaining%i' % len(remaining_items)
+            remaining_plan.tag += "-remaining%i" % len(remaining_items)
             plans.append(remaining_plan)
 
         return plans

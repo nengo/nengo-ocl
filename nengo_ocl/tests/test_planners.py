@@ -29,7 +29,7 @@ def feedforward_network(extra_node=False):
             nengo.Connection(nodes[i], ensembles[i], synapse=None)
 
         if extra_node:
-            v = nengo.Node(lambda t, x: x**2, size_in=1)
+            v = nengo.Node(lambda t, x: x ** 2, size_in=1)
             nengo.Connection(nodes[0], v, synapse=None)
             nengo.Connection(v, ensembles[0], synapse=None)
 
