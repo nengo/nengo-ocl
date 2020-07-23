@@ -18,10 +18,13 @@ Release History
    - Bugfixes
    - Documentation
 
-1.4.1 (unreleased)
+2.0.0 (unreleased)
 ==================
 
+**Improvements**
 
+- Now supports Nengo 3.0.0. Note that support for previous Nengo
+  versions has been dropped.
 
 1.4.0 (July 4, 2018)
 ====================

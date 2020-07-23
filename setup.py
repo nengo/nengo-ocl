@@ -57,7 +57,7 @@ setup(
     long_description=read("README.rst", "CHANGES.rst"),
     zip_safe=False,
     setup_requires=["pytest-runner"] if testing else [],
-    install_requires=["nengo", "mako", "packaging>=20.0", "pyopencl"],
+    install_requires=["nengo==3.0.0", "mako", "packaging>=20.0", "pyopencl"],
     tests_require=["matplotlib>=1.4", "pytest>=2.9"],
     entry_points={"nengo.backends": ["ocl = nengo_ocl:Simulator",]},
     classifiers=[  # https://pypi.python.org/pypi?%3Aaction=list_classifiers
