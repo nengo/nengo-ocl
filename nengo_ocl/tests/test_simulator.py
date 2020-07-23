@@ -15,8 +15,7 @@ def test_multidotinc_compress(monkeypatch):
         # Nengo versions <= 2.3.0 have more stringent op validation which
         # required PreserveValue. That's been removed, so the strict
         # validation causes this test to fail despite it working.
-        monkeypatch.setattr(
-            nengo.utils.simulator, 'validate_ops', lambda *args: None)
+        monkeypatch.setattr(nengo.utils.simulator, "validate_ops", lambda *args: None)
 
     a = Signal([0, 0])
     b = Signal([0, 0])
@@ -42,7 +41,7 @@ def test_error_on_version_in_blacklist(monkeypatch):
     with nengo.Network() as model:
         nengo.Ensemble(10, 1)
 
-    monkeypatch.setattr(nengo.version, 'version_info', (2, 1, 1))
+    monkeypatch.setattr(nengo.version, "version_info", (2, 1, 1))
     with pytest.raises(ValueError):
         with nengo_ocl.Simulator(model):
             pass
@@ -53,7 +52,7 @@ def test_warn_on_future_version(monkeypatch):
         nengo.Ensemble(10, 1)
 
     future_version = tuple(v + 1 for v in latest_nengo_version_info)
-    monkeypatch.setattr(nengo.version, 'version_info', future_version)
+    monkeypatch.setattr(nengo.version, "version_info", future_version)
     with pytest.warns(UserWarning):
         with nengo_ocl.Simulator(model):
             pass
@@ -66,6 +65,7 @@ def test_reset():
         def make_step(self, shape_in, shape_out, dt, rng):
             def step(t):
                 return rng.uniform(size=shape_out).ravel()
+
             return step
 
     with nengo.Network() as model:

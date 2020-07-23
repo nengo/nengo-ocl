@@ -10,8 +10,9 @@ from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 
 def make_random_ra(n, d, low=20, high=40, rng=None):
     """Helper to make a random RaggedArray on the host"""
-    shapes = zip(*(rng.randint(low=low, high=high+1, size=n).tolist()
-                   for dd in range(d)))
+    shapes = zip(
+        *(rng.randint(low=low, high=high + 1, size=n).tolist() for dd in range(d))
+    )
     vals = [rng.normal(size=shape).astype(np.float32) for shape in shapes]
     return RA(vals)
 
@@ -92,8 +93,13 @@ def test_discontiguous_setitem(ctx, rng):
     v = rng.uniform(-1, 1, size=a.shape)
     assert a.size > 0
 
-    A.add_views([A.starts[0]], [a.shape[0]], [a.shape[1]],
-                [a.strides[0] / a.itemsize], [a.strides[1] / a.itemsize])
+    A.add_views(
+        [A.starts[0]],
+        [a.shape[0]],
+        [a.shape[1]],
+        [a.strides[0] / a.itemsize],
+        [a.strides[1] / a.itemsize],
+    )
 
     queue = cl.CommandQueue(ctx)
     clA = CLRA(queue, A)

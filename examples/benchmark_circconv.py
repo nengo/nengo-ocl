@@ -21,6 +21,7 @@ Example usage:
 
 from collections import OrderedDict
 import datetime
+
 try:
     import cPickle as pickle
 except ImportError:
@@ -41,20 +42,20 @@ if len(sys.argv) not in (3, 4):
     print(__doc__)
     sys.exit()
 
-if sys.argv[1] == 'ref':
-    sim_name = 'ref' if len(sys.argv) == 3 else sys.argv[3]
+if sys.argv[1] == "ref":
+    sim_name = "ref" if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo.Simulator
     sim_kwargs = {}
-elif sys.argv[1] == 'ocl':
+elif sys.argv[1] == "ocl":
     ctx = cl.create_some_context()
     sim_name = ctx.devices[0].name if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo_ocl.Simulator
     sim_kwargs = dict(context=ctx)
 else:
-    raise Exception('unknown sim', sys.argv[1])
+    raise Exception("unknown sim", sys.argv[1])
 
 
-dims = map(int, sys.argv[2].split(','))
+dims = map(int, sys.argv[2].split(","))
 
 # neurons_per_product = 128
 neurons_per_product = 256
@@ -66,22 +67,20 @@ records = []
 for i, dim in enumerate(dims):
 
     rng = np.random.RandomState(123)
-    a = rng.normal(scale=np.sqrt(1./dim), size=dim)
-    b = rng.normal(scale=np.sqrt(1./dim), size=dim)
+    a = rng.normal(scale=np.sqrt(1.0 / dim), size=dim)
+    b = rng.normal(scale=np.sqrt(1.0 / dim), size=dim)
     c = circconv(a, b)
 
     # --- Model
     with nengo.Network(seed=9) as model:
         inputA = nengo.Node(a)
         inputB = nengo.Node(b)
-        A = nengo.networks.EnsembleArray(
-            neurons_per_product, dim, radius=radius)
-        B = nengo.networks.EnsembleArray(
-            neurons_per_product, dim, radius=radius)
-        C = nengo.networks.EnsembleArray(
-            neurons_per_product, dim, radius=radius)
+        A = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius)
+        B = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius)
+        C = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius)
         D = nengo.networks.CircularConvolution(
-            neurons_per_product, dim, input_magnitude=radius)
+            neurons_per_product, dim, input_magnitude=radius
+        )
 
         nengo.Connection(inputA, A.input, synapse=None)
         nengo.Connection(inputB, B.input, synapse=None)
@@ -115,40 +114,49 @@ for i, dim in enumerate(dims):
         crms = nengo.utils.numpy.rms(c)
         rmse = (nengo.utils.numpy.rms(y - c[None, :], axis=1) / crms).mean()
 
-        records.append(OrderedDict((
-            ('benchmark', 'circ-conv'),
-            ('name', sim_name),
-            ('dim', dim),
-            ('simtime', simtime),
-            ('neurons_per_product', neurons_per_product),
-            ('neurons', sum(e.n_neurons for e in model.all_ensembles)),
-            ('status', 'ok'),
-            ('profiling', getattr(sim, 'profiling', 0)),
-            ('buildtime', t_sim - t_start),
-            ('warmtime', t_warm - t_sim),
-            ('runtime', t_run - t_warm),
-            ('rmse', rmse),
-            )))
+        records.append(
+            OrderedDict(
+                (
+                    ("benchmark", "circ-conv"),
+                    ("name", sim_name),
+                    ("dim", dim),
+                    ("simtime", simtime),
+                    ("neurons_per_product", neurons_per_product),
+                    ("neurons", sum(e.n_neurons for e in model.all_ensembles)),
+                    ("status", "ok"),
+                    ("profiling", getattr(sim, "profiling", 0)),
+                    ("buildtime", t_sim - t_start),
+                    ("warmtime", t_warm - t_sim),
+                    ("runtime", t_run - t_warm),
+                    ("rmse", rmse),
+                )
+            )
+        )
         print(records[-1])
         print("%s, dims=%d successful" % (sim_name, dim))
     except Exception as e:
-        records.append(OrderedDict((
-            ('benchmark', 'circ-conv'),
-            ('name', sim_name),
-            ('dim', dim),
-            ('simtime', simtime),
-            ('neurons_per_product', neurons_per_product),
-            ('status', 'exception'),
-            ('exception', str(e)),
-            )))
+        records.append(
+            OrderedDict(
+                (
+                    ("benchmark", "circ-conv"),
+                    ("name", sim_name),
+                    ("dim", dim),
+                    ("simtime", simtime),
+                    ("neurons_per_product", neurons_per_product),
+                    ("status", "exception"),
+                    ("exception", str(e)),
+                )
+            )
+        )
         print(records[-1])
         print("%s, dims=%d exception" % (sim_name, dim))
         raise
     finally:
         sim.close()
 
-filename = "records_circconv_%s.pkl" % ((
-    datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")))
-f = open(filename, 'wb')
+filename = "records_circconv_%s.pkl" % (
+    (datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+)
+f = open(filename, "wb")
 pickle.dump(records, f)
 f.close()

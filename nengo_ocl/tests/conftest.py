@@ -15,7 +15,7 @@ def ctx(request):
 # --- Change allclose tolerences for some Nengo tests
 def allclose_tol(*args, **kwargs):
     """Use looser tolerance"""
-    kwargs.setdefault('atol', 2e-7)
+    kwargs.setdefault("atol", 2e-7)
     return allclose(*args, **kwargs)
 
 

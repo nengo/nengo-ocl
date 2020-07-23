@@ -17,16 +17,16 @@ neurons_per_product = 64
 radius = 1
 
 rng = np.random.RandomState(129)
-a = rng.normal(scale=np.sqrt(1./dim), size=dim)
-b = rng.normal(scale=np.sqrt(1./dim), size=dim)
+a = rng.normal(scale=np.sqrt(1.0 / dim), size=dim)
+b = rng.normal(scale=np.sqrt(1.0 / dim), size=dim)
 c = circconv(a, b)
 assert np.abs(a).max() < radius
 assert np.abs(b).max() < radius
 assert np.abs(c).max() < radius
 
 # check FFT magnitude
-tr_A = transform_in(dim, 'A', invert=False)
-tr_B = transform_in(dim, 'B', invert=False)
+tr_A = transform_in(dim, "A", invert=False)
+tr_B = transform_in(dim, "B", invert=False)
 d = np.dot(tr_A, a) * np.dot(tr_B, b)
 assert np.abs(d).max() < (4 * radius)
 # ^ TODO: 4 * radius just seems to work from looking at Nengo code. Why?
@@ -35,14 +35,12 @@ assert np.abs(d).max() < (4 * radius)
 with nengo.Network(label="ProfileConv", seed=3) as model:
     inputA = nengo.Node(a, label="inputA")
     inputB = nengo.Node(b, label="inputB")
-    A = nengo.networks.EnsembleArray(
-        neurons_per_product, dim, radius=radius, label='A')
-    B = nengo.networks.EnsembleArray(
-        neurons_per_product, dim, radius=radius, label='B')
-    C = nengo.networks.EnsembleArray(
-        neurons_per_product, dim, radius=radius, label='C')
+    A = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius, label="A")
+    B = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius, label="B")
+    C = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius, label="C")
     D = nengo.networks.CircularConvolution(
-        neurons_per_product, dim, input_magnitude=radius)
+        neurons_per_product, dim, input_magnitude=radius
+    )
 
     model.config[nengo.Connection].synapse = nengo.Alpha(0.005)
     nengo.Connection(inputA, A.input, synapse=None)
@@ -67,14 +65,16 @@ import matplotlib.pyplot as plt
 
 t = sim.trange()
 
+
 def plot(sim, a, A, title=""):
     a_ref = np.tile(a, (len(t), 1))
     a_sim = sim.data[A]
-    colors = ['b', 'g', 'r', 'c', 'm', 'y']
+    colors = ["b", "g", "r", "c", "m", "y"]
     for i in xrange(min(dim, len(colors))):
-        plt.plot(t, a_ref[:,i], '--', color=colors[i])
-        plt.plot(t, a_sim[:,i], '-', color=colors[i])
+        plt.plot(t, a_ref[:, i], "--", color=colors[i])
+        plt.plot(t, a_sim[:, i], "-", color=colors[i])
         plt.title(title)
+
 
 plt.subplot(221)
 plot(sim, a, A_p, title="A")

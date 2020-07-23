@@ -20,8 +20,8 @@ class MultiDotInc(Operator):
             self._float_beta = None
             self._signal_beta = beta
             if beta.shape != Y.shape:
-                raise NotImplementedError('', (beta.shape, Y.shape))
-        elif hasattr(beta, 'value'):
+                raise NotImplementedError("", (beta.shape, Y.shape))
+        elif hasattr(beta, "value"):
             self._float_beta = float(beta.value)
             self._signal_beta = None
         else:
@@ -32,8 +32,9 @@ class MultiDotInc(Operator):
         self.tag = tag
         self.As = []
         self.Xs = []
-        self._incs_Y = (self._signal_beta is None and self._float_beta == 1 and
-                        self.Y_in is self.Y)
+        self._incs_Y = (
+            self._signal_beta is None and self._float_beta == 1 and self.Y_in is self.Y
+        )
 
     @classmethod
     def convert_to(cls, op):
@@ -83,13 +84,13 @@ class MultiDotInc(Operator):
         return []
 
     def __str__(self):
-        beta = (self._float_beta if self._signal_beta is None else
-                self._signal_beta)
-        dots = ['dot(%s, %s)' % (A, X) for A, X in zip(self.As, self.Xs)]
-        return ('<MultiDotInc(tag=%s, Y=%s, Y_in=%s, beta=%s, gamma=%s, '
-                'dots=[%s]) at 0x%x>' % (
-                    self.tag, self.Y, self.Y_in, beta, self.gamma,
-                    ', '.join(dots), id(self)))
+        beta = self._float_beta if self._signal_beta is None else self._signal_beta
+        dots = ["dot(%s, %s)" % (A, X) for A, X in zip(self.As, self.Xs)]
+        return (
+            "<MultiDotInc(tag=%s, Y=%s, Y_in=%s, beta=%s, gamma=%s, "
+            "dots=[%s]) at 0x%x>"
+            % (self.tag, self.Y, self.Y_in, beta, self.gamma, ", ".join(dots), id(self))
+        )
 
     def __repr__(self):
         return self.__str__()
@@ -112,7 +113,7 @@ class MultiDotInc(Operator):
 
         # combine incs into sets if on same view
         for view, set_ops in iteritems(sets):
-            set_op, = set_ops
+            (set_op,) = set_ops
             inc_ops = incs.get(view, [])
             for inc_op in inc_ops[:]:
                 set_op.As.extend(inc_op.As)
@@ -140,14 +141,14 @@ class MultiDotInc(Operator):
         elif view.ndim == 2:
             return view
         else:
-            raise ValueError(
-                "No support for tensors with %d dimensions" % view.ndim)
+            raise ValueError("No support for tensors with %d dimensions" % view.ndim)
 
     def get_views(self):
         Y_view = self._as2d(self.Y)
         Y_in_view = self._as2d(self.Y_in)
-        beta_view = (self._as2d(self._signal_beta)
-                     if self._signal_beta is not None else None)
+        beta_view = (
+            self._as2d(self._signal_beta) if self._signal_beta is not None else None
+        )
 
         A_views = []
         X_views = []
@@ -161,11 +162,15 @@ class MultiDotInc(Operator):
             if A_view.shape == (1, 1):
                 # -- scalar AX_views can be done as reverse multiplication
                 A_view, X_view = X_view, A_view
-            elif not (X_view.shape[0] == A_view.shape[1] and
-                      X_view.shape[1] == Y_view.shape[1] and
-                      A_view.shape[0] == Y_view.shape[0]):
-                raise ValueError('shape mismach (A: %s, X: %s, Y: %s)' %
-                                 (A.shape, X.shape, self.Y.shape))
+            elif not (
+                X_view.shape[0] == A_view.shape[1]
+                and X_view.shape[1] == Y_view.shape[1]
+                and A_view.shape[0] == Y_view.shape[0]
+            ):
+                raise ValueError(
+                    "shape mismach (A: %s, X: %s, Y: %s)"
+                    % (A.shape, X.shape, self.Y.shape)
+                )
 
             A_views.append(A_view)
             X_views.append(X_view)

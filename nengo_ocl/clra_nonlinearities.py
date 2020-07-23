@@ -30,9 +30,11 @@ def blockify_ij(max_size, ra):
             sizes.append(min(size - offset, max_size))
             offsets.append(offset)
 
-    return (np.array(sizes, dtype=np.int32),
-            np.array(inds, dtype=np.int32),
-            np.array(offsets, dtype=np.int32))
+    return (
+        np.array(sizes, dtype=np.int32),
+        np.array(inds, dtype=np.int32),
+        np.array(offsets, dtype=np.int32),
+    )
 
 
 def blockify_matrices(max_size, ras):
@@ -60,9 +62,11 @@ def blockify_matrices(max_size, ras):
                 starts[k].append(startsi[k])
                 startsi[k] += max_size
 
-    return (np.array(sizes, dtype=np.int32),
-            np.array(inds, dtype=np.int32),
-            np.array(starts, dtype=np.int32))
+    return (
+        np.array(sizes, dtype=np.int32),
+        np.array(inds, dtype=np.int32),
+        np.array(starts, dtype=np.int32),
+    )
 
 
 def blockify_matrix(max_size, ra):
@@ -93,9 +97,11 @@ def blockify_vectors(max_size, ras):
                 starts[k].append(startsi[k])
                 startsi[k] += max_size * ra.stride0s[i]
 
-    return (np.array(sizes, dtype=np.int32),
-            np.array(inds, dtype=np.int32),
-            np.array(starts, dtype=np.int32))
+    return (
+        np.array(sizes, dtype=np.int32),
+        np.array(inds, dtype=np.int32),
+        np.array(starts, dtype=np.int32),
+    )
 
 
 def blockify_vector(max_size, ra):
@@ -105,7 +111,7 @@ def blockify_vector(max_size, ra):
 
 def plan_timeupdate(queue, step, time, dt):
     assert len(step) == len(time) == 1
-    assert step.ctype == time.ctype == 'float'
+    assert step.ctype == time.ctype == "float"
     assert step.shape0s[0] == step.shape1s[0] == 1
     assert time.shape0s[0] == time.shape1s[0] == 1
 
@@ -125,7 +131,7 @@ def plan_timeupdate(queue, step, time, dt):
         }
         """
 
-    text = as_ascii(Template(text, output_encoding='ascii').render(dt=dt))
+    text = as_ascii(Template(text, output_encoding="ascii").render(dt=dt))
     full_args = (step.cl_starts, step.cl_buf, time.cl_starts, time.cl_buf)
     _fn = cl.Program(queue.context, text).build().timeupdate
     _fn.set_args(*[arr.data for arr in full_args])
@@ -133,7 +139,7 @@ def plan_timeupdate(queue, step, time, dt):
     gsize = (1,)
     lsize = None
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_timeupdate")
-    plan.full_args = full_args     # prevent garbage-collection
+    plan.full_args = full_args  # prevent garbage-collection
     return plan
 
 
@@ -183,7 +189,7 @@ def plan_reset(queue, Y, values, tag=None):
     # gsize = (lsize0, NN)
 
     textconf = dict(Ytype=Y.ctype, N=N, n_per_item=n_per_item)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = (
         clvalues,
@@ -195,12 +201,15 @@ def plan_reset(queue, Y, values, tag=None):
     _fn.set_args(*[arr.data for arr in full_args])
 
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_reset", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
-    plan.bw_per_call = (
-        Y.nbytes + values.nbytes + clYsizes.nbytes + clYstarts.nbytes)
-    plan.description = (
-        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
+    plan.full_args = full_args  # prevent garbage-collection
+    plan.bw_per_call = Y.nbytes + values.nbytes + clYsizes.nbytes + clYstarts.nbytes
+    plan.description = "groups: %d; items: %d; items/group: %0.1f [%d, %d]" % (
+        len(Y),
+        Y.sizes.sum(),
+        Y.sizes.mean(),
+        Y.sizes.min(),
+        Y.sizes.max(),
+    )
     return plan
 
 
@@ -271,22 +280,26 @@ def plan_copy(queue, X, Y, incs, tag=None):
         Y.cl_buf,
     ]
     if (incs == 0).all():
-        textconf['inc'] = False
+        textconf["inc"] = False
     elif (incs == 1).all():
-        textconf['inc'] = True
+        textconf["inc"] = True
     else:
         full_args.insert(0, to_device(queue, incs[inds].astype(np.int32)))
 
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     _fn = cl.Program(queue.context, text).build().copy
     _fn.set_args(*[arr.data for arr in full_args])
 
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_copy", tag=tag)
     plan.full_args = tuple(full_args)  # prevent garbage-collection
     plan.bw_per_call = X.nbytes + Y.nbytes
-    plan.description = (
-        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(X), X.sizes.sum(), X.sizes.mean(), X.sizes.min(), X.sizes.max()))
+    plan.description = "groups: %d; items: %d; items/group: %0.1f [%d, %d]" % (
+        len(X),
+        X.sizes.sum(),
+        X.sizes.mean(),
+        X.sizes.min(),
+        X.sizes.max(),
+    )
     return plan
 
 
@@ -302,7 +315,7 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
     assert (Xinds.shape0s == Yinds.shape0s).all()
 
     assert X.ctype == Y.ctype
-    assert Xinds.ctype == Yinds.ctype == 'int'
+    assert Xinds.ctype == Yinds.ctype == "int"
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -352,8 +365,7 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
     lsize0 = 16
     lsize1 = get_mwgs(queue) // lsize0
 
-    sizes, inds, [XIstarts, YIstarts] = blockify_vectors(
-        lsize0, [Xinds, Yinds])
+    sizes, inds, [XIstarts, YIstarts] = blockify_vectors(lsize0, [Xinds, Yinds])
 
     N = len(sizes)
     lsize = (lsize0, lsize1)
@@ -375,23 +387,26 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
         Yinds.cl_buf,
     ]
     if (incs == 0).all():
-        textconf['inc'] = False
+        textconf["inc"] = False
     elif (incs == 1).all():
-        textconf['inc'] = True
+        textconf["inc"] = True
     else:
         full_args.insert(0, to_device(queue, incs[inds].astype(np.int32)))
 
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     _fn = cl.Program(queue.context, text).build().slicedcopy
     _fn.set_args(*[arr.data for arr in full_args])
 
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_slicedcopy", tag=tag)
     plan.full_args = tuple(full_args)  # prevent garbage-collection
-    plan.bw_per_call = 2 * (Xinds.nbytes + Xinds.sizes.sum()*X.dtype.itemsize)
-    plan.description = (
-        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(Xinds), Xinds.sizes.sum(),
-         Xinds.sizes.mean(), Xinds.sizes.min(), Xinds.sizes.max()))
+    plan.bw_per_call = 2 * (Xinds.nbytes + Xinds.sizes.sum() * X.dtype.itemsize)
+    plan.description = "groups: %d; items: %d; items/group: %0.1f [%d, %d]" % (
+        len(Xinds),
+        Xinds.sizes.sum(),
+        Xinds.sizes.mean(),
+        Xinds.sizes.min(),
+        Xinds.sizes.max(),
+    )
     return plan
 
 
@@ -477,7 +492,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     sizes, inds, offsets = blockify_ij(lsize0, Y)
 
     textconf = dict(Atype=A.ctype, Xtype=X.ctype, Ytype=Y.ctype)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = (
         to_device(queue, offsets),
@@ -501,14 +516,17 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     _fn.set_args(*[arr.data for arr in full_args])
 
     gsize = (lsize0, len(sizes))
-    plan = Plan(
-        queue, _fn, gsize, lsize=None, name="cl_elementwise_inc", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan = Plan(queue, _fn, gsize, lsize=None, name="cl_elementwise_inc", tag=tag)
+    plan.full_args = full_args  # prevent garbage-collection
     plan.flops_per_call = 2 * Y.sizes.sum()
     plan.bw_per_call = A.nbytes + X.nbytes + Y.nbytes
-    plan.description = (
-        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
+    plan.description = "groups: %d; items: %d; items/group: %0.1f [%d, %d]" % (
+        len(Y),
+        Y.sizes.sum(),
+        Y.sizes.mean(),
+        Y.sizes.min(),
+        Y.sizes.max(),
+    )
     return plan
 
 
@@ -654,10 +672,15 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     uses_buf = na_max > 1 or nb_max > 1
 
     textconf = dict(
-        Xtype=X.ctype, Ytype=Y.ctype, Atype=A.ctype, Btype=B.ctype,
-        na_max=na_max, nb_max=nb_max, uses_buf=uses_buf,
+        Xtype=X.ctype,
+        Ytype=Y.ctype,
+        Atype=A.ctype,
+        Btype=B.ctype,
+        na_max=na_max,
+        nb_max=nb_max,
+        uses_buf=uses_buf,
     )
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     max_len = X.sizes.max()
     lsize0 = min(max(max_len, na_max, nb_max), get_mwgs(queue))
@@ -666,23 +689,33 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
     sizes, inds, offsets = blockify_ij(lsize0, X)
     n = len(sizes)
 
-    Xbufpos = to_device(queue, np.zeros(n if uses_buf else 0, dtype='int32'))
-    Ybufpos = to_device(queue, np.zeros(n if uses_buf else 0, dtype='int32'))
+    Xbufpos = to_device(queue, np.zeros(n if uses_buf else 0, dtype="int32"))
+    Ybufpos = to_device(queue, np.zeros(n if uses_buf else 0, dtype="int32"))
 
     full_args = (
         to_device(queue, offsets),
-        to_device(queue, X.shape0s[inds]), to_device(queue, X.shape1s[inds]),
-        to_device(queue, X.stride0s[inds]), to_device(queue, X.stride1s[inds]),
-        to_device(queue, X.starts[inds]), X.cl_buf,
-        to_device(queue, Y.stride0s[inds]), to_device(queue, Y.stride1s[inds]),
-        to_device(queue, Y.starts[inds]), Y.cl_buf,
-        to_device(queue, A.shape0s[inds]), to_device(queue, A.starts[inds]),
+        to_device(queue, X.shape0s[inds]),
+        to_device(queue, X.shape1s[inds]),
+        to_device(queue, X.stride0s[inds]),
+        to_device(queue, X.stride1s[inds]),
+        to_device(queue, X.starts[inds]),
+        X.cl_buf,
+        to_device(queue, Y.stride0s[inds]),
+        to_device(queue, Y.stride1s[inds]),
+        to_device(queue, Y.starts[inds]),
+        Y.cl_buf,
+        to_device(queue, A.shape0s[inds]),
+        to_device(queue, A.starts[inds]),
         A.cl_buf,
-        to_device(queue, B.shape0s[inds]), to_device(queue, B.starts[inds]),
+        to_device(queue, B.shape0s[inds]),
+        to_device(queue, B.starts[inds]),
         B.cl_buf,
-        to_device(queue, Xbuf.starts[inds]), Xbuf.cl_buf,
-        to_device(queue, Ybuf.starts[inds]), Ybuf.cl_buf,
-        Xbufpos, Ybufpos,
+        to_device(queue, Xbuf.starts[inds]),
+        Xbuf.cl_buf,
+        to_device(queue, Ybuf.starts[inds]),
+        Ybuf.cl_buf,
+        Xbufpos,
+        Ybufpos,
     )
 
     # --- build and print info (change maxregcount to avoid cache, force build)
@@ -696,14 +729,18 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
 
     lsize = (lsize0, 1)
     gsize = (lsize0, n)
-    plan = Plan(
-        queue, _fn, gsize, lsize=lsize, name="cl_linearfilter", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_linearfilter", tag=tag)
+    plan.full_args = full_args  # prevent garbage-collection
     plan.bw_per_call = (
-        X.nbytes + Y.nbytes + A.nbytes + B.nbytes + Xbuf.nbytes + Ybuf.nbytes)
-    plan.description = (
-        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(Y), Y.sizes.sum(), Y.sizes.mean(), Y.sizes.min(), Y.sizes.max()))
+        X.nbytes + Y.nbytes + A.nbytes + B.nbytes + Xbuf.nbytes + Ybuf.nbytes
+    )
+    plan.description = "groups: %d; items: %d; items/group: %0.1f [%d, %d]" % (
+        len(Y),
+        Y.sizes.sum(),
+        Y.sizes.mean(),
+        Y.sizes.min(),
+        Y.sizes.max(),
+    )
 
     if not uses_buf:
         return [plan]
@@ -712,10 +749,12 @@ def plan_linearfilter(queue, X, Y, A, B, Xbuf, Ybuf, tag=None):
         inc_args = (
             to_device(queue, A.shape0s[inds]),
             to_device(queue, B.shape0s[inds]),
-            Xbufpos, Ybufpos)
+            Xbufpos,
+            Ybufpos,
+        )
         inc.set_args(*[arr.data for arr in inc_args])
         inc_plan = Plan(queue, inc, gsize=(n,), name="cl_linearfilter_inc")
-        inc_plan.full_args = inc_args     # prevent garbage-collection
+        inc_plan.full_args = inc_args  # prevent garbage-collection
 
         return [plan, inc_plan]
 
@@ -742,10 +781,10 @@ def plan_probes(queue, periods, X, Y, tag=None):
     assert (Y.stride0s == Y.shape1s).all()
     assert (Y.stride1s == 1).all()
 
-    periods = np.asarray(periods, dtype='float32')
+    periods = np.asarray(periods, dtype="float32")
     cl_periods = to_device(queue, periods)
     cl_countdowns = to_device(queue, periods - 1)
-    cl_bufpositions = to_device(queue, np.zeros(N, dtype='int32'))
+    cl_bufpositions = to_device(queue, np.zeros(N, dtype="int32"))
 
     text = """
         ////////// MAIN FUNCTION //////////
@@ -798,12 +837,14 @@ def plan_probes(queue, periods, X, Y, tag=None):
         }
         """
 
-    textconf = dict(N=N,
-                    Xtype=X.ctype,
-                    Ytype=Y.ctype,
-                    Ctype=cl_countdowns.ctype,
-                    Ptype=cl_periods.ctype)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    textconf = dict(
+        N=N,
+        Xtype=X.ctype,
+        Ytype=Y.ctype,
+        Ctype=cl_countdowns.ctype,
+        Ptype=cl_periods.ctype,
+    )
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = (
         cl_countdowns,
@@ -820,17 +861,25 @@ def plan_probes(queue, periods, X, Y, tag=None):
     _fn.set_args(*[arr.data for arr in full_args])
 
     max_len = min(max(X.shape0s), get_mwgs(queue))
-    gsize = (max_len, N,)
+    gsize = (
+        max_len,
+        N,
+    )
     lsize = (max_len, 1)
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_probes", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan.full_args = full_args  # prevent garbage-collection
     plan.cl_bufpositions = cl_bufpositions
     plan.Y = Y
-    plan.bw_per_call = (2*X.nbytes + cl_periods.nbytes +
-                        cl_countdowns.nbytes + cl_bufpositions.nbytes)
-    plan.description = (
-        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(X), X.sizes.sum(), X.sizes.mean(), X.sizes.min(), X.sizes.max()))
+    plan.bw_per_call = (
+        2 * X.nbytes + cl_periods.nbytes + cl_countdowns.nbytes + cl_bufpositions.nbytes
+    )
+    plan.description = "groups: %d; items: %d; items/group: %0.1f [%d, %d]" % (
+        len(X),
+        X.sizes.sum(),
+        X.sizes.mean(),
+        X.sizes.min(),
+        X.sizes.max(),
+    )
     return plan
 
 
@@ -879,12 +928,16 @@ ${code}
         }
         """
 
-    textconf = dict(init=indent(init, 12),
-                    code=indent(code, 12),
-                    N=N, input_names=input_names, input_types=input_types,
-                    oname=ast_conversion.OUTPUT_NAME, otype=output_type,
-                    )
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    textconf = dict(
+        init=indent(init, 12),
+        code=indent(code, 12),
+        N=N,
+        input_names=input_names,
+        input_types=input_types,
+        oname=ast_conversion.OUTPUT_NAME,
+        otype=output_type,
+    )
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = []
     for x in inputs:
@@ -896,17 +949,35 @@ ${code}
     gsize = (N,)
     plan = Plan(queue, _fn, gsize, lsize=None, name="cl_direct", tag=tag)
     plan.full_args = tuple(full_args)  # prevent garbage-collection
-    plan.description = (
-        "groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-        (len(output), output.sizes.sum(),
-         output.sizes.mean(), output.sizes.min(), output.sizes.max()))
+    plan.description = "groups: %d; items: %d; items/group: %0.1f [%d, %d]" % (
+        len(output),
+        output.sizes.sum(),
+        output.sizes.mean(),
+        output.sizes.min(),
+        output.sizes.max(),
+    )
     return plan
 
 
-def plan_lif(queue, dt, J, V, W, outS, ref, tau, amp, N=None, tau_n=None,
-             inc_n=None, upsample=1, fastlif=False, **kwargs):
+def plan_lif(
+    queue,
+    dt,
+    J,
+    V,
+    W,
+    outS,
+    ref,
+    tau,
+    amp,
+    N=None,
+    tau_n=None,
+    inc_n=None,
+    upsample=1,
+    fastlif=False,
+    **kwargs
+):
     adaptive = N is not None
-    assert J.ctype == 'float'
+    assert J.ctype == "float"
     for x in [V, W, outS]:
         assert x.ctype == J.ctype
 
@@ -922,8 +993,15 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, amp, N=None, tau_n=None,
 
     dt = float(dt)
     textconf = dict(
-        type=J.ctype, dt=dt, upsample=upsample, adaptive=adaptive,
-        dtu=dt/upsample, dtu_inv=upsample/dt, dt_inv=1/dt, fastlif=fastlif)
+        type=J.ctype,
+        dt=dt,
+        upsample=upsample,
+        adaptive=adaptive,
+        dtu=dt / upsample,
+        dtu_inv=upsample / dt,
+        dt_inv=1 / dt,
+        fastlif=fastlif,
+    )
     decs = """
         char spiked;
         ${type} dV;
@@ -987,17 +1065,25 @@ def plan_lif(queue, dt, J, V, W, outS, ref, tau, amp, N=None, tau_n=None,
         outN = N + (dt / tau_n) * (inc_n * outS - N);
 % endif
         """
-    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    decs = as_ascii(Template(decs, output_encoding="ascii").render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     cl_name = "cl_alif" if adaptive else "cl_lif"
     return _plan_template(
-        queue, cl_name, text, declares=decs,
-        inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
+        queue,
+        cl_name,
+        text,
+        declares=decs,
+        inputs=inputs,
+        outputs=outputs,
+        parameters=parameters,
+        **kwargs
+    )
 
 
-def plan_lif_rate(queue, dt, J, R, ref, tau, amp,
-                  N=None, tau_n=None, inc_n=None, **kwargs):
-    assert J.ctype == 'float'
+def plan_lif_rate(
+    queue, dt, J, R, ref, tau, amp, N=None, tau_n=None, inc_n=None, **kwargs
+):
+    assert J.ctype == "float"
     for x in [R]:
         assert x.ctype == J.ctype
     adaptive = N is not None
@@ -1030,16 +1116,23 @@ def plan_lif_rate(queue, dt, J, R, ref, tau, amp,
         outN = N + (dt / tau_n) * (inc_n*R - N);
     % endif
         """
-    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    decs = as_ascii(Template(decs, output_encoding="ascii").render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     cl_name = "cl_alif_rate" if adaptive else "cl_lif_rate"
     return _plan_template(
-        queue, cl_name, text, declares=decs,
-        inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
+        queue,
+        cl_name,
+        text,
+        declares=decs,
+        inputs=inputs,
+        outputs=outputs,
+        parameters=parameters,
+        **kwargs
+    )
 
 
 def plan_spiking_rectified_linear(queue, dt, J, V, outS, amp, **kwargs):
-    assert J.ctype == 'float'
+    assert J.ctype == "float"
     for x in [V, outS, amp]:
         assert x.ctype == J.ctype
 
@@ -1048,7 +1141,7 @@ def plan_spiking_rectified_linear(queue, dt, J, V, outS, amp, **kwargs):
     parameters = dict(amp=amp)
 
     dt = float(dt)
-    textconf = dict(type=J.ctype, dt=dt, dt_inv=1./dt)
+    textconf = dict(type=J.ctype, dt=dt, dt_inv=1.0 / dt)
     decs = """
         const ${type} c0 = 0;
         const ${type} dt = ${dt}, dt_inv = ${dt_inv};
@@ -1061,16 +1154,23 @@ def plan_spiking_rectified_linear(queue, dt, J, V, outS, amp, **kwargs):
         outV = V - n_spikes;
         outS = amp * n_spikes * dt_inv;
         """
-    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    decs = as_ascii(Template(decs, output_encoding="ascii").render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     cl_name = "cl_spikingrelu"
     return _plan_template(
-        queue, cl_name, text, declares=decs,
-        inputs=inputs, outputs=outputs, parameters=parameters, **kwargs)
+        queue,
+        cl_name,
+        text,
+        declares=decs,
+        inputs=inputs,
+        outputs=outputs,
+        parameters=parameters,
+        **kwargs
+    )
 
 
 def plan_rectified_linear(queue, J, R, amp, **kwargs):
-    assert J.ctype == 'float'
+    assert J.ctype == "float"
     for x in [R, amp]:
         assert x.ctype == J.ctype
 
@@ -1078,17 +1178,23 @@ def plan_rectified_linear(queue, J, R, amp, **kwargs):
     decs = "const ${type} c0 = 0;"
     text = "R = amp*max(J, c0);"
 
-    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    decs = as_ascii(Template(decs, output_encoding="ascii").render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     cl_name = "cl_relu"
     return _plan_template(
-        queue, cl_name, text, declares=decs,
-        inputs=dict(J=J), outputs=dict(R=R), parameters=dict(amp=amp),
-        **kwargs)
+        queue,
+        cl_name,
+        text,
+        declares=decs,
+        inputs=dict(J=J),
+        outputs=dict(R=R),
+        parameters=dict(amp=amp),
+        **kwargs
+    )
 
 
 def plan_sigmoid(queue, J, R, ref, **kwargs):
-    assert J.ctype == 'float'
+    assert J.ctype == "float"
     assert R.ctype == J.ctype
 
     textconf = dict(type=J.ctype)
@@ -1096,17 +1202,32 @@ def plan_sigmoid(queue, J, R, ref, **kwargs):
     text = "R = J < t0 ? c0 : J > t1 ? c1/ref : c1 / (ref * (c1 + exp(-J)));"
     # ^ constants for cutoffs from Theano
 
-    decs = as_ascii(Template(decs, output_encoding='ascii').render(**textconf))
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    decs = as_ascii(Template(decs, output_encoding="ascii").render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     cl_name = "cl_sigmoid"
     return _plan_template(
-        queue, cl_name, text, declares=decs,
-        inputs=dict(J=J), outputs=dict(R=R), parameters=dict(ref=ref),
-        **kwargs)
+        queue,
+        cl_name,
+        text,
+        declares=decs,
+        inputs=dict(J=J),
+        outputs=dict(R=R),
+        parameters=dict(ref=ref),
+        **kwargs
+    )
 
 
-def _plan_template(queue, name, core_text, declares="", tag=None,
-                   blockify=True, inputs={}, outputs={}, parameters={}):
+def _plan_template(
+    queue,
+    name,
+    core_text,
+    declares="",
+    tag=None,
+    blockify=True,
+    inputs={},
+    outputs={},
+    parameters={},
+):
     """Template for making a plan for vector nonlinearities.
 
     This template assumes that all inputs and outputs are vectors.
@@ -1129,7 +1250,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         constant.
 
     """
-    input0 = list(inputs.values())[0]   # input to use as reference for lengths
+    input0 = list(inputs.values())[0]  # input to use as reference for lengths
 
     # split parameters into static and updated params
     static_params = OrderedDict()  # static params (hard-coded)
@@ -1138,16 +1259,15 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         if isinstance(v, CLRaggedArray):
             params[k] = v
         elif is_number(v):
-            static_params[k] = ('float', float(v))
+            static_params[k] = ("float", float(v))
         else:
             raise ValueError(
-                "Parameter %r must be CLRaggedArray or float (got %s)"
-                % (k, type(v)))
+                "Parameter %r must be CLRaggedArray or float (got %s)" % (k, type(v))
+            )
 
     avars = OrderedDict()
     bw_per_call = 0
-    for vname, v in (list(inputs.items()) + list(outputs.items()) +
-                     list(params.items())):
+    for vname, v in list(inputs.items()) + list(outputs.items()) + list(params.items()):
         assert vname not in avars, "Name clash"
         assert len(v) == len(input0)
         assert (v.shape0s == input0.shape0s).all()
@@ -1155,7 +1275,7 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
         assert (v.stride1s == 1).all()  # columns contiguous
         assert (v.shape1s == 1).all()  # vectors only
 
-        offset = '%(name)s_starts[gind1]' % {'name': vname}
+        offset = "%(name)s_starts[gind1]" % {"name": vname}
         avars[vname] = (v.ctype, offset)
         bw_per_call += v.nbytes
 
@@ -1164,9 +1284,15 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
     pvars = OrderedDict((k, avars[k]) for k in params.keys())
 
     fn_name = str(name)
-    textconf = dict(fn_name=fn_name, declares=declares, core_text=core_text,
-                    ivars=ivars, ovars=ovars, pvars=pvars,
-                    static_params=static_params)
+    textconf = dict(
+        fn_name=fn_name,
+        declares=declares,
+        core_text=core_text,
+        ivars=ivars,
+        ovars=ovars,
+        pvars=pvars,
+        static_params=static_params,
+    )
 
     text = """
     ////////// MAIN FUNCTION //////////
@@ -1235,13 +1361,13 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
                 inds = inds_i
 
         clsizes = to_device(queue, sizes)
-        get_starts = lambda ras: [to_device(queue, starts) for starts in
-                                  blockify_vectors(block_size, ras)[2]]
+        get_starts = lambda ras: [
+            to_device(queue, starts) for starts in blockify_vectors(block_size, ras)[2]
+        ]
         Istarts = get_starts(itervalues(inputs))
         Ostarts = get_starts(itervalues(outputs))
         Pstarts = get_starts(itervalues(params))
-        Pshape0s = [
-            to_device(queue, x.shape0s[inds]) for x in itervalues(params)]
+        Pshape0s = [to_device(queue, x.shape0s[inds]) for x in itervalues(params)]
 
         lsize = None
         gsize = (block_size, len(sizes))
@@ -1268,8 +1394,8 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
             full_args.extend([v.cl_starts, v.cl_shape0s, v.cl_buf])
         full_args.append(input0.cl_shape0s)
 
-    textconf['N'] = gsize[1]
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    textconf["N"] = gsize[1]
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
     fns = cl.Program(queue.context, text).build()
     _fn = getattr(fns, fn_name)
     _fn.set_args(*[arr.data for arr in full_args])
@@ -1277,9 +1403,13 @@ def _plan_template(queue, name, core_text, declares="", tag=None,
     plan = Plan(queue, _fn, gsize, lsize=lsize, name=name, tag=tag)
     plan.full_args = tuple(full_args)  # prevent garbage-collection
     plan.bw_per_call = bw_per_call
-    plan.description = ("groups: %d; items: %d; items/group: %0.1f [%d, %d]" %
-                        (gsize[1], input0.sizes.sum(), input0.sizes.mean(),
-                         input0.sizes.min(), input0.sizes.max()))
+    plan.description = "groups: %d; items: %d; items/group: %0.1f [%d, %d]" % (
+        gsize[1],
+        input0.sizes.sum(),
+        input0.sizes.mean(),
+        input0.sizes.min(),
+        input0.sizes.max(),
+    )
     return plan
 
 
@@ -1287,7 +1417,8 @@ def create_rngs(queue, n):
     # max 32 states per RNG to save memory (many processes just need a few)
     work_items = get_mwgs(queue, cap=32)
     rngs = CLRaggedArray.from_arrays(
-        queue, [np.zeros((work_items, 28), dtype=np.int32)] * n)
+        queue, [np.zeros((work_items, 28), dtype=np.int32)] * n
+    )
     return rngs
 
 
@@ -1321,7 +1452,7 @@ def init_rngs(queue, rngs, seeds):
                 ranluxcl_init(x, rng + i);
             }
             """
-        text = as_ascii(Template(text, output_encoding='ascii').render())
+        text = as_ascii(Template(text, output_encoding="ascii").render())
         _init_rng_kernel = cl.Program(queue.context, text).build().init_rng
 
     cl_seeds = to_device(queue, np.array(seeds, dtype=np.uint32))
@@ -1338,7 +1469,7 @@ _dist_enums = {nengod.Uniform: 0, nengod.Gaussian: 1}
 _dist_params = {
     nengod.Uniform: lambda d: np.array([d.low, d.high], dtype=np.float32),
     nengod.Gaussian: lambda d: np.array([d.mean, d.std], dtype=np.float32),
-    }
+}
 dist_header = """
 #include "pyopencl-ranluxcl.cl"
 
@@ -1371,17 +1502,15 @@ inline float getfloat4(float4 a, int i) {
 def get_dist_enums_params(dists):
     enums = [_dist_enums[d.__class__] for d in dists]
     params = [_dist_params[d.__class__](d) for d in dists]
-    return (RaggedArray(enums, dtype=np.int32),
-            RaggedArray(params, dtype=np.float32))
+    return (RaggedArray(enums, dtype=np.int32), RaggedArray(params, dtype=np.float32))
 
 
-def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
-                    tag=None):
+def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs, tag=None):
     N = len(Y)
     assert N == len(dist_enums) == len(dist_params) == scale.size == inc.size
 
-    assert dist_enums.ctype == 'int'
-    assert scale.ctype == inc.ctype == 'int'
+    assert dist_enums.ctype == "int"
+    assert scale.ctype == inc.ctype == "int"
 
     for arr in [Y, dist_enums, dist_params]:
         assert (arr.shape1s == 1).all()
@@ -1444,9 +1573,13 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
         }
         """
 
-    textconf = dict(Ytype=Y.ctype, Ptype=dist_params.ctype,
-                    sqrt_dt_inv=1 / np.sqrt(dt), dist_header=dist_header)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    textconf = dict(
+        Ytype=Y.ctype,
+        Ptype=dist_params.ctype,
+        sqrt_dt_inv=1 / np.sqrt(dt),
+        dist_header=dist_header,
+    )
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = (
         Y.cl_shape0s,
@@ -1468,7 +1601,7 @@ def plan_whitenoise(queue, Y, dist_enums, dist_params, scale, inc, dt, rngs,
     gsize = (max_len, N)
     lsize = (max_len, 1)
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_whitenoise", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan.full_args = full_args  # prevent garbage-collection
     return plan
 
 
@@ -1526,10 +1659,14 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
         }
         """
 
-    textconf = dict(Ytype=Y.ctype, Ttype=t.ctype, Stype=signals.ctype,
-                    Ptype=pres_t.ctype if pres_t is not None else None,
-                    dt=dt)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    textconf = dict(
+        Ytype=Y.ctype,
+        Ttype=t.ctype,
+        Stype=signals.ctype,
+        Ptype=pres_t.ctype if pres_t is not None else None,
+        dt=dt,
+    )
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = ((pres_t,) if pres_t is not None else ()) + (
         Y.cl_shape0s,
@@ -1547,15 +1684,26 @@ def plan_presentinput(queue, Y, t, signals, dt, pres_t=None, tag=None):
     max_len = min(max(Y.shape0s), get_mwgs(queue))
     gsize = (max_len, N)
     lsize = (max_len, 1)
-    plan = Plan(
-        queue, _fn, gsize, lsize=lsize, name="cl_presentinput", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_presentinput", tag=tag)
+    plan.full_args = full_args  # prevent garbage-collection
     return plan
 
 
-def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
-                kernel_shape, conv, padding, strides,
-                tag=None, transposed=False):
+def plan_conv2d(
+    queue,
+    X,
+    Y,
+    filters,
+    biases,
+    shape_in,
+    shape_out,
+    kernel_shape,
+    conv,
+    padding,
+    strides,
+    tag=None,
+    transposed=False,
+):
     """
     Parameters
     ----------
@@ -1666,26 +1814,48 @@ def plan_conv2d(queue, X, Y, filters, biases, shape_in, shape_out,
     npatch = nipatch * njpatch
 
     assert np.prod(lsize) <= queue.device.max_work_group_size
-    assert (npatch*X.dtype.itemsize + conv*si*sj*filters.dtype.itemsize
-            <= queue.device.local_mem_size)
+    assert (
+        npatch * X.dtype.itemsize + conv * si * sj * filters.dtype.itemsize
+        <= queue.device.local_mem_size
+    )
 
     textconf = dict(
-        type=X.ctype, conv=conv, nf=nf, nxi=nxi, nxj=nxj, nyi=nyi, nyj=nyj,
-        nc=nc, si=si, sj=sj, pi=pi, pj=pj, sti=sti, stj=stj,
-        nipatch=nipatch, njpatch=njpatch, npatch=npatch,
-        xstart=X.start, ystart=Y.start)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+        type=X.ctype,
+        conv=conv,
+        nf=nf,
+        nxi=nxi,
+        nxj=nxj,
+        nyi=nyi,
+        nyj=nyj,
+        nc=nc,
+        si=si,
+        sj=sj,
+        pi=pi,
+        pj=pj,
+        sti=sti,
+        stj=stj,
+        nipatch=nipatch,
+        njpatch=njpatch,
+        npatch=npatch,
+        xstart=X.start,
+        ystart=Y.start,
+    )
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = (X.base_data, filters.data, biases.data, Y.base_data)
     _fn = cl.Program(queue.context, text).build().conv2d
     _fn.set_args(*full_args)
 
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2d", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan.full_args = full_args  # prevent garbage-collection
     plan.flops_per_call = 2 * nyi * nyj * nf * nc * si * sj
     plan.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
     plan.description = "shape_in=%s, shape_out=%s, kernel=%s, conv=%s" % (
-        shape_in, shape_out, kernel_shape, conv)
+        shape_in,
+        shape_out,
+        kernel_shape,
+        conv,
+    )
     return plan
 
 
@@ -1766,23 +1936,34 @@ def plan_pool2d(queue, X, Y, shape, pool_size, strides, tag=None):
     lsize = (lsize0, lsize1, 1)
     gsize = (round_up(nyj, lsize[0]), round_up(nyi, lsize[1]), nc)
 
-    njpatch = lsize[0]*sti + si - 1
-    nipatch = lsize[1]*stj + sj - 1
-    assert nipatch*njpatch <= queue.device.local_mem_size / X.dtype.itemsize
+    njpatch = lsize[0] * sti + si - 1
+    nipatch = lsize[1] * stj + sj - 1
+    assert nipatch * njpatch <= queue.device.local_mem_size / X.dtype.itemsize
 
     textconf = dict(
-        type=X.ctype, Xstart=X.start, Ystart=Y.start,
-        nxi=nxi, nxj=nxj, nyi=nyi, nyj=nyj, si=si, sj=sj, sti=sti, stj=stj,
-        nipatch=nipatch, njpatch=njpatch)
+        type=X.ctype,
+        Xstart=X.start,
+        Ystart=Y.start,
+        nxi=nxi,
+        nxj=nxj,
+        nyi=nyi,
+        nyj=nyj,
+        si=si,
+        sj=sj,
+        sti=sti,
+        stj=stj,
+        nipatch=nipatch,
+        njpatch=njpatch,
+    )
 
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = (X.base_data, Y.base_data)
     _fn = cl.Program(queue.context, text).build().pool2d
     _fn.set_args(*full_args)
 
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_pool2d", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan.full_args = full_args  # prevent garbage-collection
     plan.flops_per_call = X.size
     plan.bw_per_call = X.nbytes + Y.nbytes
     return plan
@@ -1801,8 +1982,7 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
     assert (pre.shape0s == delta.shape1s).all()
     assert (post.shape0s == theta.shape0s).all()
 
-    assert (pre.ctype == post.ctype == theta.ctype == delta.ctype ==
-            alpha.ctype)
+    assert pre.ctype == post.ctype == theta.ctype == delta.ctype == alpha.ctype
 
     text = """
     __kernel void bcm(
@@ -1846,14 +2026,23 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
     """
 
     textconf = dict(type=pre.ctype)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = (
-        delta.cl_shape0s, delta.cl_shape1s,
-        pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
-        post.cl_stride0s, post.cl_starts, post.cl_buf,
-        theta.cl_stride0s, theta.cl_starts, theta.cl_buf,
-        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
+        delta.cl_shape0s,
+        delta.cl_shape1s,
+        pre.cl_stride0s,
+        pre.cl_starts,
+        pre.cl_buf,
+        post.cl_stride0s,
+        post.cl_starts,
+        post.cl_buf,
+        theta.cl_stride0s,
+        theta.cl_starts,
+        theta.cl_buf,
+        delta.cl_stride0s,
+        delta.cl_starts,
+        delta.cl_buf,
         alpha,
     )
     _fn = cl.Program(queue.context, text).build().bcm
@@ -1862,16 +2051,18 @@ def plan_bcm(queue, pre, post, theta, delta, alpha, tag=None):
     lsize = None
     gsize = (delta.sizes.max(), N)
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_bcm", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan.full_args = full_args  # prevent garbage-collection
     plan.flops_per_call = 4 * delta.sizes.sum()
-    plan.bw_per_call = (pre.nbytes + post.nbytes + theta.nbytes +
-                        delta.nbytes + alpha.nbytes)
+    plan.bw_per_call = (
+        pre.nbytes + post.nbytes + theta.nbytes + delta.nbytes + alpha.nbytes
+    )
     return plan
 
 
 def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
-    assert (len(pre) == len(post) == len(weights) == len(delta) ==
-            alpha.size == beta.size)
+    assert (
+        len(pre) == len(post) == len(weights) == len(delta) == alpha.size == beta.size
+    )
     N = len(pre)
 
     for arr in (pre, post):  # vectors
@@ -1884,8 +2075,14 @@ def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
     assert (weights.shape0s == delta.shape0s).all()
     assert (weights.shape1s == delta.shape1s).all()
 
-    assert (pre.ctype == post.ctype == weights.ctype == delta.ctype ==
-            alpha.ctype == beta.ctype)
+    assert (
+        pre.ctype
+        == post.ctype
+        == weights.ctype
+        == delta.ctype
+        == alpha.ctype
+        == beta.ctype
+    )
 
     text = """
     __kernel void oja(
@@ -1931,15 +2128,25 @@ def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
     """
 
     textconf = dict(type=pre.ctype)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = (
-        delta.cl_shape0s, delta.cl_shape1s,
-        pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
-        post.cl_stride0s, post.cl_starts, post.cl_buf,
-        weights.cl_stride0s, weights.cl_starts, weights.cl_buf,
-        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
-        alpha, beta,
+        delta.cl_shape0s,
+        delta.cl_shape1s,
+        pre.cl_stride0s,
+        pre.cl_starts,
+        pre.cl_buf,
+        post.cl_stride0s,
+        post.cl_starts,
+        post.cl_buf,
+        weights.cl_stride0s,
+        weights.cl_starts,
+        weights.cl_buf,
+        delta.cl_stride0s,
+        delta.cl_starts,
+        delta.cl_buf,
+        alpha,
+        beta,
     )
     _fn = cl.Program(queue.context, text).build().oja
     _fn.set_args(*[arr.data for arr in full_args])
@@ -1947,16 +2154,29 @@ def plan_oja(queue, pre, post, weights, delta, alpha, beta, tag=None):
     lsize = None
     gsize = (delta.sizes.max(), N)
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_oja", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan.full_args = full_args  # prevent garbage-collection
     plan.flops_per_call = 6 * delta.sizes.sum()
-    plan.bw_per_call = (pre.nbytes + post.nbytes + weights.nbytes +
-                        delta.nbytes + alpha.nbytes + beta.nbytes)
+    plan.bw_per_call = (
+        pre.nbytes
+        + post.nbytes
+        + weights.nbytes
+        + delta.nbytes
+        + alpha.nbytes
+        + beta.nbytes
+    )
     return plan
 
 
 def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
-    assert (len(pre) == len(post) == len(enc) == len(delta) ==
-            len(learn) == alpha.size == len(scale))
+    assert (
+        len(pre)
+        == len(post)
+        == len(enc)
+        == len(delta)
+        == len(learn)
+        == alpha.size
+        == len(scale)
+    )
     N = len(pre)
 
     for arr in (learn,):  # scalars
@@ -1972,8 +2192,15 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
     assert (enc.shape0s == delta.shape0s).all()
     assert (enc.shape1s == delta.shape1s).all()
 
-    assert (pre.ctype == post.ctype == enc.ctype == delta.ctype ==
-            learn.ctype == scale.ctype == alpha.ctype)
+    assert (
+        pre.ctype
+        == post.ctype
+        == enc.ctype
+        == delta.ctype
+        == learn.ctype
+        == scale.ctype
+        == alpha.ctype
+    )
 
     text = """
     __kernel void voja(
@@ -2024,16 +2251,28 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
     """
 
     textconf = dict(type=pre.ctype)
-    text = as_ascii(Template(text, output_encoding='ascii').render(**textconf))
+    text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
     full_args = (
-        delta.cl_shape0s, delta.cl_shape1s,
-        pre.cl_stride0s, pre.cl_starts, pre.cl_buf,
-        post.cl_stride0s, post.cl_starts, post.cl_buf,
-        enc.cl_stride0s, enc.cl_starts, enc.cl_buf,
-        delta.cl_stride0s, delta.cl_starts, delta.cl_buf,
-        learn.cl_starts, learn.cl_buf,
-        scale.cl_stride0s, scale.cl_starts, scale.cl_buf,
+        delta.cl_shape0s,
+        delta.cl_shape1s,
+        pre.cl_stride0s,
+        pre.cl_starts,
+        pre.cl_buf,
+        post.cl_stride0s,
+        post.cl_starts,
+        post.cl_buf,
+        enc.cl_stride0s,
+        enc.cl_starts,
+        enc.cl_buf,
+        delta.cl_stride0s,
+        delta.cl_starts,
+        delta.cl_buf,
+        learn.cl_starts,
+        learn.cl_buf,
+        scale.cl_stride0s,
+        scale.cl_starts,
+        scale.cl_buf,
         alpha,
     )
     _fn = cl.Program(queue.context, text).build().voja
@@ -2042,8 +2281,15 @@ def plan_voja(queue, pre, post, enc, delta, learn, scale, alpha, tag=None):
     lsize = None
     gsize = (delta.sizes.max(), N)
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_voja", tag=tag)
-    plan.full_args = full_args     # prevent garbage-collection
+    plan.full_args = full_args  # prevent garbage-collection
     plan.flops_per_call = 5 * delta.sizes.sum()
-    plan.bw_per_call = (pre.nbytes + post.nbytes + enc.nbytes + delta.nbytes +
-                        learn.nbytes + scale.nbytes + alpha.nbytes)
+    plan.bw_per_call = (
+        pre.nbytes
+        + post.nbytes
+        + enc.nbytes
+        + delta.nbytes
+        + learn.nbytes
+        + scale.nbytes
+        + alpha.nbytes
+    )
     return plan

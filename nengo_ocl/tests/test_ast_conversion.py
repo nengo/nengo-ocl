@@ -16,8 +16,7 @@ def OclOnlySimulator(request, ctx):
     """A nengo_ocl.Simulator that only allows OCL python functions"""
 
     def OclOnlySimulator(*args, **kwargs):
-        return nengo_ocl.Simulator(
-            *args, context=ctx, if_python_code='error', **kwargs)
+        return nengo_ocl.Simulator(*args, context=ctx, if_python_code="error", **kwargs)
 
     return OclOnlySimulator
 
@@ -27,23 +26,25 @@ def test_slice():
 
     def func(x):
         return x[s]
+
     ocl_fn = OCL_Function(func, in_dims=(3,))
     assert ocl_fn.code  # assert that we can make the code (no exceptions)
 
 
 @pytest.mark.xfail  # see https://github.com/nengo/nengo_ocl/issues/54
 def test_nested():
-    f = lambda x: x**2
+    f = lambda x: x ** 2
 
     def func(x):
         return f(x)
+
     ocl_fn = OCL_Function(func, in_dims=(3,))
     print(ocl_fn.init)
     print(ocl_fn.code)
 
 
 def _test_node(OclOnlySimulator, fn, size_in=0):
-    seed = sum(map(ord, fn.__name__)) % 2**30
+    seed = sum(map(ord, fn.__name__)) % 2 ** 30
     rng = np.random.RandomState(seed + 1)
 
     # make input
@@ -94,7 +95,7 @@ def test_closures(OclOnlySimulator, size_in):
     power = 3.2
 
     def closures(t, x):
-        return mult * x**power
+        return mult * x ** power
 
     _test_node(OclOnlySimulator, closures, size_in=size_in)
 
@@ -107,17 +108,16 @@ def test_product(OclOnlySimulator):
 
 
 def test_lambda_simple(OclOnlySimulator):
-    fn = lambda t, x: x[0]**2
+    fn = lambda t, x: x[0] ** 2
     _test_node(OclOnlySimulator, fn, size_in=1)
 
 
 def test_lambda_class(OclOnlySimulator):
     class Foo:
-
         def __init__(self, my_fn):
             self.fn = my_fn
 
-    F = Foo(my_fn=lambda t, x: x[0]**2)
+    F = Foo(my_fn=lambda t, x: x[0] ** 2)
     b = F.fn
     _test_node(OclOnlySimulator, b, size_in=1)
 
@@ -126,7 +126,7 @@ def test_lambda_wrapper(OclOnlySimulator):
     def bar(fn):
         return fn
 
-    c = bar(lambda t, x: x[0]**2)
+    c = bar(lambda t, x: x[0] ** 2)
     _test_node(OclOnlySimulator, c, size_in=1)
 
 
@@ -135,7 +135,7 @@ def test_lambda_double(OclOnlySimulator):
         return fn1
 
     # this shouldn't convert to OCL b/c it has two lambdas on one line
-    d = egg(lambda t, x: x[0]**2, lambda t, y: y[0]**3)
+    d = egg(lambda t, x: x[0] ** 2, lambda t, y: y[0] ** 3)
     with pytest.raises(NotImplementedError):
         _test_node(OclOnlySimulator, d, size_in=1)
 
@@ -143,17 +143,17 @@ def test_lambda_double(OclOnlySimulator):
 def test_direct_connection(OclOnlySimulator):
     """Test a direct-mode connection"""
 
-    model = nengo.Network('test_connection', seed=124)
+    model = nengo.Network("test_connection", seed=124)
     with model:
         a = nengo.Ensemble(1, dimensions=1, neuron_type=nengo.Direct())
         b = nengo.Ensemble(1, dimensions=1, neuron_type=nengo.Direct())
-        nengo.Connection(a, b, function=lambda x: x**2)
+        nengo.Connection(a, b, function=lambda x: x ** 2)
 
     OclOnlySimulator(model)
 
 
 def _test_conn(OclOnlySimulator, fn, size_in, dist_in=None, n=1):
-    seed = sum(map(ord, fn.__name__)) % 2**30
+    seed = sum(map(ord, fn.__name__)) % 2 ** 30
     rng = np.random.RandomState(seed + 1)
 
     # make input
@@ -178,10 +178,8 @@ def _test_conn(OclOnlySimulator, fn, size_in, dist_in=None, n=1):
         probes = []
         for i in range(n):
             u = nengo.Node(output=x[i])
-            v = nengo.Ensemble(1, dimensions=size_in,
-                               neuron_type=nengo.Direct())
-            w = nengo.Ensemble(1, dimensions=size_out,
-                               neuron_type=nengo.Direct())
+            v = nengo.Ensemble(1, dimensions=size_in, neuron_type=nengo.Direct())
+            w = nengo.Ensemble(1, dimensions=size_out, neuron_type=nengo.Direct())
             nengo.Connection(u, v, synapse=None)
             nengo.Connection(v, w, synapse=None, function=fn, eval_points=x)
             probes.append(nengo.Probe(w))
@@ -243,37 +241,53 @@ def test_functions(OclOnlySimulator, logger, n_points=10):
     for fn in functions:
         try:
             if fn in ast_conversion.direct_funcs:
+
                 def wrapper(x):
                     return fn(x[0])
+
                 wrapper.__name__ = fn.__name__ + "_" + wrapper.__name__
-                _test_conn(OclOnlySimulator, wrapper, 1,
-                           dist_in=arggens.get(fn, None), n=n_points)
+                _test_conn(
+                    OclOnlySimulator,
+                    wrapper,
+                    1,
+                    dist_in=arggens.get(fn, None),
+                    n=n_points,
+                )
             else:
                 # get lambda function
                 lambda_fn = ifuncs[fn]
-                while lambda_fn.__name__ != '<lambda>':
+                while lambda_fn.__name__ != "<lambda>":
                     lambda_fn = ifuncs[lambda_fn]
                 dims = lambda_fn.__code__.co_argcount
 
                 if dims == 1:
+
                     def wrapper(x):
                         return fn(x[0])
+
                 elif dims == 2:
+
                     def wrapper(x):
                         return fn(x[0], x[1])
+
                 else:
-                    raise ValueError(
-                        "Cannot test functions with more than 2 arguments")
-                _test_conn(OclOnlySimulator, wrapper, dims,
-                           dist_in=arggens.get(fn, None), n=n_points)
+                    raise ValueError("Cannot test functions with more than 2 arguments")
+                _test_conn(
+                    OclOnlySimulator,
+                    wrapper,
+                    dims,
+                    dist_in=arggens.get(fn, None),
+                    n=n_points,
+                )
             logger.info("Function `%s` passed" % fn.__name__)
         except Exception as e:
             all_passed = False
-            logger.warning("Function `%s` failed with:\n    %s%s"
-                           % (fn.__name__, e.__class__.__name__, e.args))
+            logger.warning(
+                "Function `%s` failed with:\n    %s%s"
+                % (fn.__name__, e.__class__.__name__, e.args)
+            )
 
-    assert all_passed, ("Some functions failed, "
-                        "see logger warnings for details")
+    assert all_passed, "Some functions failed, " "see logger warnings for details"
 
 
 def test_vector_functions(OclOnlySimulator, logger):
@@ -284,9 +298,12 @@ def test_vector_functions(OclOnlySimulator, logger):
     for fn in funcs:
         try:
             if fn in boolean:
+
                 def wrapper(x):
                     return fn(np.asarray(x) > 0)
+
             else:
+
                 def wrapper(x):
                     return fn(x)
 
@@ -295,8 +312,9 @@ def test_vector_functions(OclOnlySimulator, logger):
             logger.info("Function `%s` passed" % fn.__name__)
         except Exception as e:
             all_passed = False
-            logger.warning("Function `%s` failed with:\n    %s: %s"
-                           % (fn.__name__, e.__class__.__name__, e))
+            logger.warning(
+                "Function `%s` failed with:\n    %s: %s"
+                % (fn.__name__, e.__class__.__name__, e)
+            )
 
-    assert all_passed, ("Some functions failed, "
-                        "see logger warnings for details")
+    assert all_passed, "Some functions failed, " "see logger warnings for details"

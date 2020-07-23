@@ -60,7 +60,7 @@ class RaggedArray(object):
 
         buf = np.zeros(starts[-1] + arrays[-1].size, dtype=dtype)
         for a, s in zip(arrays, starts):
-            buf[s:s+a.size] = a.ravel()
+            buf[s : s + a.size] = a.ravel()
 
         self.buf = buf
         self.names = names
@@ -68,8 +68,7 @@ class RaggedArray(object):
         self._sizes = None
 
     @classmethod
-    def from_buffer(cls, buf, starts, shape0s, shape1s, stride0s, stride1s,
-                    names=None):
+    def from_buffer(cls, buf, starts, shape0s, shape1s, stride0s, stride1s, names=None):
         rval = cls.__new__(cls)
         rval.starts = starts
         rval.shape0s = shape0s
@@ -91,7 +90,7 @@ class RaggedArray(object):
     @names.setter
     def names(self, names):
         if names is None:
-            names = [''] * len(self.starts)
+            names = [""] * len(self.starts)
         self._names = tuple(names)
         assert len(self.names) == self.starts.size
 
@@ -105,7 +104,7 @@ class RaggedArray(object):
 
     @starts.setter
     def starts(self, starts):
-        self._starts = np.array(starts, dtype='int32')
+        self._starts = np.array(starts, dtype="int32")
         self._starts.setflags(write=False)
         assert np.all(self.starts >= 0)
 
@@ -115,7 +114,7 @@ class RaggedArray(object):
 
     @shape0s.setter
     def shape0s(self, shape0s):
-        self._shape0s = np.array(shape0s, dtype='int32')
+        self._shape0s = np.array(shape0s, dtype="int32")
         self._shape0s.setflags(write=False)
         self._sizes = None
         assert np.all(self.shape0s >= 0)
@@ -127,7 +126,7 @@ class RaggedArray(object):
 
     @shape1s.setter
     def shape1s(self, shape1s):
-        self._shape1s = np.array(shape1s, dtype='int32')
+        self._shape1s = np.array(shape1s, dtype="int32")
         self._shape1s.setflags(write=False)
         self._sizes = None
         assert np.all(self.shape1s > 0)
@@ -145,7 +144,7 @@ class RaggedArray(object):
 
     @stride0s.setter
     def stride0s(self, stride0s):
-        self._stride0s = np.array(stride0s, dtype='int32')
+        self._stride0s = np.array(stride0s, dtype="int32")
         self._stride0s.setflags(write=False)
         assert np.all(self.stride0s != 0)
 
@@ -155,7 +154,7 @@ class RaggedArray(object):
 
     @stride1s.setter
     def stride1s(self, stride1s):
-        self._stride1s = np.array(stride1s, dtype='int32')
+        self._stride1s = np.array(stride1s, dtype="int32")
         self._stride1s.setflags(write=False)
         assert np.all(self.stride1s != 0)
 
@@ -172,7 +171,7 @@ class RaggedArray(object):
     def __str__(self):
         sio = StringIO()
         namelen = max(len(n) for n in self.names)
-        fmt = '%%%is' % namelen
+        fmt = "%%%is" % namelen
         for ii, nn in enumerate(self.names):
             print((fmt % nn), self[ii], file=sio)
         return sio.getvalue()
@@ -201,11 +200,17 @@ class RaggedArray(object):
             itemsize = self.dtype.itemsize
             shape = (self.shape0s[item], self.shape1s[item])
             byteoffset = itemsize * self.starts[item]
-            bytestrides = (itemsize * self.stride0s[item],
-                           itemsize * self.stride1s[item])
+            bytestrides = (
+                itemsize * self.stride0s[item],
+                itemsize * self.stride1s[item],
+            )
             return np.ndarray(
-                shape=shape, dtype=self.dtype, buffer=self.buf.data,
-                offset=byteoffset, strides=bytestrides)
+                shape=shape,
+                dtype=self.dtype,
+                buffer=self.buf.data,
+                offset=byteoffset,
+                strides=bytestrides,
+            )
 
     def __setitem__(self, item, val):
         try:
@@ -214,10 +219,10 @@ class RaggedArray(object):
             raise NotImplementedError()
         self[item][...] = val
 
-    def add_views(self, starts, shape0s, shape1s, stride0s, stride1s,
-                  names=None):
-        assert all(s + s0*s1 <= self.buf.size
-                   for s, s0, s1 in zip(starts, shape0s, shape1s))
+    def add_views(self, starts, shape0s, shape1s, stride0s, stride1s, names=None):
+        assert all(
+            s + s0 * s1 <= self.buf.size for s, s0, s1 in zip(starts, shape0s, shape1s)
+        )
         self.starts = list(self.starts) + list(starts)
         self.shape0s = list(self.shape0s) + list(shape0s)
         self.shape1s = list(self.shape1s) + list(shape1s)
@@ -226,4 +231,4 @@ class RaggedArray(object):
         if names:
             self.names = self.names + tuple(names)
         else:
-            self.names = self.names + tuple([''] * len(starts))
+            self.names = self.names + tuple([""] * len(starts))

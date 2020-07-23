@@ -47,15 +47,17 @@ def to_host(queue, data, dtype, start, shape, elemstrides, is_blocking=True):
 
     itemsize = dtype.itemsize
     bytestart = itemsize * start
-    bytelen = itemsize * ((m-1)*sm + (n-1)*sn + 1)
+    bytelen = itemsize * ((m - 1) * sm + (n - 1) * sn + 1)
 
     temp_buf = np.zeros(bytelen, dtype=np.int8)
-    cl.enqueue_copy(queue, temp_buf, data,
-                    device_offset=bytestart, is_blocking=is_blocking)
+    cl.enqueue_copy(
+        queue, temp_buf, data, device_offset=bytestart, is_blocking=is_blocking
+    )
 
     bytestrides = (itemsize * sm, itemsize * sn)
-    return np.ndarray(shape=(m, n), dtype=dtype, buffer=temp_buf.data,
-                      offset=0, strides=bytestrides)
+    return np.ndarray(
+        shape=(m, n), dtype=dtype, buffer=temp_buf.data, offset=0, strides=bytestrides
+    )
 
 
 class CLRaggedArray(object):
@@ -77,12 +79,12 @@ class CLRaggedArray(object):
 
     @classmethod
     def from_arrays(cls, queue, arrays, names=None, dtype=None, align=False):
-        return cls(queue, RaggedArray(
-            arrays, names=names, dtype=dtype, align=align))
+        return cls(queue, RaggedArray(arrays, names=names, dtype=dtype, align=align))
 
     @classmethod
-    def from_buffer(cls, queue, cl_buf, starts, shape0s, shape1s,
-                    stride0s, stride1s, names=None):
+    def from_buffer(
+        cls, queue, cl_buf, starts, shape0s, shape1s, stride0s, stride1s, names=None
+    ):
         rval = cls.__new__(cls)
         rval.queue = queue
         rval.starts = starts
@@ -109,7 +111,7 @@ class CLRaggedArray(object):
     @names.setter
     def names(self, names):
         if names is None:
-            names = [''] * len(self.starts)
+            names = [""] * len(self.starts)
         self._names = tuple(names)
 
     @property
@@ -122,7 +124,7 @@ class CLRaggedArray(object):
 
     @starts.setter
     def starts(self, starts):
-        self._starts = np.array(starts, dtype='int32')
+        self._starts = np.array(starts, dtype="int32")
         self._starts.setflags(write=False)
         self.cl_starts = to_device(self.queue, self._starts)
         self.queue.finish()
@@ -133,7 +135,7 @@ class CLRaggedArray(object):
 
     @shape0s.setter
     def shape0s(self, shape0s):
-        self._shape0s = np.array(shape0s, dtype='int32')
+        self._shape0s = np.array(shape0s, dtype="int32")
         self._shape0s.setflags(write=False)
         self.cl_shape0s = to_device(self.queue, self._shape0s)
         self.queue.finish()
@@ -145,7 +147,7 @@ class CLRaggedArray(object):
 
     @shape1s.setter
     def shape1s(self, shape1s):
-        self._shape1s = np.array(shape1s, dtype='int32')
+        self._shape1s = np.array(shape1s, dtype="int32")
         self._shape1s.setflags(write=False)
         self.cl_shape1s = to_device(self.queue, self._shape1s)
         self.queue.finish()
@@ -163,7 +165,7 @@ class CLRaggedArray(object):
 
     @stride0s.setter
     def stride0s(self, stride0s):
-        self._stride0s = np.array(stride0s, dtype='int32')
+        self._stride0s = np.array(stride0s, dtype="int32")
         self._stride0s.setflags(write=False)
         self.cl_stride0s = to_device(self.queue, self._stride0s)
         self.queue.finish()
@@ -174,7 +176,7 @@ class CLRaggedArray(object):
 
     @stride1s.setter
     def stride1s(self, stride1s):
-        self._stride1s = np.array(stride1s, dtype='int32')
+        self._stride1s = np.array(stride1s, dtype="int32")
         self._stride1s.setflags(write=False)
         self.cl_stride1s = to_device(self.queue, self._stride1s)
         self.queue.finish()
@@ -195,9 +197,9 @@ class CLRaggedArray(object):
     def __str__(self):
         sio = StringIO()
         namelen = max([0] + [len(n) for n in self.names])
-        fmt = '%%%is' % namelen
+        fmt = "%%%is" % namelen
         for ii, nn in enumerate(self.names):
-            print('->', self[ii])
+            print("->", self[ii])
             print((fmt % nn), self[ii], file=sio)
         return sio.getvalue()
 
@@ -213,7 +215,10 @@ class CLRaggedArray(object):
             return self.getitem_device(item)
         else:
             buf = to_host(
-                self.queue, self.cl_buf.data, self.dtype, self.starts[item],
+                self.queue,
+                self.cl_buf.data,
+                self.dtype,
+                self.starts[item],
                 (self.shape0s[item], self.shape1s[item]),
                 (self.stride0s[item], self.stride1s[item]),
             )
@@ -226,21 +231,29 @@ class CLRaggedArray(object):
 
         if is_iterable(item):
             return CLRaggedArray.from_buffer(
-                self.queue, self.cl_buf, self.starts[item],
-                self.shape0s[item], self.shape1s[item],
-                self.stride0s[item], self.stride1s[item],
-                names=[self.names[i] for i in item])
+                self.queue,
+                self.cl_buf,
+                self.starts[item],
+                self.shape0s[item],
+                self.shape1s[item],
+                self.stride0s[item],
+                self.stride1s[item],
+                names=[self.names[i] for i in item],
+            )
         else:
             s = self.dtype.itemsize
             return Array(
                 self.queue,
-                (self.shape0s[item], self.shape1s[item]), self.dtype,
+                (self.shape0s[item], self.shape1s[item]),
+                self.dtype,
                 strides=(self.stride0s[item] * s, self.stride1s[item] * s),
-                data=self.cl_buf.data, offset=self.starts[item] * s)
+                data=self.cl_buf.data,
+                offset=self.starts[item] * s,
+            )
 
     def __setitem__(self, item, new_value):
         if isinstance(item, slice) or is_iterable(item):
-            raise NotImplementedError('TODO')
+            raise NotImplementedError("TODO")
         else:
             m, n = self.shape0s[item], self.shape1s[item]
             sm, sn = self.stride0s[item], self.stride1s[item]
@@ -249,31 +262,48 @@ class CLRaggedArray(object):
                 # contiguous
                 clarray = self.getitem_device(item)
                 if isinstance(new_value, np.ndarray):
-                    array = np.asarray(new_value, order='C', dtype=self.dtype)
+                    array = np.asarray(new_value, order="C", dtype=self.dtype)
                 else:
                     array = np.zeros(clarray.shape, dtype=clarray.dtype)
                     array[...] = new_value
 
                 array.shape = clarray.shape  # reshape to avoid warning
-                assert equal_strides(
-                    array.strides, clarray.strides, clarray.shape)
+                assert equal_strides(array.strides, clarray.strides, clarray.shape)
                 clarray.set(array)
             else:
                 # discontiguous
                 #   Copy a contiguous region off the device that surrounds the
                 #   discontiguous, set the appropriate values, and copy back
                 s = self.starts[item]
-                array = to_host(self.queue, self.cl_buf.data, self.dtype,
-                                s, (m, n), (sm, sn), is_blocking=True)
+                array = to_host(
+                    self.queue,
+                    self.cl_buf.data,
+                    self.dtype,
+                    s,
+                    (m, n),
+                    (sm, sn),
+                    is_blocking=True,
+                )
                 array[...] = new_value
 
                 buf = array.base if array.base is not None else array
                 bytestart = self.dtype.itemsize * s
-                cl.enqueue_copy(self.queue, self.cl_buf.data, buf,
-                                device_offset=bytestart, is_blocking=True)
+                cl.enqueue_copy(
+                    self.queue,
+                    self.cl_buf.data,
+                    buf,
+                    device_offset=bytestart,
+                    is_blocking=True,
+                )
 
     def to_host(self):
         """Copy the whole object to a host RaggedArray"""
         return RaggedArray.from_buffer(
-            self.buf, self.starts, self.shape0s, self.shape1s,
-            self.stride0s, self.stride1s, names=self.names)
+            self.buf,
+            self.starts,
+            self.shape0s,
+            self.shape1s,
+            self.stride0s,
+            self.stride1s,
+            names=self.names,
+        )

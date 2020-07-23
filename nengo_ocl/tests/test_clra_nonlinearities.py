@@ -13,8 +13,14 @@ from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA, to_device
 
 from nengo_ocl.clra_nonlinearities import (
-    plan_lif, plan_lif_rate, plan_reset, plan_copy, plan_slicedcopy,
-    plan_elementwise_inc, plan_linearfilter)
+    plan_lif,
+    plan_lif_rate,
+    plan_reset,
+    plan_copy,
+    plan_slicedcopy,
+    plan_elementwise_inc,
+    plan_linearfilter,
+)
 
 logger = logging.getLogger(__name__)
 RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
@@ -38,7 +44,7 @@ def test_lif_step(ctx, upsample):
 
     ref = 2e-3
     taus = rng.uniform(low=15e-3, high=80e-3, size=len(n_neurons))
-    amp = 1.
+    amp = 1.0
 
     queue = cl.CommandQueue(ctx)
     clJ = CLRA(queue, J)
@@ -48,8 +54,7 @@ def test_lif_step(ctx, upsample):
     clTaus = CLRA(queue, RA([t * np.ones(n) for t, n in zip(taus, n_neurons)]))
 
     # simulate host
-    nls = [nengo.LIF(tau_ref=ref, tau_rc=taus[i])
-           for i, n in enumerate(n_neurons)]
+    nls = [nengo.LIF(tau_ref=ref, tau_rc=taus[i]) for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
         if upsample <= 1:
             nl.step_math(dt, J[i], OS[i], V[i], W[i])
@@ -57,11 +62,10 @@ def test_lif_step(ctx, upsample):
             s = np.zeros_like(OS[i])
             for j in range(upsample):
                 nl.step_math(dt / upsample, J[i], s, V[i], W[i])
-                OS[i] = (1./dt) * ((OS[i] > 0) | (s > 0))
+                OS[i] = (1.0 / dt) * ((OS[i] > 0) | (s > 0))
 
     # simulate device
-    plan = plan_lif(
-        queue, dt, clJ, clV, clW, clOS, ref, clTaus, amp, upsample=upsample)
+    plan = plan_lif(queue, dt, clJ, clV, clW, clOS, ref, clTaus, amp, upsample=upsample)
     plan()
 
     if 1:
@@ -94,7 +98,7 @@ def test_lif_speed(ctx, rng, heterogeneous):
     dt = 1e-3
     ref = 2e-3
     tau = 20e-3
-    amp = 1.
+    amp = 1.0
 
     n_iters = 10
     if heterogeneous:
@@ -104,14 +108,16 @@ def test_lif_speed(ctx, rng, heterogeneous):
     n_neurons = list(map(int, n_neurons))
 
     J = RA([rng.randn(n) for n in n_neurons], dtype=np.float32)
-    V = RA([rng.uniform(low=0, high=1, size=n) for n in n_neurons],
-           dtype=np.float32)
-    W = RA([rng.uniform(low=-10 * dt, high=10 * dt, size=n)
-            for n in n_neurons], dtype=np.float32)
+    V = RA([rng.uniform(low=0, high=1, size=n) for n in n_neurons], dtype=np.float32)
+    W = RA(
+        [rng.uniform(low=-10 * dt, high=10 * dt, size=n) for n in n_neurons],
+        dtype=np.float32,
+    )
     OS = RA([np.zeros(n) for n in n_neurons], dtype=np.float32)
 
     queue = cl.CommandQueue(
-        ctx, properties=cl.command_queue_properties.PROFILING_ENABLE)
+        ctx, properties=cl.command_queue_properties.PROFILING_ENABLE
+    )
 
     clJ = CLRA(queue, J)
     clV = CLRA(queue, V)
@@ -119,15 +125,15 @@ def test_lif_speed(ctx, rng, heterogeneous):
     clOS = CLRA(queue, OS)
 
     for i, blockify in enumerate([False, True]):
-        plan = plan_lif(queue, dt, clJ, clV, clW, clOS, ref, tau, amp,
-                        blockify=blockify)
+        plan = plan_lif(
+            queue, dt, clJ, clV, clW, clOS, ref, tau, amp, blockify=blockify
+        )
 
         with Timer() as timer:
             for j in range(n_iters):
                 plan()
 
-        print("plan %d: blockify = %s, dur = %0.3f"
-              % (i, blockify, timer.duration))
+        print("plan %d: blockify = %s, dur = %0.3f" % (i, blockify, timer.duration))
 
 
 @pytest.mark.parametrize("blockify", [False, True])
@@ -142,7 +148,7 @@ def test_lif_rate(ctx, blockify):
 
     ref = 2e-3
     taus = list(rng.uniform(low=15e-3, high=80e-3, size=len(n_neurons)))
-    amp = 1.
+    amp = 1.0
 
     queue = cl.CommandQueue(ctx)
     clJ = CLRA(queue, J)
@@ -150,14 +156,12 @@ def test_lif_rate(ctx, blockify):
     clTaus = CLRA(queue, RA([t * np.ones(n) for t, n in zip(taus, n_neurons)]))
 
     # simulate host
-    nls = [nengo.LIFRate(tau_ref=ref, tau_rc=taus[i])
-           for i, n in enumerate(n_neurons)]
+    nls = [nengo.LIFRate(tau_ref=ref, tau_rc=taus[i]) for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
         nl.step_math(dt, J[i], R[i])
 
     # simulate device
-    plan = plan_lif_rate(queue, dt, clJ, clR, ref, clTaus, amp,
-                         blockify=blockify)
+    plan = plan_lif_rate(queue, dt, clJ, clR, ref, clTaus, amp, blockify=blockify)
     plan()
 
     rate_sum = np.sum([np.sum(r) for r in R])
@@ -187,7 +191,7 @@ def test_copy(ctx, rng):
 
 def test_elementwise_inc(ctx, rng):
     Xsizes = [(3, 3), (32, 64), (457, 342), (1, 100)]
-    Asizes = [(3, 3), (1, 1),   (457, 342), (100, 1)]
+    Asizes = [(3, 3), (1, 1), (457, 342), (100, 1)]
     A = RA([rng.normal(size=size) for size in Asizes])
     X = RA([rng.normal(size=size) for size in Xsizes])
     Y = RA([a * x for a, x in zip(A, X)])
@@ -281,20 +285,23 @@ def test_slicedcopy(ctx, rng):
         assert np.allclose(y, yy)
 
 
-@pytest.mark.parametrize('n_per_kind', [
-    (100000, 0, 0), (0, 100000, 0), (0, 0, 100000), (10000, 10000, 10000)])
+@pytest.mark.parametrize(
+    "n_per_kind",
+    [(100000, 0, 0), (0, 100000, 0), (0, 0, 100000), (10000, 10000, 10000)],
+)
 def test_linearfilter(ctx, n_per_kind, rng):
     kinds = (
-        nengo.synapses.LinearFilter((2.,), (1.,), analog=False),
+        nengo.synapses.LinearFilter((2.0,), (1.0,), analog=False),
         nengo.synapses.Lowpass(0.005),
         nengo.synapses.Alpha(0.005),
-        )
+    )
     assert len(n_per_kind) == len(kinds)
     kinds_n = [(kind, n) for kind, n in zip(kinds, n_per_kind) if n > 0]
 
     dt = 0.001
-    steps = [kind.make_step((n,), (n,), dt, None, dtype=np.float32)
-             for kind, n in kinds_n]
+    steps = [
+        kind.make_step((n,), (n,), dt, None, dtype=np.float32) for kind, n in kinds_n
+    ]
     A = RA([step.den for step in steps])
     B = RA([step.num for step in steps])
 
@@ -332,15 +339,16 @@ def test_linearfilter(ctx, n_per_kind, rng):
         assert np.allclose(z, y, atol=1e-7, rtol=1e-5), kind
 
 
-@pytest.mark.parametrize('neuron_type', (nengo.neurons.RectifiedLinear(),
-                                         nengo.neurons.Sigmoid()))
+@pytest.mark.parametrize(
+    "neuron_type", (nengo.neurons.RectifiedLinear(), nengo.neurons.Sigmoid())
+)
 def test_static_neurons(plt, rng, neuron_type):
     with nengo.Network(seed=0) as model:
         u = nengo.Node(nengo.processes.WhiteNoise(scale=False))
         a = nengo.Ensemble(31, 1, neuron_type=neuron_type)
         nengo.Connection(u, a, synapse=None)
 
-        xp = nengo.Probe(a.neurons, 'input')
+        xp = nengo.Probe(a.neurons, "input")
         yp = nengo.Probe(a.neurons)
 
     with nengo_ocl.Simulator(model) as sim:
@@ -348,15 +356,15 @@ def test_static_neurons(plt, rng, neuron_type):
 
     x = sim.data[xp].ravel()
     y = sim.data[yp].ravel()
-    r = neuron_type.rates(x, 1., 0.).ravel()
+    r = neuron_type.rates(x, 1.0, 0.0).ravel()
 
     # --- plot
-    i, = ((x > -10) & (x < 10)).nonzero()
+    (i,) = ((x > -10) & (x < 10)).nonzero()
     n_show = 100
     if len(i) > n_show:
         i = rng.choice(i, size=n_show, replace=False)
 
-    plt.plot(x[i], r[i], 'kx')
-    plt.plot(x[i], y[i], '.')
+    plt.plot(x[i], r[i], "kx")
+    plt.plot(x[i], y[i], ".")
 
     assert np.allclose(y, r, atol=1e-4, rtol=1e-3)
