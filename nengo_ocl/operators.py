@@ -1,7 +1,8 @@
 from collections import OrderedDict
 
-from nengo.builder.operator import Operator, Copy, DotInc
+from nengo.builder.operator import Operator, BsrDotInc, Copy, DotInc, SparseDotInc
 from nengo.builder.signal import Signal
+from nengo.builder.transforms import ConvInc
 from nengo.version import version_info as nengo_version
 
 
@@ -37,9 +38,17 @@ class MultiDotInc(Operator):
 
     @classmethod
     def convert_to(cls, op):
-        if nengo_version <= (2, 3, 0) and isinstance(op, Copy):  # LEGACY
-            rval = cls(op.dst, op.src, beta=1, gamma=0, tag=op.tag)
-        elif isinstance(op, DotInc):
+        if isinstance(op, ConvInc):
+            raise NotImplementedError(
+                "Convolution transforms not yet supported by NengoOCL"
+            )
+        elif isinstance(op, SparseDotInc):
+            raise NotImplementedError("Sparse transforms not yet supported by NengoOCL")
+        elif isinstance(op, BsrDotInc):
+            raise NotImplementedError(
+                "Optimized BsrDotInc operations not yet supported by NengoOCL"
+            )
+        elif type(op) == DotInc:
             rval = cls(op.Y, op.Y, beta=1, gamma=0, tag=op.tag)
             rval.add_AX(op.A, op.X)
         else:

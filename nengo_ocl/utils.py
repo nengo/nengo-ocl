@@ -9,7 +9,7 @@ except ImportError:
 
 
 def as_ascii(string):
-    if isinstance(string, bytes):  # Python 3
+    if isinstance(string, bytes):
         return string.decode("ascii")
     elif not isinstance(string, str):
         return str(string)

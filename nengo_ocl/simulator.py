@@ -177,6 +177,10 @@ class Simulator(object):
         planner=greedy_planner,
         progress_bar=True,
     ):
+        # --- create these first since they are used in __del__
+        self.closed = False
+        self.model = None
+
         # --- check version
         if nengo.version.version_info in bad_nengo_versions:
             raise ValueError(
@@ -189,10 +193,6 @@ class Simulator(object):
                 "with your `nengo` version (%s). The latest fully "
                 "supported version is %s" % (nengo.__version__, latest_nengo_version)
             )
-
-        # --- create these first since they are used in __del__
-        self.closed = False
-        self.model = None
 
         # --- arguments/attributes
         if context is None and Simulator.some_context is None:
@@ -294,7 +294,13 @@ class Simulator(object):
         logger.info("Signals in %0.3f s" % signals_timer.duration)
 
         # --- set seed
-        self.seed = np.random.randint(npext.maxint) if seed is None else seed
+        if seed is None:
+            if network is not None and network.seed is not None:
+                seed = network.seed + 1
+            else:
+                seed = np.random.randint(npext.maxint)
+
+        self.seed = seed
         self.rng = np.random.RandomState(self.seed)
 
         # --- create list of plans
@@ -351,6 +357,12 @@ class Simulator(object):
         Return internally shaped signals, which are always 2d
         """
         return self.all_data[self.sidx[item]]
+
+    def __getstate__(self):
+        raise NotImplementedError("NengoOCL simulator does not yet support pickling")
+
+    def __setstate__(self, state):
+        raise NotImplementedError("NengoOCL simulator does not yet support pickling")
 
     @property
     def dt(self):
@@ -410,6 +422,17 @@ class Simulator(object):
                 for k in self_:
                     print(k, self_[k], file=sio)
                 return sio.getvalue()
+
+            def keys(self_):
+                return iter(self_)
+
+            def items(self_):
+                for key in iter(self_):
+                    yield (key, self_[key])
+
+            def values(self_):
+                for _, val in self_.items():
+                    yield val
 
         return Accessor()
 
@@ -528,13 +551,16 @@ class Simulator(object):
             )
             self.run_steps(steps, progress_bar=progress_bar)
 
-    def run_steps(self, N, progress_bar=True):
+    def run_steps(self, steps, progress_bar=True):
         if self.closed:
             raise SimulatorClosed("Simulator cannot run because it is closed.")
 
-        if self.n_steps + N >= 2 ** 24:
+        if self.n_steps + steps >= 2 ** 24:
             # since n_steps is float32, point at which `n_steps == n_steps + 1`
             raise ValueError("Cannot handle more than 2**24 steps")
+
+        if steps < 0:
+            raise ValueError("Cannot run for negative steps (got %r)" % (steps,))
 
         if self._cl_probe_plan is not None:
             # -- precondition: the probe buffers have been drained
@@ -545,23 +571,22 @@ class Simulator(object):
             progress_bar = self.progress_bar
         try:
             progress = ProgressTracker(
-                progress_bar, Progress("Simulating", "Simulation", N)
+                progress_bar, Progress("Simulating", "Simulation", steps)
             )
         except TypeError:
             try:
-                progress = ProgressTracker(N, progress_bar, "Simulating")
+                progress = ProgressTracker(steps, progress_bar, "Simulating")
             except TypeError:
-                progress = ProgressTracker(N, progress_bar)
+                progress = ProgressTracker(steps, progress_bar)
 
         with progress:
-            # -- we will go through N steps of the simulator
-            #    in groups of up to B at a time, draining
-            #    the probe buffers after each group of B
-            while N:
-                B = min(N, self._max_steps_between_probes)
+            # we will go through steps of the simulator in groups of up to B at a time,
+            # draining the probe buffers after each group of B
+            while steps > 0:
+                B = min(steps, self._max_steps_between_probes)
                 self._plans.call_n_times(B)
                 self._probe()
-                N -= B
+                steps -= B
                 if hasattr(progress, "total_progress"):
                     progress.total_progress.step(n=B)
                 else:
@@ -573,7 +598,7 @@ class Simulator(object):
     def step(self):
         return self.run_steps(1, progress_bar=False)
 
-    def trange(self, dt=None):
+    def trange(self, sample_every=None, dt=None):
         """Create a vector of times matching probed data.
 
         Note that the range does not start at 0 as one might expect, but at
@@ -581,26 +606,39 @@ class Simulator(object):
 
         Parameters
         ----------
-        dt : float, optional (Default: None)
+        sample_every : float, optional
             The sampling period of the probe to create a range for.
-            If None, the simulator's ``dt`` will be used.
+            If None, a time value for every ``dt`` will be produced.
         """
-        dt = self.dt if dt is None else dt
-        n_steps = int(self.n_steps * (self.dt / dt))
-        return dt * np.arange(1, n_steps + 1)
+        if dt is not None:
+            if sample_every is not None:
+                raise ValidationError(
+                    "Cannot specify both `dt` and `sample_every`. "
+                    "Use `sample_every` only.",
+                    attr="dt",
+                    obj=self,
+                )
+            warnings.warn(
+                "`dt` is deprecated. Use `sample_every` instead.", DeprecationWarning
+            )
+            sample_every = dt
+
+        period = 1 if sample_every is None else sample_every / self.dt
+        steps = np.arange(1, self.n_steps + 1)
+        return self.dt * steps[steps % period < 1]
 
     # --- Planning
     def plan_probes(self):
+        plans = []
         if len(self.model.probes) == 0:
             self._max_steps_between_probes = self.n_prealloc_probes
             self._cl_probe_plan = None
-            return []
         else:
             n_prealloc = self.n_prealloc_probes
 
             probes = self.model.probes
             periods = [
-                1 if p.sample_every is None else p.sample_every / self.dt
+                max(1 if p.sample_every is None else p.sample_every / self.dt, 1)
                 for p in probes
             ]
 
@@ -613,7 +651,10 @@ class Simulator(object):
             cl_plan = plan_probes(self.queue, periods, X, Y)
             self._max_steps_between_probes = n_prealloc * int(min(periods))
             self._cl_probe_plan = cl_plan
-            return [cl_plan]
+            plans.append(cl_plan)
+
+        assert self._max_steps_between_probes >= 1
+        return plans
 
     def plan_op_group(self, op_type, ops):
         return getattr(self, "plan_" + op_type.__name__)(ops)
@@ -1054,7 +1095,7 @@ class Simulator(object):
         return plans
 
     def _plan_LinearFilter(self, ops):
-        steps = list()
+        steps = []
         for op in ops:
             state = op.process.make_state(
                 op.input.shape, op.output.shape, self.model.dt, dtype=None
@@ -1064,18 +1105,19 @@ class Simulator(object):
             )
             steps.append(step)
 
-        # Nengo 3 uses state space filters. Patch here by converting back to transfer function spec.
-        # Getting rid of this conversion would require reimplementation of plan_linearfilter.
-        dens = list()
-        nums = list()
+        # Nengo 3.0 uses state-space filters. For now, convert back to transfer function
+        # to use existing kernel. Future work: rewrite plan_linearfilter for state-space
+        nums = []
+        dens = []
         for f in steps:
-            if type(f).__name__ == "NoX":  # special case for a feedthrough
-                den = np.array([1.0])
+            A, B, C, D = f.A, f.B, f.C, f.D
+            if A.size == 0:  # special case for a feedthrough
                 num = f.D
+                den = np.array([1.0])
             else:
-                num, den = ss2tf(f.A, f.B, f.C, f.D)
+                num, den = ss2tf(A, B, C, D)
 
-            ## This preprocessing copied out of nengo2.8/synapses.LinearFilter.make_step
+            # --- preprocessing from Nengo v2.8.0: LinearFilter.make_step
             num = num.flatten()
 
             if den[0] != 1.0:
@@ -1084,10 +1126,9 @@ class Simulator(object):
                 )
             num = num[1:] if num[0] == 0 else num
             den = den[1:]  # drop first element (equal to 1)
-            num, den = num.astype(np.float32), den.astype(np.float32)
-            ##
-            dens.append(den)
+
             nums.append(num)
+            dens.append(den)
 
         A = self.RaggedArray(dens, dtype=np.float32)
         B = self.RaggedArray(nums, dtype=np.float32)
@@ -1151,6 +1192,7 @@ class Simulator(object):
         return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
 
     def _plan_Conv2d(self, ops):
+        # This was an old custom process in nengo_extras for performing 2-D convolution
         plans = []
         for op in ops:
             p, f, b = op.process, op.process.filters, op.process.biases
@@ -1183,6 +1225,7 @@ class Simulator(object):
         return plans
 
     def _plan_Pool2d(self, ops):
+        # This was an old custom process in nengo_extras for performing 2-D pooling
         plans = []
         for op in ops:
             assert op.process.kind == "avg"
