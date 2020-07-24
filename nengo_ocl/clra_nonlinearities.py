@@ -407,22 +407,40 @@ def plan_slicedcopy(queue, X, Y, Xinds, Yinds, incs, tag=None):
     return plan
 
 
-def plan_elementwise_inc(queue, A, X, Y, tag=None):
-    """Implements an element-wise increment Y += A * X"""
+def plan_elementwise_inc(queue, A, X, Y, alpha=None, outer=False, inc=True, tag=None):
+    """Implements an element-wise increment Y += alpha * A * X
+
+    Parameters
+    ----------
+    alpha : np.ndarray or None
+        Scalars to apply to each operation.
+    outer : bool
+        Perform an outer product. ``A`` and ``X`` must be vectors.
+    inc : bool
+        Whether to increment ``Y`` (True), or set it (False).
+    """
     assert len(Y) == len(X) == len(A)
 
     for arr in [A, X, Y]:
         assert (arr.stride1s == 1).all()
-    assert ((X.shape0s == 1) | (X.shape0s == Y.shape0s)).all()
-    assert ((X.shape1s == 1) | (X.shape1s == Y.shape1s)).all()
-    assert ((A.shape0s == 1) | (A.shape0s == Y.shape0s)).all()
-    assert ((A.shape1s == 1) | (A.shape1s == Y.shape1s)).all()
-    assert (X.stride1s == 1).all()
-    assert (Y.stride1s == 1).all()
-    assert (A.stride1s == 1).all()
+
+    if outer:
+        assert (A.shape1s == 1).all()
+        assert (X.shape1s == 1).all()
+        assert ((A.shape0s == 1) | (A.shape0s == Y.shape0s)).all()
+        assert ((X.shape0s == 1) | (X.shape0s == Y.shape1s)).all()
+    else:
+        assert ((X.shape0s == 1) | (X.shape0s == Y.shape0s)).all()
+        assert ((X.shape1s == 1) | (X.shape1s == Y.shape1s)).all()
+        assert ((A.shape0s == 1) | (A.shape0s == Y.shape0s)).all()
+        assert ((A.shape1s == 1) | (A.shape1s == Y.shape1s)).all()
 
     assert X.ctype == Y.ctype
     assert A.ctype == Y.ctype
+
+    if alpha is not None:
+        assert isinstance(alpha, np.ndarray)
+        assert alpha.shape == (len(Y),)
 
     text = """
         inline ${Ytype} get_element(
@@ -443,6 +461,9 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
 
         ////////// MAIN FUNCTION //////////
         __kernel void elementwise_inc(
+    % if alpha is not None:
+            __global const ${Ytype} *alphas,
+    % endif
             __global const int *offsets,
             __global const int *Ashape0s,
             __global const int *Ashape1s,
@@ -474,13 +495,28 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
             const int i = ij / Yshape1;
             const int j = ij % Yshape1;
 
-            ${Atype} aa = get_element(
+    % if outer:
+            const ${Atype} aa = get_element(a, Ashape0s[n], 1, Astride0s[n], i, 0);
+            const ${Xtype} xx = get_element(x, Xshape0s[n], 1, Xstride0s[n], j, 0);
+    % else:
+            const ${Atype} aa = get_element(
                 a, Ashape0s[n], Ashape1s[n], Astride0s[n], i, j);
-            ${Xtype} xx = get_element(
+            const ${Xtype} xx = get_element(
                 x, Xshape0s[n], Xshape1s[n], Xstride0s[n], i, j);
+    % endif
+
+    % if alpha is not None:
+            const ${Ytype} alpha = alphas[n];
+    % else:
+            const ${Ytype} alpha = 1;
+    % endif
 
             if (i < Yshape0)
-                y[i*Ystride0 + j] += aa * xx;
+    % if inc:
+                y[i*Ystride0 + j] += alpha * aa * xx;
+    % else:
+                y[i*Ystride0 + j] = alpha * aa * xx;
+    % endif
         }
         """
 
@@ -488,10 +524,15 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     lsize0 = get_mwgs(queue, cap=256)
     sizes, inds, offsets = blockify_ij(lsize0, Y)
 
-    textconf = dict(Atype=A.ctype, Xtype=X.ctype, Ytype=Y.ctype)
+    textconf = dict(
+        Atype=A.ctype, Xtype=X.ctype, Ytype=Y.ctype, alpha=alpha, outer=outer, inc=inc
+    )
     text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
-    full_args = (
+    if alpha is not None:
+        alpha = to_device(queue, alpha[inds].astype(Y.dtype))
+
+    full_args = ([alpha] if alpha is not None else []) + [
         to_device(queue, offsets),
         to_device(queue, A.shape0s[inds]),
         to_device(queue, A.shape1s[inds]),
@@ -508,7 +549,7 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
         to_device(queue, Y.stride0s[inds]),
         to_device(queue, Y.starts[inds]),
         Y.cl_buf,
-    )
+    ]
     _fn = cl.Program(queue.context, text).build().elementwise_inc
     _fn.set_args(*[arr.data for arr in full_args])
 
@@ -516,7 +557,9 @@ def plan_elementwise_inc(queue, A, X, Y, tag=None):
     plan = Plan(queue, _fn, gsize, lsize=None, name="cl_elementwise_inc", tag=tag)
     plan.full_args = full_args  # prevent garbage-collection
     plan.flops_per_call = 2 * Y.sizes.sum()
-    plan.bw_per_call = A.nbytes + X.nbytes + Y.nbytes
+    plan.bw_per_call = (
+        A.nbytes + X.nbytes + Y.nbytes + (0 if alpha is None else alpha.nbytes)
+    )
     plan.description = "groups: %d; items: %d; items/group: %0.1f [%d, %d]" % (
         len(Y),
         Y.sizes.sum(),

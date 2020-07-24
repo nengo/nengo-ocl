@@ -189,25 +189,64 @@ def test_copy(ctx, rng):
         assert np.allclose(y, x)
 
 
-def test_elementwise_inc(ctx, rng):
+@pytest.mark.parametrize("use_alpha", [False, True])
+@pytest.mark.parametrize("inc", [True, False])
+def test_elementwise_inc(inc, use_alpha, ctx, rng, allclose):
     Xsizes = [(3, 3), (32, 64), (457, 342), (1, 100)]
     Asizes = [(3, 3), (1, 1), (457, 342), (100, 1)]
-    A = RA([rng.normal(size=size) for size in Asizes])
-    X = RA([rng.normal(size=size) for size in Xsizes])
-    Y = RA([a * x for a, x in zip(A, X)])
+
+    A = [rng.normal(size=size).astype(np.float32) for size in Asizes]
+    X = [rng.normal(size=size).astype(np.float32) for size in Xsizes]
+    AX = [a * x for a, x in zip(A, X)]
+
+    if use_alpha:
+        alpha = rng.normal(size=len(Xsizes)).astype(np.float32)
+        AX = [alph * ax for alph, ax in zip(alpha, AX)]
+    else:
+        alpha = None
+
+    Y = [rng.normal(size=ax.shape).astype(np.float32) for ax in AX]
+    if inc:
+        Yref = [y + ax for y, ax in zip(Y, AX)]
+    else:
+        Yref = AX
+
+    queue = cl.CommandQueue(ctx)
+    clA = CLRA(queue, RA(A))
+    clX = CLRA(queue, RA(X))
+    clY = CLRA(queue, RA(Y))
+
+    # compute on device
+    plan = plan_elementwise_inc(queue, clA, clX, clY, alpha=alpha, inc=inc)
+    plan()
+
+    # check result
+    for k, (yref, y) in enumerate(zip(Yref, clY.to_host())):
+        assert allclose(y, yref, atol=2e-7), "Array %d not close" % k
+
+
+def test_elementwise_inc_outer(ctx, rng):
+    Xsizes = [3, 9, 15, 432]
+    Asizes = [9, 42, 10, 124]
+    alpha = rng.normal(size=len(Xsizes)).astype(np.float32)
+    A = RA([rng.normal(size=size).astype(np.float32) for size in Asizes])
+    X = RA([rng.normal(size=size).astype(np.float32) for size in Xsizes])
+    AX = RA([alph * np.outer(a, x) for alph, a, x in zip(alpha, A, X)])
+    Y = RA([rng.normal(size=ax.shape) for ax in AX])
+    Yref = RA([y + ax for y, ax in zip(Y, AX)])
 
     queue = cl.CommandQueue(ctx)
     clA = CLRA(queue, A)
     clX = CLRA(queue, X)
-    clY = CLRA(queue, RA([np.zeros_like(y) for y in Y]))
+    clY = CLRA(queue, Y)
 
     # compute on device
-    plan = plan_elementwise_inc(queue, clA, clX, clY)
+    plan = plan_elementwise_inc(queue, clA, clX, clY, alpha=alpha, outer=True)
     plan()
 
     # check result
-    for y, yy in zip(Y, clY.to_host()):
-        assert np.allclose(y, yy)
+    for yref, y in zip(Yref, clY.to_host()):
+        assert np.allclose(y, yref, atol=2e-7)
 
 
 def test_reset(ctx, rng):
