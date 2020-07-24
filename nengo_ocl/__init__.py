@@ -2,8 +2,26 @@ import logging
 import sys
 
 import numpy as np
+from packaging import version
 import pyopencl as cl
 
+# --- monkey-patch Signal.may_share_memory
+import nengo
+
+if version.parse(nengo.__version__) < version.parse("3.1.0"):
+    import nengo.builder.signal
+
+    old_may_share_memory = nengo.builder.signal.Signal.may_share_memory
+
+    def may_share_memory(self, other):
+        if self is other:
+            return True
+
+        return old_may_share_memory(self, other)
+
+    nengo.builder.signal.Signal.may_share_memory = may_share_memory
+
+# --- imports from this package
 from .version import version as __version__
 from .simulator import Simulator
 
