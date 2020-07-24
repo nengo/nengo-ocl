@@ -23,6 +23,7 @@ from nengo.utils.progress import ProgressTracker, Progress
 from nengo.utils.stdlib import groupby
 from nengo.utils.filter_design import ss2tf
 
+from nengo_ocl.builder import Builder
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.clra_gemv import plan_block_gemv
@@ -222,6 +223,7 @@ class Simulator(object):
                     dt=float(dt),
                     label="%s, dt=%f" % (network, dt),
                     decoder_cache=get_default_decoder_cache(),
+                    builder=Builder(),
                 )
             else:
                 self.model = model
@@ -1236,6 +1238,22 @@ class Simulator(object):
             plans.append(plan_pool2d(self.queue, X, Y, shape, p.pool_size, p.strides))
 
         return plans
+
+    def plan_SimPES(self, ops):
+        assert all(
+            op.encoders is None for op in ops
+        ), "SimPES encoders should be handled by custom `builder.py:build_pes`"
+        pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
+        error = self.all_data[[self.sidx[op.error] for op in ops]]
+        delta = self.all_data[[self.sidx[op.delta] for op in ops]]
+        alpha = np.array(
+            [-op.learning_rate * self.model.dt / op.pre_filtered.shape[0] for op in ops]
+        )
+        return [
+            plan_elementwise_inc(
+                self.queue, error, pre, delta, alpha=alpha, outer=True, inc=False
+            )
+        ]
 
     def plan_SimBCM(self, ops):
         pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
