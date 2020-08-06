@@ -42,8 +42,6 @@ class MultiDotInc(Operator):
             raise NotImplementedError(
                 "Convolution transforms not yet supported by NengoOCL"
             )
-        elif isinstance(op, SparseDotInc):
-            raise NotImplementedError("Sparse transforms not yet supported by NengoOCL")
         elif isinstance(op, BsrDotInc):
             raise NotImplementedError(
                 "Optimized BsrDotInc operations not yet supported by NengoOCL"
