@@ -25,6 +25,10 @@ Release History
 
 - Now supports Nengo 3.0.0. Note that support for previous Nengo
   versions has been dropped.
+- ``Sparse`` transforms are supported, but are performed entirely on the host.
+  This adds significant overhead copying memory to and from the device (as compared
+  with e.g. ``Dense`` transforms), but ``Sparse`` transforms may still be more efficient
+  than ``Dense`` in the case of very large/sparse transforms.
 
 1.4.0 (July 4, 2018)
 ====================

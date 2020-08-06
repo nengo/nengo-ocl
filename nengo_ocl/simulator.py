@@ -1,10 +1,11 @@
 from __future__ import print_function
 
+from collections import defaultdict
 import inspect
 import logging
 import os
+import sys
 import warnings
-from collections import defaultdict
 
 import numpy as np
 import pyopencl as cl
@@ -68,7 +69,7 @@ PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 
 class ViewBuilder(object):
-    def __init__(self, bases, rarray):
+    def __init__(self, bases, rarray, is_sparse=None):
         self.sidx = {bb: ii for ii, bb in enumerate(bases)}
         assert len(bases) == len(self.sidx)
         self.rarray = rarray
@@ -84,25 +85,29 @@ class ViewBuilder(object):
         self._X_views = {}
         self._YYB_views = {}
 
-    def append_view(self, obj):
-        if obj in self.sidx:
+        # if None accept dense and sparse signals,
+        # otherwise dense (False) or sparse (True) only
+        self.is_sparse = is_sparse
+
+    def append_view(self, sig):
+        if sig in self.sidx:
             return  # we already have this view
 
-        if not obj.is_view:
+        if not sig.is_view:
             # -- it is not a view, and not OK
-            raise ValueError("can only append views of known signals", obj)
+            raise ValueError("can only append views of known signals", sig)
 
-        assert obj.size and obj.ndim <= 2
-        idx = self.sidx[obj.base]
-        shape0 = obj.shape[0] if obj.ndim > 0 else 1
-        shape1 = obj.shape[1] if obj.ndim > 1 else 1
-        self.starts.append(self.rarray.starts[idx] + obj.elemoffset)
+        assert sig.size and sig.ndim <= 2
+        idx = self.sidx[sig.base]
+        shape0 = sig.shape[0] if sig.ndim > 0 else 1
+        shape1 = sig.shape[1] if sig.ndim > 1 else 1
+        self.starts.append(self.rarray.starts[idx] + sig.elemoffset)
         self.shape0s.append(shape0)
         self.shape1s.append(shape1)
-        self.stride0s.append(obj.elemstrides[0] if shape0 > 1 else 1)
-        self.stride1s.append(obj.elemstrides[1] if shape1 > 1 else 1)
-        self.names.append(getattr(obj, "name", ""))
-        self.sidx[obj] = len(self.sidx)
+        self.stride0s.append(sig.elemstrides[0] if shape0 > 1 else 1)
+        self.stride1s.append(sig.elemstrides[1] if shape1 > 1 else 1)
+        self.names.append(getattr(sig, "name", ""))
+        self.sidx[sig] = len(self.sidx)
 
     def add_views_to(self, rarray):
         rarray.add_views(
@@ -118,18 +123,22 @@ class ViewBuilder(object):
         all_views = [sig for op in ops for sig in op.all_signals]
         for op in (op for op in ops if isinstance(op, MultiDotInc)):
             A_views, X_views, Y_view, Y_in_view, beta_view = op.get_views()
-            all_views.extend(
+            multidotinc_views = (
                 A_views
                 + X_views
                 + [Y_view, Y_in_view]
                 + ([beta_view] if beta_view else [])
             )
+            assert not any(v.sparse for v in multidotinc_views)
+
+            all_views.extend(multidotinc_views)
             self._A_views[op] = A_views
             self._X_views[op] = X_views
             self._YYB_views[op] = [Y_view, Y_in_view, beta_view]
 
         for view in all_views:
-            self.append_view(view)
+            if self.is_sparse is None or bool(self.is_sparse) == bool(view.sparse):
+                self.append_view(view)
 
 
 class Simulator(object):
@@ -260,38 +269,65 @@ class Simulator(object):
             )
             all_bases = stable_unique(sig.base for sig in all_signals)
 
+            # create SignalDict and add all signals from operators
             sigdict = SignalDict()  # map from Signal.base -> ndarray
             for op in operators:
                 op.init_signals(sigdict)
 
-            # Add built states to the probe dictionary
-            self._probe_outputs = dict(self.model.params)
+            # separate dense and sparse signals
+            sparse_signals = [s for s in all_signals if s.sparse]
+            if any(s.is_view for s in sparse_signals):
+                raise NotImplementedError("Sparse signal views not yet supported")
 
-            # Provide a nicer interface to probe outputs
-            self.data = SimulationData(self._probe_outputs)
+            dense_bases = [sig for sig in all_bases if not sig.sparse]
+            sparse_bases = [sig for sig in all_bases if sig.sparse]
 
-            # Create data on host and add views
-            self.all_data = RaggedArray(
-                [sigdict[sb] for sb in all_bases],
-                names=[getattr(sb, "name", "") for sb in all_bases],
+            # --- create dense data on host and add views
+            dense_data = RaggedArray(
+                [sigdict[sb] for sb in dense_bases],
+                names=[getattr(sb, "name", "") for sb in dense_bases],
                 dtype=np.float32,
             )
 
-            view_builder = ViewBuilder(all_bases, self.all_data)
+            view_builder = ViewBuilder(dense_bases, dense_data, is_sparse=False)
             view_builder.setup_views(operators)
             for probe in self.model.probes:
                 view_builder.append_view(self.model.sig[probe]["in"])
-            view_builder.add_views_to(self.all_data)
+            view_builder.add_views_to(dense_data)
 
-            self.all_bases = all_bases
+            self.all_bases = dense_bases
             self.sidx = {k: np.int32(v) for k, v in view_builder.sidx.items()}
             self._A_views = view_builder._A_views
             self._X_views = view_builder._X_views
             self._YYB_views = view_builder._YYB_views
             del view_builder
 
+            # --- set up sparse data
+            spmatrix = (
+                sys.modules["scipy.sparse"].spmatrix
+                if "scipy.sparse" in sys.modules
+                else None
+            )
+            sparse_data = [sigdict[sb] for sb in sparse_bases]
+            if spmatrix is None and len(sparse_data) > 0:
+                raise NotImplementedError("Sparse matrices not supported without Scipy")
+            elif not all(isinstance(x, spmatrix) for x in sparse_data):
+                raise NotImplementedError(
+                    "All sparse matrices must be instances of `scipy.sparse.spmatrix`"
+                )
+
+            sparse_sidx_map = {b: i for i, b in enumerate(sparse_bases)}
+            self.sparse_sidx = {s: np.int32(sparse_sidx_map[s]) for s in sparse_signals}
+
             # Copy data to device
-            self.all_data = CLRaggedArray(self.queue, self.all_data)
+            self.all_data = CLRaggedArray(self.queue, dense_data)
+            self.sparse_data = sparse_data  # sparse data currently handled on host
+
+            # Add built states to the probe dictionary
+            self._probe_outputs = dict(self.model.params)
+
+            # Provide a nicer interface to probe outputs
+            self.data = SimulationData(self._probe_outputs)
 
         logger.info("Signals in %0.3f s" % signals_timer.duration)
 
@@ -796,6 +832,23 @@ class Simulator(object):
         X = self.all_data[[self.sidx[op.X] for op in ops]]
         Y = self.all_data[[self.sidx[op.Y] for op in ops]]
         return [plan_elementwise_inc(self.queue, A, X, Y)]
+
+    def plan_SparseDotInc(self, ops):
+        plans = []
+        for op in ops:
+            assert op.A.sparse
+            A = self.sparse_data[self.sparse_sidx[op.A]]
+            tt = [None]
+            xx = [op.X]
+            yy = [op.Y]
+            fn_name = "%s.fn" % (op,)
+
+            def fn(x, A=A):
+                return A.dot(x)
+
+            plans.append(self._plan_fn_in_python(fn, tt, xx, yy, fn_name))
+
+        return plans
 
     def plan_SimPyFunc(self, ops):
         groups = groupby(ops, lambda op: op.fn)
