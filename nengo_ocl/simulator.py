@@ -1018,8 +1018,8 @@ class Simulator(object):
             raise NotImplementedError("LIF min voltage")
         dt = self.model.dt
         J = self.all_data[[self.sidx[op.J] for op in ops]]
-        V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
-        W = self.all_data[[self.sidx[op.states[1]] for op in ops]]
+        V = self.all_data[[self.sidx[op.state["voltage"]] for op in ops]]
+        W = self.all_data[[self.sidx[op.state["refractory_time"]] for op in ops]]
         S = self.all_data[[self.sidx[op.output] for op in ops]]
         ref = self.RaggedArray(
             [op.neurons.tau_ref * np.ones(op.J.size) for op in ops], dtype=J.dtype
@@ -1050,9 +1050,9 @@ class Simulator(object):
     def _plan_AdaptiveLIF(self, ops):
         dt = self.model.dt
         J = self.all_data[[self.sidx[op.J] for op in ops]]
-        V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
-        W = self.all_data[[self.sidx[op.states[1]] for op in ops]]
-        N = self.all_data[[self.sidx[op.states[2]] for op in ops]]
+        V = self.all_data[[self.sidx[op.state["voltage"]] for op in ops]]
+        W = self.all_data[[self.sidx[op.state["refractory_time"]] for op in ops]]
+        N = self.all_data[[self.sidx[op.state["adaptation"]] for op in ops]]
         S = self.all_data[[self.sidx[op.output] for op in ops]]
         ref = self.RaggedArray(
             [op.neurons.tau_ref * np.ones(op.J.size) for op in ops], dtype=J.dtype
@@ -1079,7 +1079,7 @@ class Simulator(object):
         dt = self.model.dt
         J = self.all_data[[self.sidx[op.J] for op in ops]]
         R = self.all_data[[self.sidx[op.output] for op in ops]]
-        N = self.all_data[[self.sidx[op.states[0]] for op in ops]]
+        N = self.all_data[[self.sidx[op.state["adaptation"]] for op in ops]]
         ref = self.RaggedArray(
             [op.neurons.tau_ref * np.ones(op.J.size) for op in ops], dtype=J.dtype
         )
@@ -1112,7 +1112,7 @@ class Simulator(object):
     def _plan_SpikingRectifiedLinear(self, ops):
         dt = self.model.dt
         J = self.all_data[[self.sidx[op.J] for op in ops]]
-        V = self.all_data[[self.sidx[op.states[0]] for op in ops]]
+        V = self.all_data[[self.sidx[op.state["voltage"]] for op in ops]]
         S = self.all_data[[self.sidx[op.output] for op in ops]]
         amp = self.RaggedArray(
             [op.neurons.amplitude * np.ones(op.J.size) for op in ops], dtype=J.dtype
