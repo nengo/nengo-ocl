@@ -42,6 +42,10 @@ def indent(s, i):
     return "\n".join([(" " * i) + line for line in s.split("\n")])
 
 
+def nonelist(*args):
+    return [arg for arg in args if arg is not None]
+
+
 def round_up(x, n):
     return int(np.ceil(float(x) / n)) * n
 

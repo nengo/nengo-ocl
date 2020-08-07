@@ -30,6 +30,8 @@ Release History
   This adds significant overhead copying memory to and from the device (as compared
   with e.g. ``Dense`` transforms), but ``Sparse`` transforms may still be more efficient
   than ``Dense`` in the case of very large/sparse transforms.
+- ``Convolution`` transforms are now supported. The previous code supporting ``Conv2d``
+  and ``Pool2d`` processes (from NengoExtras) has been removed.
 
 1.4.0 (July 4, 2018)
 ====================

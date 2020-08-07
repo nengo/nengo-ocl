@@ -90,10 +90,10 @@ class ViewBuilder(object):
 
     def append_view(self, sig):
         if sig in self.sidx:
-            return  # we already have this view
+            return  # we already have this signal (either a base, or an existing view)
 
         if not sig.is_view:
-            # -- it is not a view, and not OK
+            # -- it is not a view, and not OK. All non-views should already be in `sidx`
             raise ValueError("can only append views of known signals", sig)
 
         assert sig.size and sig.ndim <= 2
@@ -282,8 +282,21 @@ class Simulator(object):
             sparse_bases = [sig for sig in all_bases if sig.sparse]
 
             # --- create dense data on host and add views
+            dense_data = []  # the actual arrays (from `sigdict`) for each dense base
+
+            # reshape any arrays > 2D (note that any views on these bases will still be
+            # > 2D, and will fail when we add them in the view builder. Currently, > 2D
+            # signals are only used in Convolution, and we never make views.)
+            self.base_reshapes = {}  # TODO: use this (eg. in `self.signals` to reshape)
+            for base in dense_bases:
+                x = sigdict[base]
+                if x.ndim > 2:
+                    self.base_reshapes[base] = x.shape
+                    x = x.reshape(-1, 1)
+                dense_data.append(x)
+
             dense_data = RaggedArray(
-                [sigdict[sb] for sb in dense_bases],
+                dense_data,
                 names=[getattr(sb, "name", "") for sb in dense_bases],
                 dtype=np.float32,
             )
@@ -322,10 +335,8 @@ class Simulator(object):
             self.all_data = CLRaggedArray(self.queue, dense_data)
             self.sparse_data = sparse_data  # sparse data currently handled on host
 
-            # Add built states to the probe dictionary
-            self._probe_outputs = dict(self.model.params)
-
-            # Provide a nicer interface to probe outputs
+            # Provide an interface to simulation data (build output and probe data)
+            self._probe_outputs = dict(self.model.params)  # init with build output
             self.data = SimulationData(self._probe_outputs)
 
         logger.info("Signals in %0.3f s" % signals_timer.duration)
@@ -1237,49 +1248,47 @@ class Simulator(object):
         dt = self.model.dt
         return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
 
-    def _plan_Conv2d(self, ops):
-        # This was an old custom process in nengo_extras for performing 2-D convolution
+    def plan_ConvInc(self, ops):
         plans = []
         for op in ops:
-            p, f, b = op.process, op.process.filters, op.process.biases
-            assert f.ndim in [4, 6]
-            conv = f.ndim == 4
-            kernel_shape = f.shape[-2:]
-            X = self.all_data.getitem_device(self.sidx[op.input])
-            Y = self.all_data.getitem_device(self.sidx[op.output])
-            ftrans = np.asarray(
-                np.transpose(f, (0, 1, 2, 3) if conv else (0, 3, 4, 5, 1, 2)), order="C"
-            )
-            F = self.Array(ftrans.ravel())
-            B = self.Array((np.zeros(p.shape_out) + b).ravel())
+            assert op.conv.dimensions in (1, 2)
+            channels_last = op.conv.channels_last
+            assert channels_last == op.conv.input_shape.channels_last
+            assert channels_last == op.conv.output_shape.channels_last
+
+            shape_in = op.conv.input_shape.shape
+            shape_out = op.conv.output_shape.shape
+            kernel_shape = op.conv.kernel_size
+            strides = op.conv.strides
+            if op.conv.dimensions == 1:
+                # add extra (vertical) dimension to make it 2D convolution
+                assert len(shape_in) == len(shape_out) == 2
+                assert len(kernel_shape) == len(strides) == 1
+                kernel_shape = (1,) + tuple(kernel_shape)
+                strides = (1,) + tuple(strides)
+                if channels_last:
+                    shape_in = (1,) + tuple(shape_in)
+                    shape_out = (1,) + tuple(shape_out)
+                else:
+                    shape_in = (shape_in[0], 1, shape_in[1])
+                    shape_out = (shape_out[0], 1, shape_out[1])
+
             plans.append(
                 plan_conv2d(
                     self.queue,
-                    X,
-                    Y,
-                    F,
-                    B,
-                    p.shape_in,
-                    p.shape_out,
-                    kernel_shape,
-                    conv,
-                    p.padding,
-                    p.strides,
+                    X=self.all_data.getitem_device(self.sidx[op.X]),
+                    Y=self.all_data.getitem_device(self.sidx[op.Y]),
+                    filters=self.all_data.getitem_device(self.sidx[op.W]),
+                    biases=None,
+                    shape_in=shape_in,
+                    shape_out=shape_out,
+                    kernel_shape=kernel_shape,
+                    padding=op.conv.padding.lower(),
+                    strides=strides,
+                    channels_last=channels_last,
+                    conv=True,
                 )
             )
-
-        return plans
-
-    def _plan_Pool2d(self, ops):
-        # This was an old custom process in nengo_extras for performing 2-D pooling
-        plans = []
-        for op in ops:
-            assert op.process.kind == "avg"
-            p = op.process
-            X = self.all_data.getitem_device(self.sidx[op.input])
-            Y = self.all_data.getitem_device(self.sidx[op.output])
-            shape = p.shape_out + p.shape_in[1:]
-            plans.append(plan_pool2d(self.queue, X, Y, shape, p.pool_size, p.strides))
 
         return plans
 
