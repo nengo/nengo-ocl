@@ -10,7 +10,7 @@ from nengo.utils.numpy import is_number
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
-from nengo_ocl.utils import as_ascii, indent, round_up
+from nengo_ocl.utils import as_ascii, indent, nonelist, round_up
 
 
 def get_mwgs(queue, cap=256):
@@ -534,7 +534,7 @@ def plan_elementwise_inc(queue, A, X, Y, alpha=None, outer=False, inc=True, tag=
     if alpha is not None:
         alpha = to_device(queue, alpha[inds].astype(Y.dtype))
 
-    full_args = ([alpha] if alpha is not None else []) + [
+    full_args = nonelist(alpha) + [
         to_device(queue, offsets),
         to_device(queue, A.shape0s[inds]),
         to_device(queue, A.shape1s[inds]),
@@ -1736,13 +1736,14 @@ def plan_conv2d(
     X,
     Y,
     filters,
-    biases,
     shape_in,
     shape_out,
     kernel_shape,
-    conv,
-    padding,
-    strides,
+    conv=True,
+    biases=None,
+    padding=(0, 0),
+    strides=(1, 1),
+    channels_last=True,
     tag=None,
     transposed=False,
 ):
@@ -1755,21 +1756,24 @@ def plan_conv2d(
 
         conv : whether this is a convolution (true) or local filtering (false)
     """
-    for ary in [X, Y, filters, biases]:
+    assert biases is None, "Not tested with biases (strides may be wrong)"
+
+    for ary in [X, Y, filters] + nonelist(biases):
         # assert that arrays are contiguous
         assert len(ary.shape) in [1, 2]
         assert ary.strides[-1] == ary.dtype.itemsize
         if len(ary.shape) == 2:
             assert ary.strides[0] == ary.dtype.itemsize * ary.shape[1]
-
-    assert filters.start == biases.start == 0
-    assert X.ctype == Y.ctype == filters.ctype == biases.ctype
+        assert ary.ctype == Y.ctype
+        assert abs(ary.start - round(ary.start)) < 1e-8
 
     text = """
     __kernel void conv2d(
         __global const ${type} *x,
         __global const ${type} *f,
+    % if biases is not None:
         __global const ${type} *b,
+    % endif
         __global ${type} *y
     )
     {
@@ -1794,29 +1798,34 @@ def plan_conv2d(
     % endif
         x += ${xstart};
         y += ${ystart};
+        f += ${fstart};
 
-        ${type} out = b[k*${nyi*nyj} + ij];
+    % if biases is not None:
+        ${type} out = b[${bstart} + k*${nyi*nyj} + ij];
+    % else:
+        ${type} out = 0;
+    % endif
 
         for (int c = 0; c < ${nc}; c++) {
 
             // load image section
-            __global const ${type} *xc = &x[c * ${nxi * nxj}];
+            __global const ${type} *xc = &x[c * ${xstride_c}];
             for (int kij = tij; kij < ${npatch}; kij += lsize) {
                 const int ki = kij / ${njpatch};
                 const int kj = kij % ${njpatch};
                 const int ii = i0 + ki;
                 const int jj = j0 + kj;
                 if (ii >= 0 && ii < ${nxi} && jj >= 0 && jj < ${nxj})
-                    patch[ki][kj] = xc[ii*${nxj} + jj];
+                    patch[ki][kj] = xc[ii*${xstride_i} + jj*${xstride_j}];
                 else
                     patch[ki][kj] = 0;
             }
 
     % if conv:
             // load filters
-            __global const ${type} *fc = f + k*${nc*si*sj} + c*${si*sj};
+            __global const ${type} *fc = f + k*${fstride_f} + c*${fstride_c};
             for (int kij = tij; kij < ${si*sj}; kij += lsize) {
-                filter[kij] = fc[kij];
+                filter[kij] = fc[kij*${fstride_ij}];
             }
     % endif
             barrier(CLK_LOCAL_MEM_FENCE);
@@ -1834,15 +1843,28 @@ def plan_conv2d(
         }
 
         if (i < ${nyi} && j < ${nyj})
-            y[k*${nyi*nyj} + ij] = out;
+            y[k*${ystride_f} + i*${ystride_i} + j*${ystride_j}] = out;
     }
     """
 
-    nc, nxi, nxj = shape_in
-    nf, nyi, nyj = shape_out
     si, sj = kernel_shape
-    pi, pj = padding
     sti, stj = strides
+    if channels_last:
+        nxi, nxj, nc = shape_in
+        nyi, nyj, nf = shape_out
+    else:
+        nc, nxi, nxj = shape_in
+        nf, nyi, nyj = shape_out
+
+    if padding == "valid":
+        pi, pj = 0, 0
+    elif padding == "same":
+        pi = (si - 1) // 2
+        pj = (sj - 1) // 2
+    elif isinstance(padding, (tuple, list)) and len(padding) == 2:
+        pi, pj = padding
+    else:
+        raise ValueError("Unsupported padding (must be 'same', 'valid', or 2-tuple)")
 
     max_group = get_mwgs(queue, cap=256)
     assert max_group >= 32
@@ -1863,6 +1885,7 @@ def plan_conv2d(
 
     textconf = dict(
         type=X.ctype,
+        biases=biases,
         conv=conv,
         nf=nf,
         nxi=nxi,
@@ -1879,19 +1902,36 @@ def plan_conv2d(
         nipatch=nipatch,
         njpatch=njpatch,
         npatch=npatch,
-        xstart=X.start,
-        ystart=Y.start,
+        xstride_i=nxj * (nc if channels_last else 1),
+        xstride_j=nc if channels_last else 1,
+        xstride_c=1 if channels_last else nxi * nxj,
+        ystride_i=nyj * (nf if channels_last else 1),
+        ystride_j=nf if channels_last else 1,
+        ystride_f=1 if channels_last else nyi * nyj,
+        fstride_ij=nc * nf,
+        fstride_c=nf,
+        fstride_f=1,
+        xstart=int(X.start),
+        ystart=int(Y.start),
+        fstart=int(filters.start),
+        bstart=0 if biases is None else int(biases.start),
     )
     text = as_ascii(Template(text, output_encoding="ascii").render(**textconf))
 
-    full_args = (X.base_data, filters.data, biases.data, Y.base_data)
+    full_args = (
+        [X.base_data, filters.base_data]
+        + ([] if biases is None else [biases.base_data])
+        + [Y.base_data]
+    )
     _fn = cl.Program(queue.context, text).build().conv2d
     _fn.set_args(*full_args)
 
     plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_conv2d", tag=tag)
     plan.full_args = full_args  # prevent garbage-collection
     plan.flops_per_call = 2 * nyi * nyj * nf * nc * si * sj
-    plan.bw_per_call = X.nbytes + filters.nbytes + biases.nbytes + Y.nbytes
+    plan.bw_per_call = (
+        X.nbytes + filters.nbytes + Y.nbytes + (0 if biases is None else biases.nbytes)
+    )
     plan.description = "shape_in=%s, shape_out=%s, kernel=%s, conv=%s" % (
         shape_in,
         shape_out,

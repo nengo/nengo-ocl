@@ -38,11 +38,7 @@ class MultiDotInc(Operator):
 
     @classmethod
     def convert_to(cls, op):
-        if isinstance(op, ConvInc):
-            raise NotImplementedError(
-                "Convolution transforms not yet supported by NengoOCL"
-            )
-        elif isinstance(op, BsrDotInc):
+        if isinstance(op, BsrDotInc):
             raise NotImplementedError(
                 "Optimized BsrDotInc operations not yet supported by NengoOCL"
             )
