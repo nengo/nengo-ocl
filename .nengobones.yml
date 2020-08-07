@@ -66,6 +66,13 @@ setup_cfg:
     norecursedirs:
       - plots
     nengo_simloader: nengo_ocl.tests.make_test_sim
+    nengo_neurons:
+      - nengo.Direct
+      - nengo.LIF
+      - nengo.LIFRate
+      - nengo.RectifiedLinear
+      - nengo.Sigmoid
+      - nengo.SpikingRectifiedLinear
     nengo_test_unsupported:
       tests/test_cache.py::test_cache_concurrency:
         Starting multiple simulators not supported
@@ -104,6 +111,8 @@ setup_cfg:
         tests/test_nengo_tests.py::test_entry_point
       tests/test_simulator.py::test_probe_cache:
         Changing simulator seed not implemented
+      tests/test_solvers.py::test_all_negative_activities[*:
+        Tanh neuron not implemented
       tests/test_transforms.py::test_sparse[False-*:
         Sparse transforms only implemented with Scipy
       tests/test_builder.py::test_commonsig_readonly:
