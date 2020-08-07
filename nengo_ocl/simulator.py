@@ -742,6 +742,11 @@ class Simulator:
     def _plan_op_group(self, op_type, ops):
         return getattr(self, "_plan_" + op_type.__name__)(ops)
 
+    def _plan_SimProbe(self, ops):
+        # TODO: We currently do probe planning in `plan_probes`, but that could
+        # potentially be moved here
+        return []  # do nothing
+
     def _plan_PreserveValue(self, ops):  # LEGACY
         # This op was removed in Nengo version 2.3.1+, but remains here
         # for compatibility with older versions of Nengo.
