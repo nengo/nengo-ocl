@@ -1,7 +1,9 @@
+from nengo import Probe
 import nengo.builder
 from nengo.builder import Signal
 from nengo.builder.learning_rules import build_or_passthrough, get_post_ens, SimPES
-from nengo.builder.operator import Copy, DotInc, Reset
+from nengo.builder.operator import Copy, DotInc, Operator, Reset
+import nengo.builder.probe
 from nengo.exceptions import BuildError
 from nengo.learning_rules import PES
 
@@ -109,3 +111,36 @@ def build_pes(model, pes, rule):
     # expose these for probes
     model.sig[rule]["error"] = error
     model.sig[rule]["activities"] = acts
+
+
+class ProbeOperator(Operator):
+    """Operator to mark signal as being probed.
+
+    This operator does nothing, except will appear in the list of operators and mark
+    a signal as being probed. This is necessary in the rare case that a node with
+    constant output is probed directly without that signal being otherwise used; in that
+    case, this operator will mark the signal as being used.
+    """
+
+    def __init__(self, signal, tag=None):
+        super().__init__(tag=tag)
+        self.sets = []
+        self.incs = []
+        self.reads = [signal]
+        self.updates = []
+
+    @property
+    def signal(self):
+        return self.reads[0]
+
+    def make_step(self, signals, dt, rng):
+        def step():
+            pass
+
+        return step
+
+
+@Builder.register(Probe)
+def build_probe(model, probe):
+    nengo.builder.probe.build_probe(model, probe)
+    model.add_op(ProbeOperator(model.sig[probe]["in"]))
