@@ -59,11 +59,11 @@ def test_lif_step(ctx, upsample):
     nls = [nengo.LIF(tau_ref=ref, tau_rc=taus[i]) for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
         if upsample <= 1:
-            nl.step_math(dt, J[i], OS[i], V[i], W[i])
+            nl.step(dt, J[i], OS[i], voltage=V[i], refractory_time=W[i])
         else:
             s = np.zeros_like(OS[i])
             for j in range(upsample):
-                nl.step_math(dt / upsample, J[i], s, V[i], W[i])
+                nl.step(dt / upsample, J[i], s, voltage=V[i], refractory_time=W[i])
                 OS[i] = (1.0 / dt) * ((OS[i] > 0) | (s > 0))
 
     # simulate device
@@ -160,7 +160,7 @@ def test_lif_rate(ctx, blockify):
     # simulate host
     nls = [nengo.LIFRate(tau_ref=ref, tau_rc=taus[i]) for i, n in enumerate(n_neurons)]
     for i, nl in enumerate(nls):
-        nl.step_math(dt, J[i], R[i])
+        nl.step(dt, J[i], R[i])
 
     # simulate device
     plan = plan_lif_rate(queue, dt, clJ, clR, ref, clTaus, amp, blockify=blockify)
