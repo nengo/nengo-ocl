@@ -344,8 +344,8 @@ def test_linearfilter(ctx, n_per_kind, rng):
         step = kind.make_step((n,), (n,), dt, rng=None, state=state)
         steps.append(step)
 
-    # Nengo 3 uses state space filters. Patch here by converting back to transfer function spec.
-    # Getting rid of this conversion would require reimplementation of plan_linearfilter.
+    # Nengo 3 uses state space filters. For now, convert back to transfer function.
+    # Getting rid of this conversion would require a new plan_linearfilter.
     dens = list()
     nums = list()
     for f in steps:
@@ -355,17 +355,13 @@ def test_linearfilter(ctx, n_per_kind, rng):
         else:
             num, den = ss2tf(f.A, f.B, f.C, f.D)
 
-        ## This preprocessing copied out of nengo2.8/synapses.LinearFilter.make_step
+        # This preprocessing copied out of nengo2.8/synapses.LinearFilter.make_step
         num = num.flatten()
 
-        if den[0] != 1.0:
-            raise ValidationError(
-                "First element of the denominator must be 1", attr="den", obj=self
-            )
+        assert den[0] == 1.0
         num = num[1:] if num[0] == 0 else num
         den = den[1:]  # drop first element (equal to 1)
         num, den = num.astype(np.float32), den.astype(np.float32)
-        ##
         dens.append(den)
         nums.append(num)
 

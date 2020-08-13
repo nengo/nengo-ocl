@@ -139,10 +139,7 @@ def test_lambda_double(OclOnlySimulator):
         _test_node(OclOnlySimulator, d, size_in=1)
 
 
-from nengo.synapses import Lowpass
-
-
-@pytest.mark.parametrize("synapse", [None, Lowpass(tau=0.005)])
+@pytest.mark.parametrize("synapse", [None, nengo.Lowpass(tau=0.005)])
 def test_direct_connection(OclOnlySimulator, synapse):
     """Test a direct-mode connection"""
 

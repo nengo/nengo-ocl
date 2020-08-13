@@ -26,10 +26,7 @@ Release History
 - Now requires Python >= 3.5.
 - Now supports Nengo 3.0.0. Note that support for previous Nengo
   versions has been dropped.
-- ``Sparse`` transforms are supported, but are performed entirely on the host.
-  This adds significant overhead copying memory to and from the device (as compared
-  with e.g. ``Dense`` transforms), but ``Sparse`` transforms may still be more efficient
-  than ``Dense`` in the case of very large/sparse transforms.
+- ``Sparse`` transforms are now supported.
 - ``Convolution`` transforms are now supported. The previous code supporting ``Conv2d``
   and ``Pool2d`` processes (from NengoExtras) has been removed.
 
