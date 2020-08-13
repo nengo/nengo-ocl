@@ -1234,3 +1234,100 @@ class plan_ragged_gather_gemv(gemv_prog):
             plans.append(remaining_plan)
 
         return plans
+
+
+def plan_sparsedot_inc(queue, A_indices, A_indptr, A_data, X, Y, inc=False, tag=None):
+    """Implements a sparse matrix-vector multiply: Y += A * X or Y = A * X
+
+    Parameters
+    ----------
+    A_indices, A_indptr : CLRaggedArray(int)
+        Column sparse row index specifications
+    A_data : CLRaggedArray(float)
+        Matrix values at those indices
+    inc : bool
+        Whether to increment ``Y`` (True), or set it (False).
+
+    Status
+    ------
+    It is not set up to handle multiple arrays within each RA
+    It crashes when there are >10M nonzero weights. In this case,
+        A solution would be some way to tell each work item to do multiple rows
+    """
+    assert len(A_indices) == len(A_indptr) == len(A_data)
+
+    if len(A_indices) > 1:
+        raise NotImplementedError('Only one sparse operation at a time')
+
+    for arr in [A_indices, A_indptr, A_data, X, Y]:
+        assert (arr.stride1s == 1).all()
+    for arr in [A_indices, A_indptr, A_data]:
+        assert (arr.stride0s == 1).all()  # one dimensional always
+    for arr in [X, Y]:
+        if not (arr.stride0s == 1).all():
+            raise NotImplementedError('OCL SparseDot only supports matrix-vector currently, not matrix-matrix')
+
+    assert X.ctype == Y.ctype
+    assert A_data.ctype == Y.ctype
+
+    kern = """__kernel void sparsedot_inc(
+            __global const int *Astarts,
+            __global const ${IndType} *A_indices,
+            __global const ${IndType} *A_indptr,
+            __global const ${Atype} *A_data,
+            __global const int *Xstarts,
+            __global const ${Atype} *Xdata,
+            __global const int *Ystarts,
+            __global ${Atype} *Ydata
+    )
+    {
+        // n can later be used to keep track of multiple arrays
+        const int n = 0;
+        const int irow = get_global_id(0);
+
+        __global const ${IndType} *indices = A_indices + Astarts[n];
+        __global const ${IndType} *indptr = A_indptr + Astarts[n];
+        __global const ${Atype} *data = A_data + Astarts[n];
+        __global const ${Atype} *x = Xdata + Xstarts[n];
+        __global ${Atype} *y = Ydata + Ystarts[n];
+
+    %if ~inc:
+        y[irow] = 0;
+    %endif
+        for (int k = indptr[irow]; k < indptr[irow + 1]; k++) {
+            y[k] += data[k] * x[indices[k]];
+        }
+    }
+    """
+    textconf = dict(
+        Atype=A_data.ctype,
+        IndType=A_indices.ctype,
+        inc=inc,
+    )
+    text = as_ascii(Template(kern, output_encoding="ascii").render(**textconf))
+    full_args = (
+        A_data.cl_starts,
+        A_indices.cl_buf,
+        A_indptr.cl_buf,
+        A_data.cl_buf,
+        X.cl_starts,
+        X.cl_buf,
+        Y.cl_starts,
+        Y.cl_buf,
+    )
+    _fn = cl.Program(queue.context, text).build().sparsedot_inc
+    _fn.set_args(*[arr.data for arr in full_args])
+
+    gsize = (Y.sizes[0], 1)  # this only works for a single operation
+    lsize = None
+    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_sparsedot", tag=tag)
+    plan.full_args = full_args  # prevent garbage-collection
+    plan.flops_per_call = 2 * A_data.sizes.sum()
+    plan.bw_per_call = sum(ra.nbytes for ra in [A_indices, A_indptr, A_data, X, Y])
+    plan.description = "groups: %d; shape: (%d, %d); nonzeros: %d" % (
+        1,
+        X.sizes[0],
+        Y.sizes[0],
+        A_data.sizes[0],
+    )
+    return plan
