@@ -4,7 +4,6 @@ import inspect
 import logging
 from io import StringIO
 import os
-import sys
 import warnings
 
 import numpy as np
@@ -19,14 +18,15 @@ from nengo.simulator import SimulationData
 from nengo.builder.builder import Model
 from nengo.builder.operator import Reset
 from nengo.builder.signal import SignalDict
+from nengo.utils.filter_design import ss2tf
+from nengo.utils.numpy import scipy_sparse
 from nengo.utils.progress import ProgressTracker, Progress
 from nengo.utils.stdlib import groupby
-from nengo.utils.filter_design import ss2tf
 
 from nengo_ocl.builder import Builder
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
-from nengo_ocl.clra_gemv import plan_block_gemv
+from nengo_ocl.clra_gemv import plan_block_gemv, plan_sparse_dot_inc
 from nengo_ocl.clra_nonlinearities import (
     plan_timeupdate,
     plan_reset,
@@ -47,7 +47,6 @@ from nengo_ocl.clra_nonlinearities import (
     plan_whitenoise,
     plan_presentinput,
     plan_conv2d,
-    plan_pool2d,
     plan_bcm,
     plan_oja,
     plan_voja,
@@ -315,11 +314,7 @@ class Simulator(object):
             del view_builder
 
             # --- set up sparse data
-            spmatrix = (
-                sys.modules["scipy.sparse"].spmatrix
-                if "scipy.sparse" in sys.modules
-                else None
-            )
+            spmatrix = None if scipy_sparse is None else scipy_sparse.spmatrix
             sparse_data = [sigdict[sb] for sb in sparse_bases]
             if spmatrix is None and len(sparse_data) > 0:
                 raise NotImplementedError("Sparse matrices not supported without Scipy")
@@ -836,19 +831,20 @@ class Simulator(object):
         return [plan_elementwise_inc(self.queue, A, X, Y)]
 
     def plan_SparseDotInc(self, ops):
+        assert scipy_sparse is not None
+
+        # currently gives one plan per sparse operation instead of combining them all
         plans = []
         for op in ops:
-            assert op.A.sparse
-            A = self.sparse_data[self.sparse_sidx[op.A]]
-            tt = [None]
-            xx = [op.X]
-            yy = [op.Y]
-            fn_name = "%s.fn" % (op,)
-
-            def fn(x, A=A):
-                return A.dot(x)
-
-            plans.append(self._plan_fn_in_python(fn, tt, xx, yy, fn_name))
+            A = self.sparse_data[self.sparse_sidx[op.A]].tocsr()
+            A_indices = self.Array(A.indices, dtype=np.int32)
+            A_indptr = self.Array(A.indptr, dtype=np.int32)
+            A_data = self.Array(A.data)
+            X = self.all_data[[self.sidx[op.X]]]
+            Y = self.all_data[[self.sidx[op.Y]]]
+            plans.append(
+                plan_sparse_dot_inc(self.queue, A_indices, A_indptr, A_data, X, Y)
+            )
 
         return plans
 

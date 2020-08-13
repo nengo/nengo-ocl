@@ -2,16 +2,18 @@ import logging
 import numpy as np
 import pyopencl as cl
 import pyopencl.array  # noqa: F401
+import pytest
 
 from nengo.utils.stdlib import Timer
 
 from nengo_ocl.raggedarray import RaggedArray
-from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
+from nengo_ocl.clraggedarray import CLRaggedArray as CLRA, to_device
 from nengo_ocl.clra_gemv import (
     plan_reduce_gemv,
     plan_many_dots_gemv,
     plan_block_gemv,
     plan_ragged_gather_gemv,
+    plan_sparse_dot_inc,
 )
 
 logger = logging.getLogger(__name__)
@@ -362,3 +364,50 @@ def test_speed(ctx, rng):
                     q.flush()
                 cl.wait_for_events(events)
         print("clBLAS: %0.3f" % timer.duration)
+
+
+@pytest.mark.parametrize("inc", [False, True])
+def test_sparse(ctx, inc, rng, allclose):
+    scipy_sparse = pytest.importorskip("scipy.sparse")
+
+    # -- prepare initial conditions on host
+    if 0:
+        # diagonal matrix
+        shape = (32, 32)
+        s = min(shape[0], shape[1])
+        data = list(range(s))
+        ii = list(range(s))
+        jj = list(range(s))[::-1]
+        A = scipy_sparse.coo_matrix((data, (ii, jj)), shape=shape).tocsr()
+        X = RA([np.arange(1, shape[1] + 1)])
+        Y = RA([np.arange(1, shape[0] + 1)])
+    else:
+        # random sparse matrix
+        shape = (500, 500)
+        sparsity = 0.002
+        mask = rng.uniform(size=shape) < sparsity
+        ii, jj = mask.nonzero()
+        assert len(ii) > 0
+        data = rng.uniform(-1, 1, size=len(ii))
+        A = scipy_sparse.coo_matrix((data, (ii, jj)), shape=shape).tocsr()
+        X = RA([rng.uniform(-1, 1, size=shape[1])])
+        Y = RA([rng.uniform(-1, 1, size=shape[0])])
+
+    # -- prepare initial conditions on device
+    queue = cl.CommandQueue(ctx)
+    A_data = to_device(queue, A.data.astype(np.float32))
+    A_indices = to_device(queue, A.indices.astype(np.int32))
+    A_indptr = to_device(queue, A.indptr.astype(np.int32))
+    clX = CLRA(queue, X)
+    clY = CLRA(queue, Y)
+    assert allclose(X, clX)
+    assert allclose(Y, clY)
+
+    # -- run cl computation
+    plan = plan_sparse_dot_inc(queue, A_indices, A_indptr, A_data, clX, clY, inc=inc)
+    plan()
+
+    # -- ensure they match
+    ref = (Y[0] if inc else 0) + A.dot(X[0])
+    sim = clY[0]
+    assert allclose(ref, sim, atol=1e-7)

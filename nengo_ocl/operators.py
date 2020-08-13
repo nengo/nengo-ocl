@@ -1,13 +1,11 @@
 from collections import OrderedDict
 
-from nengo.builder.operator import Operator, BsrDotInc, Copy, DotInc, SparseDotInc
+from nengo.builder.operator import Operator, BsrDotInc, DotInc
 from nengo.builder.signal import Signal
-from nengo.builder.transforms import ConvInc
-from nengo.version import version_info as nengo_version
 
 
 class MultiDotInc(Operator):
-    """``y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)``"""
+    r"""``y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)``"""
 
     def __init__(self, Y, Y_in, beta, gamma, tag=None):
         assert Y.ndim == 1
