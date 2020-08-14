@@ -38,11 +38,7 @@ class MultiDotInc(Operator):
 
     @classmethod
     def convert_to(cls, op):
-        if isinstance(op, BsrDotInc):
-            raise NotImplementedError(
-                "Optimized BsrDotInc operations not yet supported by NengoOCL"
-            )
-        elif type(op) == DotInc:
+        if type(op) == DotInc:
             rval = cls(op.Y, op.Y, beta=1, gamma=0, tag=op.tag)
             rval.add_AX(op.A, op.X)
         else:

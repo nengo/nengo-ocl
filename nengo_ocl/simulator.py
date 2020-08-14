@@ -17,7 +17,7 @@ from nengo.cache import get_default_decoder_cache
 from nengo.exceptions import ReadonlyError, SimulatorClosed, ValidationError
 from nengo.simulator import SimulationData
 from nengo.builder.builder import Model
-from nengo.builder.operator import Reset
+from nengo.builder.operator import Reset, BsrDotInc
 from nengo.builder.signal import SignalDict
 from io import StringIO
 from nengo.utils.progress import ProgressTracker, Progress
@@ -259,6 +259,9 @@ class Simulator(object):
 
             self.operators = operators
             self.op_groups = op_groups
+            # BSR data is 3 dimensional, and that information is lost when raveling in RaggedArray
+            bsr_ops = [op for op in operators if isinstance(op, BsrDotInc)]
+            self.bsr_reshapes = dict((op, op.A.shape) for op in bsr_ops)  # Store the original shape for later
 
         logger.info("Planning in %0.3f s" % planner_timer.duration)
 
@@ -854,6 +857,18 @@ class Simulator(object):
         scipy_As = [self.sparse_data[self.sparse_sidx[op.A]] for op in ops]
         return self._plan_csr_multiply(ops, scipy_As)
 
+    def plan_BsrDotInc(self, ops):
+        ''' Technically this will be implemented as CSR multiplication,
+            Still, the underlying weights remains referenced, but not the sparsity structure
+        '''
+        scipy_As = []
+        for op in ops:
+            bsr_values_raveled = self.all_data[self.sidx[op.A]]
+            bsr_values = np.reshape(bsr_values_raveled, self.bsr_reshapes[op])
+            bsr_A = npext.scipy_sparse.bsr_matrix((bsr_values, op.indices, op.indptr))
+            scipy_As.append(bsr_A.tocsr())
+        return self._plan_csr_multiply(ops, scipy_As)
+
     def _plan_csr_multiply(self, ops, scipy_As, inc=False):
         ''' scipy_As is a list of CSR matrices that have been extracted from the ops '''
         if len(ops) > 1:
@@ -869,7 +884,6 @@ class Simulator(object):
         Y = self.all_data[[self.sidx[op.Y] for op in ops]]
 
         return [plan_sparsedot_inc(self.queue, A_indices, A_indptr, A_data, X, Y)]
-
     def plan_SimPyFunc(self, ops):
         groups = groupby(ops, lambda op: op.fn)
         # ^ NOTE: Groups functions based on equality `==`, not identity `is`.
