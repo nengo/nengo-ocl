@@ -851,24 +851,24 @@ class Simulator(object):
 
     def plan_SparseDotInc(self, ops):
         ''' This currently gives one plan per sparse operation instead of combining them all '''
+        scipy_As = [self.sparse_data[self.sparse_sidx[op.A]] for op in ops]
+        return self._plan_csr_multiply(ops, scipy_As)
+
+    def _plan_csr_multiply(self, ops, scipy_As, inc=False):
+        ''' scipy_As is a list of CSR matrices that have been extracted from the ops '''
         if len(ops) > 1:
-            return [self.plan_SparseDotInc([op])[0] for op in ops]
-        np_As_raw = [self.sparse_data[self.sparse_sidx[op.A]] for op in ops]
-        if any(A.dtype not in [np.int32, np.float32] for A in np_As_raw):
+            return [self._plan_csr_multiply([op], [scipy_A])[0] for op, scipy_A in zip(ops, scipy_As)]
+        if any(A.dtype not in [np.int32, np.float32] for A in scipy_As):
             raise TypeError('Only 32-bit sparse matrices supported with OCL, and casting at this point would break reference to original.\n \
                              Go to where the matrix is created and make dtype=np.float32')
-        np_As = [A.tocsr() for A in np_As_raw]
-        A_indices = self.RaggedArray([np_A.indices for np_A in np_As])
-        A_indptr = self.RaggedArray([np_A.indptr for np_A in np_As])
-        A_data = self.RaggedArray([np_A.data for np_A in np_As])
+
+        A_indices = self.RaggedArray([scipy_A.indices for scipy_A in scipy_As])
+        A_indptr = self.RaggedArray([scipy_A.indptr for scipy_A in scipy_As])
+        A_data = self.RaggedArray([scipy_A.data for scipy_A in scipy_As])
         X = self.all_data[[self.sidx[op.X] for op in ops]]
         Y = self.all_data[[self.sidx[op.Y] for op in ops]]
-        return [plan_sparsedot_inc(self.queue, A_indices, A_indptr, A_data, X, Y)]
 
-        assert len(ops) == 1  # for now
-        A_scipy = ops[0].A.initial_value
-        assert isinstance(A_scipy, npext.scipy_sparse.csr_matrix)
-        return [plan_sparsedot_inc(self.queue, A_scipy, X, Y)]
+        return [plan_sparsedot_inc(self.queue, A_indices, A_indptr, A_data, X, Y)]
 
     def plan_SimPyFunc(self, ops):
         groups = groupby(ops, lambda op: op.fn)
