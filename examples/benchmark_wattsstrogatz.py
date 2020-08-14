@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """usage: python benchmark_circonv.py (ref|ocl) d1,... [name]
 
-(ref|ocl)
+(ref|ocl|dl)
   Passing 'ref' will use the reference simulator, `nengo.Simulator`,
   while passing 'ocl' will use `nengo_ocl.Simulator`.
 
@@ -16,7 +16,7 @@ name
   If not given, one will be automatically generated for you.
 
 Example usage:
-  python benchmark_circconv.py ref 2,4,6 "Reference simulator"
+  python benchmark_wattsstrogatz.py ref 2,4,6 "Reference simulator"
 """
 
 from collections import OrderedDict
@@ -33,7 +33,7 @@ import numpy as np
 import pyopencl as cl
 
 import nengo
-from nengo.networks.circularconvolution import circconv
+from nengo.utils.numpy import scipy_sparse
 
 import nengo_ocl
 
@@ -44,53 +44,81 @@ if len(sys.argv) not in (3, 4):
 if sys.argv[1] == "ref":
     sim_name = "ref" if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo.Simulator
-    sim_kwargs = {}
-elif sys.argv[1] == "ocl":
+    sim_kwargs = dict()
+elif sys.argv[1].startswith("ocl"):
+    assert sys.argv[1] in ("ocl", "ocl_profile")
+    profiling = sys.argv[1] == "ocl_profile"
+
     ctx = cl.create_some_context()
     sim_name = ctx.devices[0].name if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo_ocl.Simulator
-    sim_kwargs = dict(context=ctx)
+    sim_kwargs = dict(context=ctx, profiling=profiling)
+elif sys.argv[1] == "dl":
+    import nengo_dl
+
+    sim_name = "dl" if len(sys.argv) == 3 else sys.argv[3]
+    sim_class = nengo_dl.Simulator
+    sim_kwargs = dict()
 else:
     raise Exception("unknown sim", sys.argv[1])
 
+ns_neurons = map(int, sys.argv[2].split(","))
 
-dims = map(int, sys.argv[2].split(","))
-
-# neurons_per_product = 128
-neurons_per_product = 256
+### User options ###
 simtime = 1.0
-radius = 1
+fan_outs = 8
+rewire_frac = 0.2
+directed = True
+sparse = True  # setting to False will probably overwhelm your GPU memory
+
+
+def wattsstrogatz_adjacencies(
+    n, fan_outs=fan_outs, rewire_frac=rewire_frac, directed=directed
+):
+    # the ring network
+    offsets = list(range(1, fan_outs + 1))
+    offsets.extend([offs - n for offs in offsets])
+    if not directed:
+        offsets.extend([-offs for offs in offsets])
+    swmat = scipy_sparse.diags(
+        np.ones((len(offsets), n), dtype=np.float32),
+        offsets=offsets,
+        shape=(n, n),
+        format="csr",
+    )
+    # random rewires
+    n_edges = len(swmat.data)
+    rewires_bool = np.random.random(n_edges) < rewire_frac
+    rewire_inds = rewires_bool.nonzero()[0]
+    rewire_to = np.random.randint(n, size=rewire_inds.size)
+    swmat.indices[rewire_inds] = rewire_to
+    return swmat
+
 
 records = []
 
-for i, dim in enumerate(dims):
+for i, n_neurons in enumerate(ns_neurons):
 
     rng = np.random.RandomState(123)
-    a = rng.normal(scale=np.sqrt(1.0 / dim), size=dim)
-    b = rng.normal(scale=np.sqrt(1.0 / dim), size=dim)
-    c = circconv(a, b)
+    # a = rng.normal(scale=np.sqrt(1./dim), size=n_neurons)
 
     # --- Model
     with nengo.Network(seed=9) as model:
-        inputA = nengo.Node(a)
-        inputB = nengo.Node(b)
-        A = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius)
-        B = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius)
-        C = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius)
-        D = nengo.networks.CircularConvolution(
-            neurons_per_product, dim, input_magnitude=radius
-        )
+        if sys.argv[1] == "dl":
+            nengo_dl.configure_settings(inference_only=True)
+        # inputA = nengo.Node(a)
+        ens = nengo.Ensemble(n_neurons, 1)
+        # nengo.Connection(inputA, ens.neurons, synapse=0.03)
 
-        nengo.Connection(inputA, A.input, synapse=None)
-        nengo.Connection(inputB, B.input, synapse=None)
-        nengo.Connection(A.output, D.A)
-        nengo.Connection(B.output, D.B)
-        nengo.Connection(D.output, C.input)
+        weimat = wattsstrogatz_adjacencies(n_neurons)
+        if sparse:
+            transform = nengo.transforms.Sparse((n_neurons, n_neurons), init=weimat)
+        else:
+            transform = weimat.toarray()
+        nengo.Connection(ens.neurons, ens.neurons, transform=transform, synapse=0.1)
 
-        A_p = nengo.Probe(A.output, synapse=0.03)
-        B_p = nengo.Probe(B.output, synapse=0.03)
-        C_p = nengo.Probe(C.output, synapse=0.03)
-        D_p = nengo.Probe(D.output, synapse=0.03)
+        # A_p = nengo.Probe(A.output, synapse=0.03)
+        E_p = nengo.Probe(ens.neurons, synapse=0.03)
 
     # --- Simulation
     try:
@@ -108,50 +136,43 @@ for i, dim in enumerate(dims):
             sim.run(simtime)
             t_run = time.time()
 
-        # error for sanity checking (should be below ~0.25, definitely 0.5)
-        y = sim.data[C_p]
-        crms = nengo.utils.numpy.rms(c)
-        rmse = (nengo.utils.numpy.rms(y - c[None, :], axis=1) / crms).mean()
-
         records.append(
             OrderedDict(
                 (
-                    ("benchmark", "circ-conv"),
+                    ("benchmark", "watts-strogatz"),
                     ("name", sim_name),
-                    ("dim", dim),
+                    ("n_neurons", n_neurons),
                     ("simtime", simtime),
-                    ("neurons_per_product", neurons_per_product),
-                    ("neurons", sum(e.n_neurons for e in model.all_ensembles)),
                     ("status", "ok"),
                     ("profiling", getattr(sim, "profiling", 0)),
                     ("buildtime", t_sim - t_start),
                     ("warmtime", t_warm - t_sim),
                     ("runtime", t_run - t_warm),
-                    ("rmse", rmse),
                 )
             )
         )
         print(records[-1])
-        print("%s, dims=%d successful" % (sim_name, dim))
+        print("%s, n_neurons=%d successful" % (sim_name, n_neurons))
+        if getattr(sim, "profiling", False):
+            sim.print_profiling(sort=1)
     except Exception as e:
         records.append(
             OrderedDict(
                 (
-                    ("benchmark", "circ-conv"),
+                    ("benchmark", "watts-strogatz"),
                     ("name", sim_name),
-                    ("dim", dim),
+                    ("n_neurons", n_neurons),
                     ("simtime", simtime),
-                    ("neurons_per_product", neurons_per_product),
                     ("status", "exception"),
                     ("exception", str(e)),
                 )
             )
         )
         print(records[-1])
-        print("%s, dims=%d exception" % (sim_name, dim))
+        print("%s, n_neurons=%d exception" % (sim_name, n_neurons))
         raise
 
-filename = "records_circconv_%s.pkl" % (
+filename = "records_wattsstrogatz_%s.pkl" % (
     (datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
 )
 with open(filename, "wb") as fh:

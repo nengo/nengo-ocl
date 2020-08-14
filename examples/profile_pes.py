@@ -19,14 +19,14 @@ n_neurons = dims * neurons_per_dim
 r = 1e-4
 W0 = np.random.uniform(-r, r, size=(n_neurons, n_neurons))
 
-runtime = 1.
+runtime = 1.0
 
 # --- model
-target_fn = lambda x: x**2
+target_fn = lambda x: x ** 2
 pes = nengo.PES()
 
 with nengo.Network(label="ProfilePES", seed=3) as model:
-    x = nengo.Node(nengo.processes.WhiteSignal(runtime, high=1.), size_out=dims)
+    x = nengo.Node(nengo.processes.WhiteSignal(runtime, high=1.0), size_out=dims)
     y = nengo.Node(size_in=dims)
     nengo.Connection(x, y, function=target_fn)
 
