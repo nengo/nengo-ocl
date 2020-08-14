@@ -19,10 +19,12 @@ from nengo.simulator import SimulationData
 from nengo.builder.builder import Model
 from nengo.builder.operator import Reset, BsrDotInc
 from nengo.builder.signal import SignalDict
+from nengo.builder.optimizer import optimize as opmerge_optimize
 from io import StringIO
 from nengo.utils.progress import ProgressTracker, Progress
 from nengo.utils.stdlib import groupby
 from nengo.utils.filter_design import ss2tf
+from nengo.utils.simulator import operator_dependency_graph
 
 from nengo_ocl.builder import Builder
 from nengo_ocl.raggedarray import RaggedArray
@@ -163,6 +165,14 @@ class Simulator(object):
         to OpenCL code.
     planner : callable
         A function to plan operator order. See ``nengo_ocl.planners``.
+    progress_bar : bool or ProgressBar, optional
+        Progress bar for displaying build and simulation progress.
+        If ``True``, the default progress bar will be used.
+        If ``False``, the progress bar will be disabled.
+    optimize : bool, optional
+        If ``True``, the builder will run an additional optimization step
+        which can be found in Nengo core. Since the algorithm is tailored to CPU,
+        the effects on OCL performance can vary significantly for different networks.
     """
 
     # --- Store the result of create_some_context so we don't recreate it
@@ -186,6 +196,7 @@ class Simulator(object):
         if_python_code="none",
         planner=greedy_planner,
         progress_bar=True,
+        optimize=False,
     ):
         # --- create these first since they are used in __del__
         self.closed = False
@@ -242,6 +253,14 @@ class Simulator(object):
                 self.model.build(network)
 
         logger.info("Nengo build in %0.3f s" % nengo_timer.duration)
+
+        # --- Nengo optimizer: Note this does not always improve Nengo OCL performance
+        if optimize:
+            with Timer() as optimizer_timer:
+                dg = operator_dependency_graph(self.model.operators)
+                opmerge_optimize(self.model, dg)
+
+            logger.info("Nengo optimize in %0.3f s" % optimizer_timer.duration)
 
         # --- operators
         with Timer() as planner_timer:
