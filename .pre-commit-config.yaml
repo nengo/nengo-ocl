@@ -5,7 +5,3 @@ repos:
     rev: 19.10b0
     hooks:
     - id: black
-      exclude: |
-          (?x)(
-              _vendor/*
-          )

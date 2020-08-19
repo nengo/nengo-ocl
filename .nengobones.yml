@@ -1,0 +1,16 @@
+project_name: NengoOCL
+pkg_name: nengo_ocl
+repo_name: nengo-labs/nengo-ocl
+description: OpenCL-based simulator for Nengo neural models
+
+copyright_start: 2013
+
+contributing_rst: {}
+
+manifest_in:
+  recursive-include:
+    - examples *.py
+
+pyproject_toml: {}
+
+pre_commit_config_yaml: {}
