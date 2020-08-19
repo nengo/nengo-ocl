@@ -7,14 +7,14 @@ API reference
 Simulator
 =========
 
-This is the Nengo OpenCL simulator.
+This is the NengoOCL simulator.
 It uses the Nengo builder to take a model
 and turn it into signals and operators.
-Then, we copy all the signals into OCL,
-and create OCL versions of all the operators.
+Then, we copy all the signals into OpenCL,
+and create OpenCL versions of all the operators.
 This is what the ``Simulator.plan_*`` functions do;
 each one of them is responsible for
-creating an OCL kernel (or kernels)
+creating an OpenCL kernel (or kernels)
 to execute the corresponding operator.
 
 .. autoclass:: nengo_ocl.Simulator

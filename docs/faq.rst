@@ -6,9 +6,9 @@ How do I add a new kernel?
 ==========================
 
 When you make a new Nengo neuron type or learning rule,
-it's unlikely that Nengo OpenCL
+it's unlikely that NengoOCL
 will know how to simulate it.
-To teach Nengo OpenCL how to simulate it,
+To teach NengoOCL how to simulate it,
 you have to write an OpenCL kernel.
 
 A good starting point for this
@@ -42,7 +42,7 @@ where N is the number of ``SimBCM`` operators
 that we've combined into this single kernel.
 
 Then there's the kernel itself.
-It starts by getting ids, as is typical with OCL kernels.
+It starts by getting ids, as is typical with OpenCL kernels.
 Here, ``k`` is the index of which array
 we're treating right now (0 <= k < N),
 so we use it to index into all of the input lists.

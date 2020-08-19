@@ -1,4 +1,4 @@
-"""Nengo OCL version information.
+"""NengoOCL version information.
 
 We use semantic versioning (see http://semver.org/).
 and conform to PEP440 (see https://www.python.org/dev/peps/pep-0440/).

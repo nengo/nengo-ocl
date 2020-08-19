@@ -55,7 +55,7 @@ General:
 * One or more OpenCL implementations (test with e.g. PyOpenCl)
 
 A working installation of OpenCL is the most difficult
-part of installing Nengo OCL. See below for more details
+part of installing NengoOCL. See below for more details
 on how to install OpenCL.
 
 Python packages:
@@ -108,21 +108,21 @@ A good resource for various cases is found in the PyOpenCL documentation:
   and a `more detailed guide <http://wiki.tiker.net/OpenCLHowTo>`_
 
 Below are instructions that have worked for the
-Nengo OCL developers at one point in time.
+NengoOCL developers at one point in time.
 
-AMD OCL on Debian Unstable
---------------------------
+AMD OpenCL on Debian Unstable
+-----------------------------
 
 On Debian unstable (sid) there are packages in non-free and contrib
-to install AMD's OCL implementation easily.
+to install AMD's OpenCL implementation easily.
 Actually, the easiest thing would be to apt-get install
 `python-pyopencl <http://packages.debian.org/sid/python-pyopencl>`_.
 But if you're using a virtual environment, you can
 ``sudo apt-get install opencl-headers libboost-python-dev amd-opencl-icd amd-libopencl1``
 and then ``pip install pyopencl``.
 
-Nvidia OCL on Debian/Ubuntu Linux
----------------------------------
+Nvidia OpenCL on Debian/Ubuntu Linux
+------------------------------------
 
 On Debian unstable (sid) there are packages
 for installing the Nvidia OpenCL implementation as well.
@@ -136,8 +136,8 @@ You can check the Nvidia driver version by running ``nvidia-smi`` in the
 command line. You can find the OpenCL library version by looking at the
 libnvidia-opencl.so.XXX.XX file in the ``/usr/lib/x86_64-linux-gnu/`` folder.
 
-Intel OCL on Debian/Ubuntu Linux
---------------------------------
+Intel OpenCL on Debian/Ubuntu Linux
+-----------------------------------
 
 The Intel SDK for OpenCL is no longer available. Intel OpenCL drivers
 can be found `on Intel's website <https://software.intel.com/en-us/articles/opencl-drivers>`_.

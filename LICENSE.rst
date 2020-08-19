@@ -1,12 +1,12 @@
-*****************
-Nengo OCL license
-*****************
+****************
+NengoOCL license
+****************
 
-Nengo OCL is made available under a proprietary license that permits
+NengoOCL is made available under a proprietary license that permits
 using, copying, sharing, and making derivative works
-from Nengo OCL and its source code for any non-commercial purpose.
+from NengoOCL and its source code for any non-commercial purpose.
 
-If you would like to use Nengo OCL commercially, licenses can be
+If you would like to use NengoOCL commercially, licenses can be
 purchased from Applied Brain Research, Inc. Please contact
 info@appliedbrainresearch.com for more information.
 
@@ -14,7 +14,7 @@ info@appliedbrainresearch.com for more information.
 Licensed code
 *************
 
-Nengo OCL imports several open source libraries.
+NengoOCL imports several open source libraries.
 
 * `NumPy <http://www.numpy.org/>`_ - Used under
   `BSD license <http://www.numpy.org/license.html>`_
@@ -39,10 +39,10 @@ Contributor Assignment Agreement
 
 Based on Harmony (HA-CAA-I-ANY) Version 1.0, with minor changes.
 
-Nengo OCL Individual Contributor Assignment Agreement
+NengoOCL Individual Contributor Assignment Agreement
 =====================================================
 
-Thank you for your interest in contributing to Nengo OCL, a product of
+Thank you for your interest in contributing to NengoOCL, a product of
 Applied Brain Research ("We" or "Us").
 
 This contributor agreement (the "Agreement") documents the rights
