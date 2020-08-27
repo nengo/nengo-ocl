@@ -23,3 +23,39 @@ docs_conf_py:
   intersphinx_mapping:
     pyopencl: https://documen.tician.de/pyopencl/
     scipy: https://docs.scipy.org/doc/scipy/reference/
+
+setup_py:
+  url: https://labs.nengo.ai/nengo-ocl/
+  include_package_data: True
+  python_requires: ">=3.5"
+  install_req:
+    - nengo>=3.0.0,<3.1.0
+    - mako
+    - pyopencl
+  docs_req:
+    - matplotlib>=1.4
+    - nbsphinx
+    - nengo-sphinx-theme>=1.2.0
+    - numpydoc>=0.6.0
+    - sphinx>=1.8
+  tests_req:
+    - matplotlib>=1.4
+    - pytest>=3.6.0
+    - pytest-allclose>=1.0.0
+    - pytest-plt>=1.0.0
+    - pytest-rng>=1.0.0
+  entry_points:
+    nengo.backends:
+      - ocl = nengo_ocl:Simulator
+  classifiers:
+      - "Development Status :: 5 - Production/Stable"
+      - "Framework :: Nengo"
+      - "Intended Audience :: Science/Research"
+      - "License :: Free for non-commercial use"
+      - "Operating System :: OS Independent"
+      - "Programming Language :: Python"
+      - "Programming Language :: Python :: 3.5"
+      - "Programming Language :: Python :: 3.6"
+      - "Programming Language :: Python :: 3.7"
+      - "Topic :: Scientific/Engineering"
+      - "Topic :: Scientific/Engineering :: Artificial Intelligence"
