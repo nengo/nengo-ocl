@@ -51,8 +51,7 @@ def round_up(x, n):
 
 
 def split(iterator, criterion):
-    """Returns a list of objects that match criterion and those that do not.
-    """
+    """Returns a list of objects that match criterion and those that do not."""
     a = []
     b = []
     for x in iterator:

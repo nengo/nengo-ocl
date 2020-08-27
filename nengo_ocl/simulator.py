@@ -428,8 +428,7 @@ class Simulator(object):
 
     @property
     def signals(self):
-        """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)
-        """
+        """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)"""
 
         class Accessor(Mapping):
             def __iter__(_):
@@ -720,14 +719,14 @@ class Simulator(object):
             *args,
             beta=[op._float_beta for op in constant_bs],
             gamma=[op.gamma for op in constant_bs],
-            tag="c-beta-%d" % len(constant_bs)
+            tag="c-beta-%d" % len(constant_bs),
         )
         vector_b_gemvs = self._sig_gemv(
             vector_bs,
             *args,
             beta=lambda op: self._YYB_views[op][2],
             gamma=[op.gamma for op in vector_bs],
-            tag="v-beta-%d" % len(vector_bs)
+            tag="v-beta-%d" % len(vector_bs),
         )
         return constant_b_gemvs + vector_b_gemvs
 

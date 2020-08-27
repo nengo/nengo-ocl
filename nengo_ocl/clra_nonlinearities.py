@@ -1116,7 +1116,7 @@ def plan_lif(
         inputs=inputs,
         outputs=outputs,
         parameters=parameters,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -1167,7 +1167,7 @@ def plan_lif_rate(
         inputs=inputs,
         outputs=outputs,
         parameters=parameters,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -1205,7 +1205,7 @@ def plan_spiking_rectified_linear(queue, dt, J, V, outS, amp, **kwargs):
         inputs=inputs,
         outputs=outputs,
         parameters=parameters,
-        **kwargs
+        **kwargs,
     )
 
 
@@ -1229,7 +1229,7 @@ def plan_rectified_linear(queue, J, R, amp, **kwargs):
         inputs=dict(J=J),
         outputs=dict(R=R),
         parameters=dict(amp=amp),
-        **kwargs
+        **kwargs,
     )
 
 
@@ -1253,7 +1253,7 @@ def plan_sigmoid(queue, J, R, ref, **kwargs):
         inputs=dict(J=J),
         outputs=dict(R=R),
         parameters=dict(ref=ref),
-        **kwargs
+        **kwargs,
     )
 
 

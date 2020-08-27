@@ -65,7 +65,11 @@ setup(
         "pytest-plt>=1.0.0",
         "pytest-rng>=1.0.0",
     ],
-    entry_points={"nengo.backends": ["ocl = nengo_ocl:Simulator",]},
+    entry_points={
+        "nengo.backends": [
+            "ocl = nengo_ocl:Simulator",
+        ]
+    },
     python_requires=">=3.5",
     classifiers=[  # https://pypi.python.org/pypi?%3Aaction=list_classifiers
         "Development Status :: 5 - Production/Stable",

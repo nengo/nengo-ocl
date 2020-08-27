@@ -45,7 +45,7 @@ def test_basic(ctx):
     # -- prepare initial conditions on host
     A = RA([[[0.1, 0.2], [0.3, 0.4]], [[0.5, 0.6]]])
     X = RA([[3, 5]])
-    Y = RA([[0.0], [2, 3],])
+    Y = RA([[0.0], [2, 3]])
     A_js = RA([[1], [0]], dtype=np.int32)
     X_js = RA([[0], [0]], dtype=np.int32)
     # alpha = 0.5
@@ -146,9 +146,7 @@ def test_many_dots_large(ctx):
     _test_random(ctx, k=4, p=4, m=2000, n=1000)
 
 
-def check_from_shapes(
-    ctx, planner, alpha, beta, gamma, A_shapes, X_shapes, A_js, X_js,
-):
+def check_from_shapes(ctx, planner, alpha, beta, gamma, A_shapes, X_shapes, A_js, X_js):
     rng = np.random.RandomState(1234)
     A = RA([0.1 + rng.rand(*shp) for shp in A_shapes])
     X = RA([0.1 + rng.rand(*shp) for shp in X_shapes])

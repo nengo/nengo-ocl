@@ -439,9 +439,7 @@ def ref_impl(p, items):
     return rval
 
 
-def reduce_impl(
-    p, items, group_size=None, segment_size=None,
-):
+def reduce_impl(p, items, group_size=None, segment_size=None):
 
     #
     # Target use case: long inner products, small numbers of dots.
@@ -714,7 +712,7 @@ def many_dots_impl(p, items):
 
     segment_size = min(max_y_len, MAX_SEGMENT_SIZE)
     dot_block_size = min(
-        max(max_n_dots, 1), int(p.queue.device.max_work_group_size / segment_size),
+        max(max_n_dots, 1), int(p.queue.device.max_work_group_size / segment_size)
     )
 
     n_segments = int(np.ceil(float(max_y_len) / segment_size))
