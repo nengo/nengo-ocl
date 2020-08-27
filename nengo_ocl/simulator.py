@@ -555,14 +555,12 @@ class Simulator(object):
         ----------
         time_in_seconds : float
             Amount of time to run the simulation for. Must be positive.
-        progress_bar : bool or `.ProgressBar` or `.ProgressUpdater`, optional \
-                       (Default: True)
+        progress_bar : bool or `nengo.utils.progress.ProgressBar`, optional
             Progress bar for displaying the progress of the simulation run.
-
-            If True, the default progress bar will be used.
+            If True (default), the default progress bar will be used.
             If False, the progress bar will be disabled.
-            For more control over the progress bar, pass in a `.ProgressBar`
-            or `.ProgressUpdater` instance.
+            For more control over the progress bar, pass in a
+            `nengo.utils.progress.ProgressBar` instance.
         """
         if time_in_seconds < 0:
             raise ValidationError(

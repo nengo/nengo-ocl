@@ -30,6 +30,10 @@ Release History
 - ``Convolution`` transforms are now supported. The previous code supporting ``Conv2d``
   and ``Pool2d`` processes (from NengoExtras) has been removed.
 
+**Documentation**
+
+- The documentation is now online at https://labs.nengo.ai/nengo-ocl/
+
 1.4.0 (July 4, 2018)
 ====================
 

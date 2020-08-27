@@ -2,7 +2,7 @@
 OpenCL-based Nengo Simulator
 ****************************
 
-This project is an OpenCL-based simulator for
+NengoOCL is an OpenCL-based simulator for
 brain models built using `Nengo <https://github.com/nengo/nengo>`_.
 It can be orders of magnitude faster than the reference simulator
 in ``nengo`` for large models.

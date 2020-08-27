@@ -1248,10 +1248,10 @@ def plan_sparse_dot_inc(queue, A_indices, A_indptr, A_data, X, Y, inc=False, tag
     inc : bool
         Whether to increment ``Y`` (True), or set it (False).
 
-    Status
-    ------
-    It crashes when there are >10M nonzero weights. In this case,
-        A solution would be some way to tell each work item to do multiple rows
+    Notes
+    -----
+    This function crashes when there are >10M nonzero weights. A potential solution
+    would be some way to tell each work item to do multiple rows.
     """
     assert len(X) == len(Y) == 1
 

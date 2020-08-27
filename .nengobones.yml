@@ -16,3 +16,10 @@ manifest_in:
 pyproject_toml: {}
 
 pre_commit_config_yaml: {}
+
+docs_conf_py:
+  nengo_logo: nengo-ocl-full-light.svg
+  nengo_logo_color: "#69c530"
+  intersphinx_mapping:
+    pyopencl: https://documen.tician.de/pyopencl/
+    scipy: https://docs.scipy.org/doc/scipy/reference/

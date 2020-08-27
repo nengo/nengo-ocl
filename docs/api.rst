@@ -31,7 +31,7 @@ Each plan function follows roughly the same template:
 2. Generate the C code for the kernel,
    using Mako to fill in variable things like datatypes.
 3. Compile the C code as a PyOpenCL Program, and set the arguments.
-4. Create and return a `.Plan` object responsible for executing
+4. Create and return a ``Plan`` object responsible for executing
    that `pyopencl.Program`.
 
 .. automodule:: nengo_ocl.clra_nonlinearities
