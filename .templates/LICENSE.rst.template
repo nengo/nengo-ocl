@@ -1,0 +1,23 @@
+{% include "templates/LICENSE.rst.template" %}
+
+Licensed code
+=============
+
+NengoOCL imports several open source libraries.
+
+* `NumPy <http://www.numpy.org/>`_ - Used under
+  `BSD license <http://www.numpy.org/license.html>`_
+* `NetworkX <https://networkx.github.io/>`_ - Used under
+  `BSD license <http://networkx.github.io/documentation/networkx-1.9.1/reference/legal.html>`_
+* `PyOpenCL <http://mathema.tician.de/software/pyopencl/>`_ - Used under
+  `MIT license <http://documen.tician.de/pyopencl/misc.html#license>`_
+
+------------
+
+A majority of the code prior to October 10, 2014
+is copyright James Bergstra,
+and is included in this repository under the terms of
+a transferable royalty-free license
+granted to Applied Brain Research Inc.
+Please contact info@appliedbrainresearch.com
+for more information.

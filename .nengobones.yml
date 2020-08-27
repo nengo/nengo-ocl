@@ -7,6 +7,8 @@ copyright_start: 2013
 
 contributing_rst: {}
 
+license_rst: {}
+
 manifest_in:
   recursive-include:
     - examples *.py
