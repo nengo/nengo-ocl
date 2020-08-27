@@ -273,7 +273,7 @@ def test_one_short_segment_many_longer_dots(ctx, planner):
         )
 
 
-def test_speed(ctx, rng):
+def test_speed(ctx, rng):  # noqa: C901
     try:
         import pyopencl_blas
     except ImportError:

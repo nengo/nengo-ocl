@@ -256,7 +256,7 @@ class gemv_prog(object):
         return cl_gstructure, textconf
 
 
-def ref_impl(p, items):
+def ref_impl(p, items):  # noqa: C901
     """Return an OCL function to calculate ``items`` of gemv operation ``p``.
 
     In this reference implementation, we create a work item per output number,
@@ -439,7 +439,7 @@ def ref_impl(p, items):
     return rval
 
 
-def reduce_impl(p, items, group_size=None, segment_size=None):
+def reduce_impl(p, items, group_size=None, segment_size=None):  # noqa: C901
 
     #
     # Target use case: long inner products, small numbers of dots.
@@ -665,7 +665,7 @@ def reduce_impl(p, items, group_size=None, segment_size=None):
     return rval
 
 
-def many_dots_impl(p, items):
+def many_dots_impl(p, items):  # noqa: C901
     # target use case:
     # * several very shallow gemvs (short inner prods) into each target
     # * not all targets have the same size
@@ -853,7 +853,7 @@ def many_dots_impl(p, items):
     return rval
 
 
-def block_impl(p, items):
+def block_impl(p, items):  # noqa: C901
 
     if p.clra_alpha is not None:
         raise NotImplementedError()

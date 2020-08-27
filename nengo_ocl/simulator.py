@@ -172,7 +172,7 @@ class Simulator(object):
     def RaggedArray(self, listofarrays, **kwargs):
         return CLRaggedArray.from_arrays(self.queue, listofarrays, **kwargs)
 
-    def __init__(
+    def __init__(  # noqa: C901
         self,
         network,
         dt=0.001,
@@ -426,7 +426,7 @@ class Simulator(object):
         """(float) The current time of the simulator."""
         return self._time
 
-    @property
+    @property  # noqa: C901
     def signals(self):
         """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)"""
 
@@ -583,7 +583,7 @@ class Simulator(object):
             )
             self.run_steps(steps, progress_bar=progress_bar)
 
-    def run_steps(self, steps, progress_bar=True):
+    def run_steps(self, steps, progress_bar=True):  # noqa: C901
         if self.closed:
             raise SimulatorClosed("Simulator cannot run because it is closed.")
 
@@ -1339,7 +1339,7 @@ class Simulator(object):
             if hasattr(plan, "description"):
                 print(indent(plan.description, 4))
 
-    def print_profiling(self, sort=None):
+    def print_profiling(self, sort=None):  # noqa: C901
         """
         Parameters
         ----------

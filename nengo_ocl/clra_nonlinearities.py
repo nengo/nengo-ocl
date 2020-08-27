@@ -1257,7 +1257,7 @@ def plan_sigmoid(queue, J, R, ref, **kwargs):
     )
 
 
-def _plan_template(
+def _plan_template(  # noqa: C901
     queue,
     name,
     core_text,

@@ -930,7 +930,7 @@ class OCL_Function(object):
         return "\n".join(self._flatten(self.translator.body))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # noqa: C901
 
     def ocl_f(*args, **kwargs):
         ocl_fn = OCL_Function(*args, **kwargs)

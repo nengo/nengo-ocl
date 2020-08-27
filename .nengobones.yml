@@ -59,3 +59,55 @@ setup_py:
       - "Programming Language :: Python :: 3.7"
       - "Topic :: Scientific/Engineering"
       - "Topic :: Scientific/Engineering :: Artificial Intelligence"
+
+setup_cfg:
+  pytest:
+    markers:
+      example: Mark a test as an example.
+      slow: Mark a test as slow to skip it per default.
+    norecursedirs:
+      - plots
+    nengo_simulator: nengo_ocl.Simulator
+    nengo_test_unsupported:
+      tests/test_cache.py::test_cache_concurrency:
+        Starting multiple simulators not supported
+      tests/test_connection.py::test_list_indexing*:
+        Advanced indexing with repeated indices not implemented
+      tests/test_connection.py::test_neuron_advanced_indexing:
+        Advanced indexing with repeated indices not implemented
+      tests/test_copy.py::test_pickle_sim*:
+        Pickling simulator not implemented
+      tests/test_neurons.py::test_izhikevich:
+        Izhikevich neurons not implemented
+      tests/test_neurons.py::test_lif_min_voltage*:
+        Min voltage not implemented
+      tests/test_node.py::test_none:
+        No error if nodes output None
+      tests/test_node.py::test_invalid_values*:
+        No error for invalid node values
+      tests/test_neurons.py::test_direct_mode_nonfinite_value:
+        No error for non-finite values
+      tests/test_processes.py::test_brownnoise:
+        Filtered noise processes not yet implemented
+      tests/test_ensemble.py::test_noise_copies_ok*:
+        Filtered noise processes not yet implemented
+      tests/test_processes.py::TestPiecewise*test_interpolation_?d:
+        float32 rounding issues
+      tests/test_synapses.py::test_triangle:
+        Only linear filters implemented
+      tests/test_learning_rules.py::test_custom_type:
+        Copying 2-D arrays not implemented
+      tests/test_simulator.py::test_dtype[16]:
+        Only float32 dtype supported
+      tests/test_simulator.py::test_dtype[64]:
+        Only float32 dtype supported
+      tests/test_simulator.py::test_probe_cache:
+        Changing simulator seed not implemented
+      tests/test_transforms.py::test_sparse[False-*:
+        Sparse transforms only implemented with Scipy
+      tests/test_builder.py::test_commonsig_readonly:
+        Specific to nengo.Simulator
+    allclose_tolerances:
+      # tol for synapses is high b/c Nengo uses SS and we use num/den
+      - tests/test_synapses.py::test_* atol=1e-5
+      - tests/test_transforms.py::test_convolution[* atol=1e-5

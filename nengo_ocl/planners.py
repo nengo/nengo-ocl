@@ -4,7 +4,7 @@ from nengo.builder.operator import Operator
 from nengo.utils.simulator import operator_dependency_graph
 
 
-def greedy_planner(operators):
+def greedy_planner(operators):  # noqa: C901
     edges = operator_dependency_graph(operators)
 
     is_op = lambda op: isinstance(op, Operator)

@@ -199,7 +199,7 @@ def test_sin_conn(OclOnlySimulator):
     _test_conn(OclOnlySimulator, np.sin, 1, n=10)
 
 
-def test_functions(OclOnlySimulator, capsys, n_points=10):
+def test_functions(OclOnlySimulator, capsys, n_points=10):  # noqa: C901
     """Test the function maps in ast_converter.py"""
     # TODO: split this into one test per function using py.test utilities
 
