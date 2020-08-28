@@ -34,7 +34,7 @@ import nengo_ocl
 # -- sphinx.ext.intersphinx
 intersphinx_mapping = {
     "nengo": ("https://www.nengo.ai/nengo/", None),
-    "numpy": ("https://docs.scipy.org/doc/numpy", None),
+    "numpy": ("https://numpy.org/doc/stable", None),
     "python": ("https://docs.python.org/3", None),
     "pyopencl": ("https://documen.tician.de/pyopencl/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy/reference/", None),
@@ -83,4 +83,5 @@ html_favicon = os.path.join("_static", "favicon.ico")
 html_theme_options = {
     "nengo_logo": "nengo-ocl-full-light.svg",
     "nengo_logo_color": "#69c530",
+    "tagmanager_id": "GTM-KWCR2HN",
 }

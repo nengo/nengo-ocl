@@ -23,6 +23,7 @@ docs_conf_py:
   intersphinx_mapping:
     pyopencl: https://documen.tician.de/pyopencl/
     scipy: https://docs.scipy.org/doc/scipy/reference/
+  tagmanager_id: GTM-KWCR2HN
 
 setup_py:
   url: https://labs.nengo.ai/nengo-ocl/
