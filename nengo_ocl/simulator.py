@@ -471,6 +471,15 @@ class Simulator(object):
         return Accessor()
 
     # --- Simulation functions (see ``nengo.Simulator`` for interface)
+    def clear_probes(self):
+        """Clear all probe histories.
+
+        .. versionadded:: 2.0.0
+        """
+        for probe in self.model.probes:
+            self._probe_outputs[probe] = []
+        self.data.reset()  # clear probe cache
+
     def close(self):
         """Closes the simulator.
 

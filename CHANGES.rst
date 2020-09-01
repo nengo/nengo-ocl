@@ -29,6 +29,7 @@ Release History
 - ``Sparse`` transforms are now supported.
 - ``Convolution`` transforms are now supported. The previous code supporting ``Conv2d``
   and ``Pool2d`` processes (from NengoExtras) has been removed.
+- Added ``Simulator.clear_probes`` method to clear probe data stored in memory.
 
 **Documentation**
 

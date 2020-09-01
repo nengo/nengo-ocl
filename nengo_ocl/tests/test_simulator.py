@@ -84,3 +84,23 @@ def test_reset():
         ub = np.array(sim.data[up])
 
     assert np.allclose(ua, ub)
+
+
+def test_clear_probes(Simulator, allclose):
+    fn = lambda t: np.sin(10 * t)
+
+    with nengo.Network() as net:
+        u = nengo.Node(fn)
+        up = nengo.Probe(u)
+
+    with Simulator(net, seed=0) as sim:
+        sim.run_steps(10)
+        assert len(sim.data[up]) == 10
+        assert allclose(sim.data[up], fn(sim.trange())[:, None])
+
+        sim.clear_probes()
+        assert len(sim.data[up]) == 0
+
+        sim.run_steps(12)
+        assert len(sim.data[up]) == 12
+        assert allclose(sim.data[up], fn(sim.trange()[10:, None]))
