@@ -13,27 +13,33 @@ Release History
 
 .. Changes should be organized in one of several sections:
 
-   - Features
-   - Improvements
-   - Bugfixes
-   - Documentation
+   - Added
+   - Changed
+   - Deprecated
+   - Removed
+   - Fixed
 
 2.0.0 (unreleased)
 ==================
 
-**Improvements**
+**Added**
 
-- Now requires Python >= 3.5.
-- Now supports Nengo 3.0.0. Note that support for previous Nengo
-  versions has been dropped.
-- ``Sparse`` transforms are now supported.
-- ``Convolution`` transforms are now supported. The previous code supporting ``Conv2d``
-  and ``Pool2d`` processes (from NengoExtras) has been removed.
+- The documentation is now online at https://labs.nengo.ai/nengo-ocl/ (`#179`_)
+- ``Sparse`` transforms are now supported. (`#176`_)
 - Added ``Simulator.clear_probes`` method to clear probe data stored in memory.
+  (`#179`_)
 
-**Documentation**
+**Changed**
 
-- The documentation is now online at https://labs.nengo.ai/nengo-ocl/
+- Now requires Python >= 3.5. (`#172`_)
+- Now supports Nengo 3.0.0. Note that support for previous Nengo
+  versions has been dropped. (`#172`_)
+- ``Convolution`` transforms are now supported. The previous code supporting ``Conv2d``
+  and ``Pool2d`` processes (from NengoExtras) has been removed. (`#172`_)
+
+.. _#172: https://github.com/nengo-labs/nengo-ocl/pull/172
+.. _#176: https://github.com/nengo-labs/nengo-ocl/pull/176
+.. _#179: https://github.com/nengo-labs/nengo-ocl/pull/179
 
 1.4.0 (July 4, 2018)
 ====================
