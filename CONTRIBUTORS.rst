@@ -17,6 +17,7 @@ If you agree, then add yourself to the file like so::
 
 Please keep this list sorted alphabetically by first name.
 
+- Alex Tait <atait@ieee.org>
 - Bryan Tripp <bptripp@uwaterloo.ca>
 - Eric Hunsberger <eric.hunsberger@appliedbrainresearch.com>
 - Ménélik Vero <menelik.vero@tum.de>
