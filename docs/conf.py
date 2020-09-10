@@ -14,10 +14,11 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.mathjax",
     "sphinx.ext.todo",
-    "sphinx.ext.viewcode",
     "nbsphinx",
     "nengo_sphinx_theme",
     "nengo_sphinx_theme.ext.backoff",
+    "nengo_sphinx_theme.ext.sourcelinks",
+    "notfound.extension",
     "numpydoc",
 ]
 
@@ -43,11 +44,19 @@ intersphinx_mapping = {
 # -- sphinx.ext.todo
 todo_include_todos = True
 
+# -- nbsphinx
+nbsphinx_timeout = -1
+
+# -- notfound.extension
+notfound_template = "404.html"
+notfound_urls_prefix = "/nengo-ocl/"
+
 # -- numpydoc config
 numpydoc_show_class_members = False
 
-# -- nbsphinx
-nbsphinx_timeout = -1
+# -- nengo_sphinx_theme.ext.sourcelinks
+sourcelinks_module = "nengo_ocl"
+sourcelinks_url = "https://github.com/nengo-labs/nengo-ocl"
 
 # -- sphinx
 nitpicky = True
