@@ -1,0 +1,1604 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>nengo_ocl.clra_gemv &#8212; NengoOCL 2.0.0.dev0 docs</title>
+    <link rel="stylesheet" href="../../_static/basic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+<link href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:400,400i,600|Rajdhani:700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.8.2/css/all.css" integrity="sha384-oS3vJWv+0UjzBfQzYUhtDYW+Pj2yciDJxpsK1OYPAYjqT085Qq/1cq5FLXAZQ7Ay" crossorigin="anonymous">
+<link rel="stylesheet" href="https://www.nengo.ai/css/bootstrap.css" type="text/css">
+<style>
+  body .title-bar,
+  body .documentation-source h1:after {
+    background-color: #69c530;
+  }
+</style>
+<!-- Google Tag Manager -->
+<script>
+ (function (w, d, s, l, i) {
+   w[l] = w[l] || [];
+   w[l].push({ "gtm.start": new Date().getTime(), event: "gtm.js" });
+   var f = d.getElementsByTagName(s)[0],
+       j = d.createElement(s),
+       dl = l != "dataLayer" ? "&l=" + l : "";
+   j.async = true;
+   j.src = "https://www.googletagmanager.com/gtm.js?id=" + i + dl;
+   f.parentNode.insertBefore(j, f);
+ })(window, document, "script", "dataLayer", "GTM-KWCR2HN");
+</script>
+<!-- End Google Tag Manager -->
+<script src="https://code.jquery.com/jquery-3.3.1.min.js" integrity="sha256-FgpCb/KJQlLNfOu91ta32o/NMZxltwRo8QtmkMRdAu8=" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.3/umd/popper.min.js" integrity="sha384-ZMP7rVo3mIykV+2+9J3UJ46jBk0WLaUAdn689aCwoqbBJiSnjAK/l8WvCWPIPm49" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/scrollreveal"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/stickyfill/2.1.0/stickyfill.min.js"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.1.1/js/bootstrap.min.js" integrity="sha384-smHYKdLADwkXOn1EmN1qk/HfnUcbVRZyYmZ4qpPea6sjB/pTJ0euyQp0Mk8ck+5T" crossorigin="anonymous"></script>
+<!-- From basic/layout.html -->
+<script type="text/javascript" id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+  
+  
+<script src="../../_static/underscore.js"></script>
+  
+  
+<script src="../../_static/doctools.js"></script>
+  
+  
+<script src="../../_static/language_data.js"></script>
+  
+    <link rel="shortcut icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+  </head><body class="bg-dark">
+
+<header class="fixed-top header-top shadow-sm">
+  <nav class="navbar navbar-expand-md navbar-light bg-white">
+    <a class="navbar-brand" href="https://www.nengo.ai/">
+      <img
+        src="https://www.nengo.ai/design/_images/general-full-light.svg"
+        alt="Nengo"
+        class="logo"
+      />
+    </a>
+    <button
+      class="navbar-toggler"
+      type="button"
+      data-toggle="collapse"
+      data-target="#navbar-collapse"
+      aria-controls="navbar-collapse"
+      aria-expanded="false"
+      aria-label="Toggle navigation"
+    >
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbar-collapse">
+      <ul class="navbar-nav ml-auto">
+        <li class="nav-item">
+          <a class="nav-link" href="https://www.nengo.ai/">What is Nengo?</a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="https://www.nengo.ai/examples/">Examples</a>
+        </li>
+        <li class="nav-item dropdown active">
+          <a
+            class="nav-link dropdown-toggle"
+            id="navbar-dropdown-docs"
+            data-toggle="dropdown"
+            aria-haspopup="true"
+            aria-expanded="false"
+            href="#"
+            >Documentation</a
+          >
+          <div
+            class="dropdown-menu shadow-lg border-0"
+            aria-labelledby="navbar-dropdown-docs"
+          >
+            
+            <a class="dropdown-item" href="https://www.nengo.ai/nengo/">Nengo core</a>
+            <a class="dropdown-item" href="https://github.com/nengo/nengo-gui/">NengoGUI</a>
+            <a class="dropdown-item" href="https://www.nengo.ai/nengo-dl/">NengoDL</a>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item" href="https://www.nengo.ai/nengo-spa/">NengoSPA</a>
+            <a class="dropdown-item" href="https://www.nengo.ai/nengo-extras/">NengoExtras</a>
+            <a class="dropdown-item" href="https://arvoelke.github.io/nengolib-docs/">Nengolib</a>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item" href="https://www.nengo.ai/nengo-fpga/">NengoFPGA</a>
+            <a class="dropdown-item" href="https://www.nengo.ai/nengo-loihi/">NengoLoihi</a>
+            <a class="dropdown-item" href="https://labs.nengo.ai/nengo-ocl/">NengoOCL</a>
+            <a class="dropdown-item" href="https://github.com/project-rig/nengo_spinnaker">NengoSpiNNaker</a>
+            <a class="dropdown-item" href="https://github.com/nengo-labs/nengo-mpi">NengoMPI</a>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item" href="https://www.nengo.ai/keras-spiking">KerasSpiking</a>
+            <a class="dropdown-item" href="https://www.nengo.ai/pytorch-spiking">PyTorchSpiking</a>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item" href="https://www.nengo.ai/documentation/"
+              >All documentation</a
+            >
+          </div>
+        </li>
+        <li class="nav-item dropdown">
+          <a
+            class="nav-link dropdown-toggle"
+            id="navbar-dropdown-community"
+            data-toggle="dropdown"
+            aria-haspopup="true"
+            aria-expanded="false"
+            href="#"
+            >Community</a
+          >
+          <div
+            class="dropdown-menu shadow-lg border-0"
+            aria-labelledby="navbar-dropdown-community"
+          >
+            <a class="dropdown-item" href="https://forum.nengo.ai">Forum</a>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item" href="https://www.nengo.ai/people/"
+              >People</a
+            >
+            <a class="dropdown-item" href="https://www.nengo.ai/summer-school/"
+              >Summer school</a
+            >
+            <a class="dropdown-item" href="https://www.nengo.ai/contributing/"
+              >Contributing</a
+            >
+            <a class="dropdown-item" href="https://www.nengo.ai/publications/"
+              >Publications</a
+            >
+            <a class="dropdown-item" href="https://www.nengo.ai/videos/"
+              >Videos</a
+            >
+            <a class="dropdown-item" href="https://www.nengo.ai/conduct/"
+              >Code of conduct</a
+            >
+            <a class="dropdown-item" href="https://www.nengo.ai/caa/">CAA</a>
+          </div>
+        </li>
+        <li class="nav-item">
+          <a
+            class="nav-link btn btn-success btn-sm text-white"
+            href="https://www.nengo.ai/getting-started/"
+            >Getting started</a
+          >
+        </li>
+      </ul>
+    </div>
+  </nav>
+</header>
+<div class="main-content gradient-top">
+  <div class="container-fluid">
+    <div class="row"><a class="toggle-sidenav d-block d-md-none" href="#"
+  ><i class="icon-close fa fa-fw fa-arrow-left"></i
+  ><i class="icon-open fa fa-fw fa-arrow-right"></i
+></a>
+<div role="complementary" class="sidenav col-4 col-xl-3 p-0 border-right">
+  <h3 class="pt-5 px-5">
+    <a href="../../index.html">
+      <img
+        class="img-fluid documentation-image"
+        src="https://www.nengo.ai/design/_images/nengo-ocl-full-light.svg"
+        alt="NengoOCL"
+      />
+    </a>
+  </h3>
+<form class="px-5 py-3 my-0 border-bottom" action="../../search.html" method="get">
+  <div class="form-group form-group-single">
+    <input type="text" name="q" class="form-control" placeholder="Search" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+    <button type="submit" class="btn btn-link">
+      <img src="https://www.nengo.ai/img/icon-search.svg" alt="Go" />
+    </button>
+  </div>
+</form><div class="p-5 toctree">
+  
+    <p class="caption"><span class="caption-text">Contents</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../faq.html">Frequently asked questions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../api.html">API reference</a></li>
+</ul>
+
+  
+  </div>
+  
+</div>
+      
+
+      <div class="col-12 col-md-8 col-xl-9">
+        <div class="container">
+          <div class="row">
+            <div class="col-10 offset-1 pb-5 documentation-source" role="main">
+              
+              
+  <h1>Source code for nengo_ocl.clra_gemv</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span> <span class="nn">collections</span> <span class="k">import</span> <span class="n">defaultdict</span>
+
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">pyopencl</span> <span class="k">as</span> <span class="nn">cl</span>
+<span class="kn">from</span> <span class="nn">mako.template</span> <span class="k">import</span> <span class="n">Template</span>
+
+<span class="kn">from</span> <span class="nn">nengo_ocl.clraggedarray</span> <span class="k">import</span> <span class="n">CLRaggedArray</span><span class="p">,</span> <span class="n">to_device</span>
+<span class="kn">from</span> <span class="nn">nengo_ocl.plan</span> <span class="k">import</span> <span class="n">Plan</span>
+<span class="kn">from</span> <span class="nn">nengo_ocl.utils</span> <span class="k">import</span> <span class="n">as_ascii</span>
+
+
+<span class="k">def</span> <span class="nf">float_cl_clra</span><span class="p">(</span><span class="n">queue</span><span class="p">,</span> <span class="n">arg</span><span class="p">,</span> <span class="n">cl_dtype</span><span class="p">,</span> <span class="n">N</span><span class="p">):</span>
+    <span class="n">float_arg</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">cl_arg</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">clra_arg</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">arg</span><span class="p">,</span> <span class="n">CLRaggedArray</span><span class="p">):</span>
+        <span class="n">clra_arg</span> <span class="o">=</span> <span class="n">arg</span>
+        <span class="k">assert</span> <span class="n">arg</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">cl_dtype</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">arg</span><span class="p">,</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="n">float_arg</span> <span class="o">=</span> <span class="n">arg</span>
+    <span class="k">elif</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">arg</span><span class="p">))</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">float_arg</span> <span class="o">=</span> <span class="n">arg</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">host_arg</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">arg</span><span class="p">,</span> <span class="n">cl_dtype</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">host_arg</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="p">(</span><span class="n">N</span><span class="p">,)</span>
+        <span class="n">cl_arg</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span><span class="n">queue</span><span class="p">,</span> <span class="n">host_arg</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">float_arg</span><span class="p">,</span> <span class="n">cl_arg</span><span class="p">,</span> <span class="n">clra_arg</span>
+
+
+<span class="k">def</span> <span class="nf">flops_from_geometry</span><span class="p">(</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">):</span>
+    <span class="n">flops</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
+        <span class="n">gi</span> <span class="o">=</span> <span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">dotinfo</span> <span class="ow">in</span> <span class="n">gi</span><span class="p">[</span><span class="s2">&quot;dots&quot;</span><span class="p">]:</span>
+            <span class="c1"># -- for every value of A, we</span>
+            <span class="c1">#    (1) mult with some x</span>
+            <span class="c1">#    (2) add to a resulting inner-product</span>
+            <span class="n">flops</span> <span class="o">+=</span> <span class="n">dotinfo</span><span class="p">[</span><span class="s2">&quot;a_shape1&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">gi</span><span class="p">[</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="mi">2</span>
+        <span class="c1"># XXX Generously assuming alpha &amp; beta in use</span>
+        <span class="n">flops</span> <span class="o">+=</span> <span class="n">gi</span><span class="p">[</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="mi">3</span>
+    <span class="k">return</span> <span class="n">flops</span>
+
+
+<span class="k">def</span> <span class="nf">bw_from_geometry</span><span class="p">(</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">):</span>
+    <span class="n">n_bytes</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">elemsize</span> <span class="o">=</span> <span class="mi">4</span>
+    <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
+        <span class="n">gi</span> <span class="o">=</span> <span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">dotinfo</span> <span class="ow">in</span> <span class="n">gi</span><span class="p">[</span><span class="s2">&quot;dots&quot;</span><span class="p">]:</span>
+            <span class="c1"># -- load A</span>
+            <span class="n">n_bytes</span> <span class="o">+=</span> <span class="n">elemsize</span> <span class="o">*</span> <span class="n">dotinfo</span><span class="p">[</span><span class="s2">&quot;a_shape1&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">gi</span><span class="p">[</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span>
+            <span class="c1"># -- load X</span>
+            <span class="n">n_bytes</span> <span class="o">+=</span> <span class="n">elemsize</span> <span class="o">*</span> <span class="n">dotinfo</span><span class="p">[</span><span class="s2">&quot;a_shape1&quot;</span><span class="p">]</span>
+
+        <span class="c1"># -- load alpha scalar, beta scalar</span>
+        <span class="c1">#    XXX: Account for a possible full vector read</span>
+        <span class="c1">#    XXX: Account for a possible alpha vector read</span>
+        <span class="n">n_bytes</span> <span class="o">+=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">elemsize</span>
+
+        <span class="c1"># -- load Y_in</span>
+        <span class="n">n_bytes</span> <span class="o">+=</span> <span class="n">elemsize</span> <span class="o">*</span> <span class="n">gi</span><span class="p">[</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span>
+
+        <span class="c1"># -- write Y_out</span>
+        <span class="n">n_bytes</span> <span class="o">+=</span> <span class="n">elemsize</span> <span class="o">*</span> <span class="n">gi</span><span class="p">[</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">n_bytes</span>
+
+
+<span class="k">class</span> <span class="nc">DotSignature</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dct</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y_len</span> <span class="o">=</span> <span class="n">dct</span><span class="p">[</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">Ax_dims</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">([(</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;a_shape1&quot;</span><span class="p">],</span> <span class="n">d</span><span class="p">[</span><span class="s2">&quot;a_stride0&quot;</span><span class="p">])</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">dct</span><span class="p">[</span><span class="s2">&quot;dots&quot;</span><span class="p">]])</span>
+
+    <span class="k">def</span> <span class="nf">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">==</span> <span class="nb">type</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">y_len</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">y_len</span>
+            <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">Ax_dims</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="n">Ax_dims</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__hash__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">hash</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">y_len</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">Ax_dims</span><span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">counts</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">dim_stride</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">Ax_dims</span><span class="p">:</span>
+            <span class="n">counts</span><span class="p">[</span><span class="n">dim_stride</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="s2">&quot;yd=</span><span class="si">%s</span><span class="s2"> &lt;- </span><span class="si">%s</span><span class="s2">&quot;</span> <span class="o">%</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">y_len</span><span class="p">,</span>
+            <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                <span class="p">(</span><span class="s2">&quot;(</span><span class="si">%s</span><span class="s2"> x d=</span><span class="si">%s</span><span class="s2">,s=</span><span class="si">%s</span><span class="s2">)&quot;</span> <span class="o">%</span> <span class="p">(</span><span class="n">counts</span><span class="p">[(</span><span class="n">d</span><span class="p">,</span> <span class="n">s</span><span class="p">)],</span> <span class="n">d</span><span class="p">,</span> <span class="n">s</span><span class="p">))</span> <span class="k">for</span> <span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span> <span class="ow">in</span> <span class="n">counts</span>
+            <span class="p">),</span>
+        <span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">gemv_prog</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">queue</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">A</span><span class="p">,</span> <span class="n">A_js</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">X_js</span><span class="p">,</span> <span class="n">beta</span><span class="p">,</span> <span class="n">Y</span><span class="p">,</span> <span class="n">Y_in</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gamma</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="kc">None</span>
+    <span class="p">):</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">float_alpha</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cl_alpha</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">clra_alpha</span> <span class="o">=</span> <span class="n">float_cl_clra</span><span class="p">(</span>
+            <span class="n">queue</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">Y</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">Y</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">float_beta</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cl_beta</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">clra_beta</span> <span class="o">=</span> <span class="n">float_cl_clra</span><span class="p">(</span>
+            <span class="n">queue</span><span class="p">,</span> <span class="n">beta</span><span class="p">,</span> <span class="n">Y</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">Y</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">float_gamma</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cl_gamma</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">clra_gamma</span> <span class="o">=</span> <span class="n">float_cl_clra</span><span class="p">(</span>
+            <span class="n">queue</span><span class="p">,</span> <span class="n">gamma</span><span class="p">,</span> <span class="n">Y</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">Y</span><span class="p">)</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">Y_in</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">Y_in</span> <span class="o">=</span> <span class="n">Y</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">Y_in</span> <span class="o">=</span> <span class="n">Y_in</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">queue</span> <span class="o">=</span> <span class="n">queue</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">A</span> <span class="o">=</span> <span class="n">A</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">A_js</span> <span class="o">=</span> <span class="n">A_js</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">X</span> <span class="o">=</span> <span class="n">X</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">X_js</span> <span class="o">=</span> <span class="n">X_js</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">Y</span> <span class="o">=</span> <span class="n">Y</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tag</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">tag</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">geometry</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_geometry</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">plans</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">choose_plans</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">geometry_summary</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">items</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">items</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">gg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">geometry</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">gg</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">geometry</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">items</span><span class="p">]</span>
+
+        <span class="n">outputs</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">gg</span><span class="p">)</span>
+        <span class="n">dots</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="nb">len</span><span class="p">(</span><span class="n">g</span><span class="p">[</span><span class="s2">&quot;dots&quot;</span><span class="p">])</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">gg</span><span class="p">])</span>
+        <span class="n">shape0s</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">g</span><span class="p">[</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">gg</span><span class="p">])</span>
+        <span class="n">shape1s</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">hstack</span><span class="p">([[</span><span class="n">d</span><span class="p">[</span><span class="s2">&quot;a_shape1&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">g</span><span class="p">[</span><span class="s2">&quot;dots&quot;</span><span class="p">]]</span> <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">gg</span><span class="p">])</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="s2">&quot;outputs: </span><span class="si">%d</span><span class="s2">; dots: </span><span class="si">%0.1f</span><span class="s2"> [</span><span class="si">%d</span><span class="s2">, </span><span class="si">%d</span><span class="s2">]; &quot;</span>
+            <span class="s2">&quot;shape: </span><span class="si">%0.1f</span><span class="s2"> [</span><span class="si">%d</span><span class="s2">, </span><span class="si">%d</span><span class="s2">] x </span><span class="si">%0.1f</span><span class="s2"> [</span><span class="si">%d</span><span class="s2">, </span><span class="si">%d</span><span class="s2">]&quot;</span>
+            <span class="o">%</span> <span class="p">(</span>
+                <span class="n">outputs</span><span class="p">,</span>
+                <span class="n">dots</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span>
+                <span class="n">dots</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span>
+                <span class="n">dots</span><span class="o">.</span><span class="n">max</span><span class="p">(),</span>
+                <span class="n">shape0s</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span>
+                <span class="n">shape0s</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span>
+                <span class="n">shape0s</span><span class="o">.</span><span class="n">max</span><span class="p">(),</span>
+                <span class="n">shape1s</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span>
+                <span class="n">shape1s</span><span class="o">.</span><span class="n">min</span><span class="p">(),</span>
+                <span class="n">shape1s</span><span class="o">.</span><span class="n">max</span><span class="p">(),</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">print_geometry_summary</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">items</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">full</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;geometry_summary: tag=</span><span class="si">%s</span><span class="s2">&quot;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">tag</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">items</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">gg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">geometry</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">gg</span> <span class="o">=</span> <span class="nb">map</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="fm">__getitem__</span><span class="p">,</span> <span class="n">items</span><span class="p">)</span>
+
+        <span class="n">ds</span> <span class="o">=</span> <span class="nb">map</span><span class="p">(</span><span class="n">DotSignature</span><span class="p">,</span> <span class="n">gg</span><span class="p">)</span>
+        <span class="n">counts</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">dsi</span> <span class="ow">in</span> <span class="n">ds</span><span class="p">:</span>
+            <span class="n">counts</span><span class="p">[</span><span class="n">dsi</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">for</span> <span class="n">dsi</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">counts</span><span class="p">):</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  </span><span class="si">%6s</span><span class="se">\t</span><span class="si">%s</span><span class="s2">&quot;</span> <span class="o">%</span> <span class="p">(</span><span class="n">counts</span><span class="p">[</span><span class="n">dsi</span><span class="p">],</span> <span class="n">dsi</span><span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">_geometry</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">A_starts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">starts</span>
+        <span class="n">X_starts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">starts</span>
+        <span class="n">Y_starts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">starts</span>
+        <span class="n">Y_in_starts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">starts</span>
+        <span class="n">A_stride0s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride0s</span>
+        <span class="n">A_shape1s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">shape1s</span>
+        <span class="n">Y_shape0s</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">shape0s</span>
+
+        <span class="n">rval</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">bb</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">Y_shape0s</span><span class="p">)):</span>
+            <span class="n">dbb</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;y_len&quot;</span><span class="p">:</span> <span class="n">Y_shape0s</span><span class="p">[</span><span class="n">bb</span><span class="p">],</span>
+                <span class="s2">&quot;dots&quot;</span><span class="p">:</span> <span class="p">[],</span>
+                <span class="s2">&quot;y_start&quot;</span><span class="p">:</span> <span class="n">Y_starts</span><span class="p">[</span><span class="n">bb</span><span class="p">],</span>
+                <span class="s2">&quot;y_in_start&quot;</span><span class="p">:</span> <span class="n">Y_in_starts</span><span class="p">[</span><span class="n">bb</span><span class="p">],</span>
+            <span class="p">}</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">X_js</span><span class="p">:</span>
+                <span class="n">x_js_i</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">X_js</span><span class="p">[</span><span class="n">bb</span><span class="p">]</span>
+                <span class="n">A_js_i</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">A_js</span><span class="p">[</span><span class="n">bb</span><span class="p">]</span>
+                <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">x_js_i</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">A_js_i</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">jj</span><span class="p">,</span> <span class="p">(</span><span class="n">xj</span><span class="p">,</span> <span class="n">aj</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">x_js_i</span><span class="p">,</span> <span class="n">A_js_i</span><span class="p">)):</span>
+                    <span class="k">assert</span> <span class="n">xj</span><span class="o">.</span><span class="n">size</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">aj</span><span class="o">.</span><span class="n">size</span> <span class="o">==</span> <span class="mi">1</span>
+                    <span class="n">xj</span><span class="p">,</span> <span class="n">aj</span> <span class="o">=</span> <span class="n">xj</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">aj</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># to ignore numpy DeprecationWarning</span>
+                    <span class="n">dbb</span><span class="p">[</span><span class="s2">&quot;dots&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                        <span class="p">{</span>
+                            <span class="s2">&quot;j&quot;</span><span class="p">:</span> <span class="n">jj</span><span class="p">,</span>
+                            <span class="s2">&quot;x_j&quot;</span><span class="p">:</span> <span class="n">xj</span><span class="p">,</span>
+                            <span class="s2">&quot;a_j&quot;</span><span class="p">:</span> <span class="n">aj</span><span class="p">,</span>
+                            <span class="s2">&quot;x_start&quot;</span><span class="p">:</span> <span class="n">X_starts</span><span class="p">[</span><span class="n">xj</span><span class="p">],</span>
+                            <span class="s2">&quot;a_start&quot;</span><span class="p">:</span> <span class="n">A_starts</span><span class="p">[</span><span class="n">aj</span><span class="p">],</span>
+                            <span class="s2">&quot;a_stride0&quot;</span><span class="p">:</span> <span class="n">A_stride0s</span><span class="p">[</span><span class="n">aj</span><span class="p">],</span>
+                            <span class="s2">&quot;a_shape1&quot;</span><span class="p">:</span> <span class="n">A_shape1s</span><span class="p">[</span><span class="n">aj</span><span class="p">],</span>
+                        <span class="p">}</span>
+                    <span class="p">)</span>
+            <span class="n">rval</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">dbb</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">rval</span>
+
+    <span class="k">def</span> <span class="nf">cl_geometry_and_textconf</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">items</span><span class="p">,</span> <span class="n">padding</span><span class="o">=</span><span class="mi">4</span><span class="p">):</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="bp">self</span>
+        <span class="n">max_n_dots</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">][</span><span class="s2">&quot;dots&quot;</span><span class="p">])</span> <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">items</span><span class="p">)</span>
+        <span class="n">n_structure_vars</span> <span class="o">=</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="mi">5</span>
+        <span class="n">structure_vars_stride</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span>
+            <span class="n">padding</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">n_structure_vars</span><span class="p">)</span> <span class="o">/</span> <span class="n">padding</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">gstructure</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">),</span> <span class="n">structure_vars_stride</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;int32&quot;</span><span class="p">)</span>
+        <span class="n">A_starts</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">starts</span>
+        <span class="n">X_starts</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">starts</span>
+        <span class="n">Y_starts</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">starts</span>
+        <span class="n">Y_in_starts</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">starts</span>
+        <span class="n">A_stride0s</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride0s</span>
+        <span class="n">A_shape1s</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">shape1s</span>
+        <span class="n">Y_shape0s</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">shape0s</span>
+
+        <span class="k">for</span> <span class="n">bbi</span><span class="p">,</span> <span class="n">bb</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">items</span><span class="p">):</span>
+            <span class="n">x_js_i</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">X_js</span><span class="p">[</span><span class="n">bb</span><span class="p">]</span>
+            <span class="n">A_js_i</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">A_js</span><span class="p">[</span><span class="n">bb</span><span class="p">]</span>
+            <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">x_js_i</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">A_js_i</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">ii</span><span class="p">,</span> <span class="p">(</span><span class="n">xi</span><span class="p">,</span> <span class="n">ai</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">x_js_i</span><span class="p">,</span> <span class="n">A_js_i</span><span class="p">)):</span>
+                <span class="k">assert</span> <span class="n">xi</span><span class="o">.</span><span class="n">size</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">ai</span><span class="o">.</span><span class="n">size</span> <span class="o">==</span> <span class="mi">1</span>
+                <span class="n">xi</span><span class="p">,</span> <span class="n">ai</span> <span class="o">=</span> <span class="n">xi</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ai</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># to ignore numpy DeprecationWarning</span>
+                <span class="n">gstructure</span><span class="p">[</span><span class="n">bbi</span><span class="p">,</span> <span class="mi">0</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="n">ii</span><span class="p">]</span> <span class="o">=</span> <span class="n">X_starts</span><span class="p">[</span><span class="n">xi</span><span class="p">]</span>
+                <span class="n">gstructure</span><span class="p">[</span><span class="n">bbi</span><span class="p">,</span> <span class="mi">1</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="n">ii</span><span class="p">]</span> <span class="o">=</span> <span class="n">A_starts</span><span class="p">[</span><span class="n">ai</span><span class="p">]</span>
+                <span class="n">gstructure</span><span class="p">[</span><span class="n">bbi</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="n">ii</span><span class="p">]</span> <span class="o">=</span> <span class="n">A_stride0s</span><span class="p">[</span><span class="n">ai</span><span class="p">]</span>
+                <span class="n">gstructure</span><span class="p">[</span><span class="n">bbi</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="n">ii</span><span class="p">]</span> <span class="o">=</span> <span class="n">A_shape1s</span><span class="p">[</span><span class="n">ai</span><span class="p">]</span>
+            <span class="c1"># -- offset of output and input buffers</span>
+            <span class="n">gstructure</span><span class="p">[</span><span class="n">bbi</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">Y_in_starts</span><span class="p">[</span><span class="n">bb</span><span class="p">]</span>
+            <span class="n">gstructure</span><span class="p">[</span><span class="n">bbi</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">Y_starts</span><span class="p">[</span><span class="n">bb</span><span class="p">]</span>
+            <span class="c1"># -- number of dots for bb</span>
+            <span class="n">gstructure</span><span class="p">[</span><span class="n">bbi</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">A_js_i</span><span class="p">)</span>
+            <span class="c1"># -- length of Y[bb]</span>
+            <span class="n">gstructure</span><span class="p">[</span><span class="n">bbi</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">Y_shape0s</span><span class="p">[</span><span class="n">bb</span><span class="p">]</span>
+            <span class="n">gstructure</span><span class="p">[</span><span class="n">bbi</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">max_n_dots</span> <span class="o">+</span> <span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="n">bb</span>
+        <span class="n">cl_gstructure</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">gstructure</span><span class="p">)</span>
+
+        <span class="n">textconf</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;n_structure_vars&quot;</span><span class="p">:</span> <span class="n">n_structure_vars</span><span class="p">,</span>
+            <span class="s2">&quot;structure_vars_stride&quot;</span><span class="p">:</span> <span class="n">structure_vars_stride</span><span class="p">,</span>
+            <span class="s2">&quot;x_starts&quot;</span><span class="p">:</span> <span class="s2">&quot;lstructure[0 * </span><span class="si">%s</span><span class="s2"> + ii]&quot;</span> <span class="o">%</span> <span class="n">max_n_dots</span><span class="p">,</span>
+            <span class="s2">&quot;a_starts&quot;</span><span class="p">:</span> <span class="s2">&quot;lstructure[1 * </span><span class="si">%s</span><span class="s2"> + ii]&quot;</span> <span class="o">%</span> <span class="n">max_n_dots</span><span class="p">,</span>
+            <span class="s2">&quot;a_s0&quot;</span><span class="p">:</span> <span class="s2">&quot;lstructure[2 * </span><span class="si">%s</span><span class="s2"> + ii]&quot;</span> <span class="o">%</span> <span class="n">max_n_dots</span><span class="p">,</span>
+            <span class="s2">&quot;N_i&quot;</span><span class="p">:</span> <span class="s2">&quot;lstructure[3 * </span><span class="si">%s</span><span class="s2"> + ii]&quot;</span> <span class="o">%</span> <span class="n">max_n_dots</span><span class="p">,</span>
+            <span class="s2">&quot;y_in_starts&quot;</span><span class="p">:</span> <span class="s2">&quot;lstructure[4 * </span><span class="si">%s</span><span class="s2"> + 0]&quot;</span> <span class="o">%</span> <span class="n">max_n_dots</span><span class="p">,</span>
+            <span class="s2">&quot;y_offset&quot;</span><span class="p">:</span> <span class="s2">&quot;lstructure[4 * </span><span class="si">%s</span><span class="s2"> + 1]&quot;</span> <span class="o">%</span> <span class="n">max_n_dots</span><span class="p">,</span>
+            <span class="s2">&quot;n_dot_products&quot;</span><span class="p">:</span> <span class="s2">&quot;lstructure[4 * </span><span class="si">%s</span><span class="s2"> + 2]&quot;</span> <span class="o">%</span> <span class="n">max_n_dots</span><span class="p">,</span>
+            <span class="s2">&quot;y_len&quot;</span><span class="p">:</span> <span class="s2">&quot;lstructure[4 * </span><span class="si">%s</span><span class="s2"> + 3]&quot;</span> <span class="o">%</span> <span class="n">max_n_dots</span><span class="p">,</span>
+            <span class="s2">&quot;bb&quot;</span><span class="p">:</span> <span class="s2">&quot;lstructure[4 * </span><span class="si">%s</span><span class="s2"> + 4]&quot;</span> <span class="o">%</span> <span class="n">max_n_dots</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="k">return</span> <span class="n">cl_gstructure</span><span class="p">,</span> <span class="n">textconf</span>
+
+
+<div class="viewcode-block" id="ref_impl"><a class="viewcode-back" href="../../api.html#nengo_ocl.clra_gemv.ref_impl">[docs]</a><span class="k">def</span> <span class="nf">ref_impl</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">items</span><span class="p">):</span>  <span class="c1"># noqa: C901</span>
+    <span class="sd">&quot;&quot;&quot;Return an OCL function to calculate ``items`` of gemv operation ``p``.</span>
+
+<span class="sd">    In this reference implementation, we create a work item per output number,</span>
+<span class="sd">    or more specifically, a work grid of shape ``(max_y_len, len(items))``.</span>
+<span class="sd">    Each work item loops over the  dot products and the elements within</span>
+<span class="sd">    each dot product to compute the output value</span>
+<span class="sd">    ``Y[global_id(1)][global_id(0)]``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="n">cl_items</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">items</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;int32&quot;</span><span class="p">))</span>
+    <span class="k">if</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">10</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Falling back on reference implementation&quot;</span><span class="p">)</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">print_geometry_summary</span><span class="p">(</span><span class="n">items</span><span class="p">,</span> <span class="n">full</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Falling back on reference implementation&quot;</span><span class="p">)</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">print_geometry_summary</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride1s</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">stride1s</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">stride0s</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">stride1s</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">stride0s</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">stride1s</span><span class="p">)</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">        __kernel void gemv_ref(</span>
+<span class="s2">            __global int *items,</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f cl_alpha is not None:</span>
+<span class="s2">            __global $</span><span class="si">{cl_alpha.ctype}</span><span class="s2"> * alphas,</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f (A_js is not None):</span>
+<span class="s2">            __global int *A_starts,</span>
+<span class="s2">            __global int *A_shape1s,</span>
+<span class="s2">            __global int *A_stride0s,</span>
+<span class="s2">            __global $</span><span class="si">{A.cl_buf.ctype}</span><span class="s2"> *A_data,</span>
+<span class="s2">            __global int *A_js_starts,</span>
+<span class="s2">            __global int *A_js_shape0s,</span>
+<span class="s2">            __global int *A_js_data,</span>
+<span class="s2">            __global int *X_starts,</span>
+<span class="s2">            __global int *X_stride0s,</span>
+<span class="s2">            __global $</span><span class="si">{X.cl_buf.ctype}</span><span class="s2"> *X_data,</span>
+<span class="s2">            __global int *X_js_starts,</span>
+<span class="s2">            __global int *X_js_data,</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f cl_beta is not None:</span>
+<span class="s2">            __global $</span><span class="si">{cl_beta.ctype}</span><span class="s2"> * betas,</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f clra_beta is not None:</span>
+<span class="s2">            __global int *beta_starts,</span>
+<span class="s2">            __global int *beta_data,</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f cl_gamma is not None:</span>
+<span class="s2">            __global $</span><span class="si">{cl_gamma.ctype}</span><span class="s2"> * gammas,</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">            __global int *Y_in_starts,</span>
+<span class="s2">            __global $</span><span class="si">{Y_in.cl_buf.ctype}</span><span class="s2"> *Y_in_data,</span>
+<span class="s2">            __global int *Y_starts,</span>
+<span class="s2">            __global int *Y_shape0s,</span>
+<span class="s2">            __global $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"> *Y_data)</span>
+<span class="s2">        {</span>
+<span class="s2">            const int mm = get_global_id(0);</span>
+<span class="s2">            const int bb = items[get_global_id(1)];</span>
+<span class="s2">            const int M = Y_shape0s[bb];</span>
+<span class="s2">            if (mm &lt; M)</span>
+<span class="s2">            {</span>
+<span class="s2">                const int y_offset = Y_starts[bb];</span>
+<span class="s2">                const int y_in_offset = Y_in_starts[bb];</span>
+
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f float_beta is not None:</span>
+<span class="s2">                const $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"> beta = $</span><span class="si">{float_beta}</span><span class="s2">;</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lif cl_beta is not None:</span>
+<span class="s2">                const $</span><span class="si">{cl_beta.ctype}</span><span class="s2"> beta = betas[bb];</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lif clra_beta is not None:</span>
+<span class="s2">                const int beta_offset = beta_starts[bb];</span>
+<span class="s2">                const $</span><span class="si">{clra_beta.cl_buf.ctype}</span><span class="s2"> beta</span>
+<span class="s2">                    = beta_data[beta_offset + mm];</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f float_gamma is not None:</span>
+<span class="s2">                const $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"> gamma = $</span><span class="si">{float_gamma}</span><span class="s2">;</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lif cl_gamma is not None:</span>
+<span class="s2">                const $</span><span class="si">{cl_gamma.ctype}</span><span class="s2"> gamma = gammas[bb];</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+
+<span class="s2">                Y_data[y_offset + mm] =</span>
+<span class="s2">                    gamma + beta * Y_in_data[y_in_offset + mm];</span>
+
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f A_js is not None:</span>
+<span class="s2">                const int n_dot_products = A_js_shape0s[bb];</span>
+<span class="s2">                X_js_data += X_js_starts[bb];</span>
+<span class="s2">                A_js_data += A_js_starts[bb];</span>
+
+<span class="s2">                $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"> y_sum = 0;</span>
+<span class="s2">                for (int ii = 0; ii &lt; n_dot_products; ++ii)</span>
+<span class="s2">                {</span>
+<span class="s2">                    const int x_ji = X_js_data[ii];</span>
+<span class="s2">                    const int a_ji = A_js_data[ii];</span>
+<span class="s2">                    const int N_i = A_shape1s[a_ji];</span>
+<span class="s2">                    const int x_offset = X_starts[x_ji];</span>
+<span class="s2">                    const int a_offset = A_starts[a_ji];</span>
+<span class="s2">                    const int AsM = A_stride0s[a_ji];</span>
+<span class="s2">                    const int XsM = X_stride0s[x_ji];</span>
+
+<span class="s2">                    for (int nn = 0; nn &lt; N_i; ++nn)</span>
+<span class="s2">                    {</span>
+<span class="s2">                        y_sum += X_data[x_offset + nn * XsM]</span>
+<span class="s2">                                 * A_data[a_offset + mm * AsM + nn];</span>
+<span class="s2">                    }</span>
+<span class="s2">                }</span>
+<span class="s2">        </span><span class="si">% i</span><span class="s2">f float_alpha is not None:</span>
+<span class="s2">                Y_data[y_offset + mm] += $</span><span class="si">{float_alpha}</span><span class="s2"> * y_sum;</span>
+<span class="s2">        </span><span class="si">% e</span><span class="s2">lif cl_alpha is not None:</span>
+<span class="s2">                Y_data[y_offset + mm] += alphas[bb] * y_sum;</span>
+<span class="s2">        </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">            }</span>
+
+<span class="s2">        }</span>
+<span class="s2">    &quot;&quot;&quot;</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="n">as_ascii</span><span class="p">(</span><span class="n">Template</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">output_encoding</span><span class="o">=</span><span class="s2">&quot;ascii&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="o">**</span><span class="n">p</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">))</span>
+
+    <span class="n">gsize</span> <span class="o">=</span> <span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">][</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">items</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">))</span>
+    <span class="n">lsize</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">fn</span> <span class="o">=</span> <span class="n">cl</span><span class="o">.</span><span class="n">Program</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="o">.</span><span class="n">context</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span><span class="o">.</span><span class="n">build</span><span class="p">()</span><span class="o">.</span><span class="n">gemv_ref</span>
+    <span class="n">full_args</span> <span class="o">=</span> <span class="p">[</span><span class="n">cl_items</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">cl_alpha</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">A_js</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">cl_starts</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">cl_shape1s</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">cl_stride0s</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">A_js</span><span class="o">.</span><span class="n">cl_starts</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">A_js</span><span class="o">.</span><span class="n">cl_shape0s</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">A_js</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">cl_starts</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">cl_stride0s</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">X_js</span><span class="o">.</span><span class="n">cl_starts</span><span class="p">,</span>
+            <span class="n">p</span><span class="o">.</span><span class="n">X_js</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="p">]</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_beta</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">cl_beta</span><span class="p">]</span>
+    <span class="k">elif</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_beta</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">clra_beta</span><span class="o">.</span><span class="n">cl_starts</span><span class="p">,</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_beta</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">cl_gamma</span><span class="p">]</span>
+    <span class="k">elif</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">clra_gamma</span><span class="o">.</span><span class="n">cl_starts</span><span class="p">,</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_gamma</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">]</span>
+
+    <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">cl_starts</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">cl_starts</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">cl_shape0s</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+    <span class="p">]</span>
+
+    <span class="c1"># print([str(arr.dtype)[0] for arr in full_args])</span>
+    <span class="n">fn</span><span class="o">.</span><span class="n">set_args</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">arr</span><span class="o">.</span><span class="n">data</span> <span class="k">for</span> <span class="n">arr</span> <span class="ow">in</span> <span class="n">full_args</span><span class="p">])</span>
+    <span class="n">rval</span> <span class="o">=</span> <span class="n">Plan</span><span class="p">(</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span>
+        <span class="n">fn</span><span class="p">,</span>
+        <span class="n">gsize</span><span class="p">,</span>
+        <span class="n">lsize</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;clra_gemv.ref_impl&quot;</span><span class="p">,</span>
+        <span class="n">tag</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">tag</span><span class="p">,</span>
+        <span class="n">bw_per_call</span><span class="o">=</span><span class="n">bw_from_geometry</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">),</span>
+        <span class="n">flops_per_call</span><span class="o">=</span><span class="n">flops_from_geometry</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">rval</span><span class="o">.</span><span class="n">full_args</span> <span class="o">=</span> <span class="n">full_args</span>  <span class="c1"># prevent GC the args</span>
+    <span class="k">return</span> <span class="n">rval</span></div>
+
+
+<span class="k">def</span> <span class="nf">reduce_impl</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">items</span><span class="p">,</span> <span class="n">group_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">segment_size</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>  <span class="c1"># noqa: C901</span>
+
+    <span class="c1">#</span>
+    <span class="c1"># Target use case: long inner products, small numbers of dots.</span>
+    <span class="c1">#</span>
+    <span class="c1"># Approach: each work-group computes a small number of gemv outputs</span>
+    <span class="c1">#</span>
+
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_beta</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride1s</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+
+    <span class="k">assert</span> <span class="n">p</span><span class="o">.</span><span class="n">float_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="k">assert</span> <span class="n">p</span><span class="o">.</span><span class="n">float_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+    <span class="n">cl_gstructure</span><span class="p">,</span> <span class="n">textconf</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_geometry_and_textconf</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+    <span class="n">max_n_dots</span> <span class="o">=</span> <span class="nb">max</span><span class="p">([</span><span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">][</span><span class="s2">&quot;dots&quot;</span><span class="p">])</span> <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">items</span><span class="p">])</span>
+    <span class="n">max_reduce_len</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+        <span class="nb">max</span><span class="p">([</span><span class="n">gg</span><span class="p">[</span><span class="s2">&quot;a_shape1&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">gg</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">][</span><span class="s2">&quot;dots&quot;</span><span class="p">]])</span> <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">items</span>
+    <span class="p">)</span>
+    <span class="n">max_y_len</span> <span class="o">=</span> <span class="nb">max</span><span class="p">([</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">][</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">items</span><span class="p">])</span>
+
+    <span class="c1"># segment means the piece of Y written by a work-group</span>
+    <span class="c1"># group_size is the number of values that we&#39;re reducing over</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">group_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">group_size</span> <span class="o">=</span> <span class="mi">32</span>  <span class="c1"># XXX</span>
+        <span class="k">if</span> <span class="n">segment_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">segment_size</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">max_y_len</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>  <span class="c1"># XXX</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">group_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">group_size</span> <span class="o">=</span> <span class="mi">32</span>  <span class="c1"># XXX</span>
+        <span class="k">if</span> <span class="n">segment_size</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">segment_size</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">max_y_len</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>  <span class="c1"># XXX</span>
+    <span class="n">g_segments</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">max_y_len</span><span class="p">)</span> <span class="o">/</span> <span class="n">segment_size</span><span class="p">))</span>
+    <span class="n">gsize</span> <span class="o">=</span> <span class="p">(</span><span class="n">group_size</span><span class="p">,</span> <span class="n">g_segments</span> <span class="o">*</span> <span class="n">segment_size</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">))</span>
+    <span class="n">lsize</span> <span class="o">=</span> <span class="p">(</span><span class="n">group_size</span><span class="p">,</span> <span class="n">segment_size</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">max_reduce_iters</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">max_reduce_len</span><span class="p">)</span> <span class="o">/</span> <span class="n">group_size</span><span class="p">))</span>
+    <span class="n">textconf</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;n_items&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">),</span>
+            <span class="s2">&quot;gsize&quot;</span><span class="p">:</span> <span class="n">gsize</span><span class="p">,</span>
+            <span class="s2">&quot;segment_size&quot;</span><span class="p">:</span> <span class="n">segment_size</span><span class="p">,</span>
+            <span class="s2">&quot;max_y_len&quot;</span><span class="p">:</span> <span class="n">max_y_len</span><span class="p">,</span>
+            <span class="s2">&quot;group_size&quot;</span><span class="p">:</span> <span class="n">group_size</span><span class="p">,</span>
+            <span class="s2">&quot;local_count&quot;</span><span class="p">:</span> <span class="n">group_size</span> <span class="o">*</span> <span class="n">segment_size</span><span class="p">,</span>
+            <span class="s2">&quot;max_reduce_len&quot;</span><span class="p">:</span> <span class="n">max_reduce_len</span><span class="p">,</span>
+            <span class="s2">&quot;N_cutoff&quot;</span><span class="p">:</span> <span class="n">max_reduce_iters</span> <span class="o">*</span> <span class="n">group_size</span><span class="p">,</span>
+            <span class="s2">&quot;max_n_dots&quot;</span><span class="p">:</span> <span class="n">max_n_dots</span><span class="p">,</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">textconf</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="nb">print</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+
+    <span class="n">textconf</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">)</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">        __kernel void gemv_reduce(</span>
+<span class="s2">            const __global int *gstructure,</span>
+<span class="s2">            const __global $</span><span class="si">{A.cl_buf.ctype}</span><span class="s2"> *A_data,</span>
+<span class="s2">            const __global $</span><span class="si">{X.cl_buf.ctype}</span><span class="s2"> *X_data,</span>
+<span class="s2">            </span><span class="si">% i</span><span class="s2">f cl_beta is not None:</span>
+<span class="s2">            const __global $</span><span class="si">{cl_beta.ctype}</span><span class="s2"> * betas,</span>
+<span class="s2">            </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">            const __global $</span><span class="si">{Y_in.cl_buf.ctype}</span><span class="s2"> *Y_in_data,</span>
+<span class="s2">            __global $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"> *Y_data)</span>
+<span class="s2">    {</span>
+<span class="s2">        __local int lstructure[$</span><span class="si">{n_structure_vars}</span><span class="s2">];</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f segment_size &gt; 1:</span>
+<span class="s2">        // we&#39;ll cache X in shared memory so we load it only once</span>
+<span class="s2">        // for the whole segment</span>
+<span class="s2">        __local $</span><span class="si">{X.cl_buf.ctype}</span><span class="s2"> lX[$</span><span class="si">{group_size}</span><span class="s2">];</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">        //Scratch space for the dot products</span>
+<span class="s2">        __local $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"></span>
+<span class="s2">            partialDotProduct[$</span><span class="si">{segment_size}</span><span class="s2">][$</span><span class="si">{group_size}</span><span class="s2">];</span>
+<span class="s2">        __local $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"></span>
+<span class="s2">            y_sum_pre[$</span><span class="si">{segment_size}</span><span class="s2">];</span>
+<span class="s2">        const int local_idx = get_local_id(0)</span>
+<span class="s2">            + get_local_id(1) * get_local_size(0);</span>
+
+<span class="s2">        // load structure</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f local_count &lt; n_structure_vars:</span>
+<span class="s2">        for (int ii = local_idx;</span>
+<span class="s2">                 ii &lt; $</span><span class="si">{n_structure_vars}</span><span class="s2">;</span>
+<span class="s2">                 ii += $</span><span class="si">{local_count}</span><span class="s2">)</span>
+<span class="s2">        {</span>
+<span class="s2">            lstructure[ii] = gstructure[</span>
+<span class="s2">                get_global_id(2) * $</span><span class="si">{structure_vars_stride}</span><span class="s2"> + ii];</span>
+<span class="s2">        }</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lse :</span>
+<span class="s2">        if (local_idx &lt; $</span><span class="si">{n_structure_vars}</span><span class="s2">)</span>
+<span class="s2">        {</span>
+<span class="s2">            lstructure[local_idx] = gstructure[</span>
+<span class="s2">                get_global_id(2) * $</span><span class="si">{structure_vars_stride}</span><span class="s2"> + local_idx];</span>
+<span class="s2">        }</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">        barrier(CLK_LOCAL_MEM_FENCE);</span>
+
+<span class="s2">        if ((get_local_id(0) == 0) &amp;&amp; (get_global_id(1) &lt; $</span><span class="si">{y_len}</span><span class="s2">))</span>
+<span class="s2">        {</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f float_beta is not None and float_beta != 0 :</span>
+<span class="s2">            y_sum_pre[get_local_id(1)] = $</span><span class="si">{float_beta}</span><span class="s2"></span>
+<span class="s2">                * Y_in_data[$</span><span class="si">{y_in_starts}</span><span class="s2"> + get_global_id(1)];</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lif cl_beta is not None:</span>
+<span class="s2">            y_sum_pre[get_local_id(1)] = betas[$</span><span class="si">{bb}</span><span class="s2">]</span>
+<span class="s2">                * Y_in_data[$</span><span class="si">{y_in_starts}</span><span class="s2"> + get_global_id(1)];</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lse :</span>
+<span class="s2">            y_sum_pre[get_local_id(1)] = 0;</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f float_gamma is not None and float_gamma != 0:</span>
+<span class="s2">            y_sum_pre[get_local_id(1)] += $</span><span class="si">{float_gamma}</span><span class="s2">;</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">    // printf(&quot;betaY + gamma=</span><span class="si">%f</span><span class="se">\\</span><span class="s2">n&quot;, y_sum_pre[get_local_id(1)]);</span>
+<span class="s2">        }</span>
+
+<span class="s2">        partialDotProduct[get_local_id(1)][get_local_id(0)] = 0;</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f max_n_dots &gt; 1:</span>
+<span class="s2">        for (int ii = 0;</span>
+<span class="s2">                 ii &lt; $</span><span class="si">{n_dot_products}</span><span class="s2">;</span>
+<span class="s2">                 ii += 1)</span>
+<span class="s2">        {</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lse:</span>
+<span class="s2">        const int ii = 0;</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+
+
+<span class="s2">        for (int nn = get_local_id(0);</span>
+<span class="s2">                 nn &lt; $</span><span class="si">{N_cutoff}</span><span class="s2">;</span>
+<span class="s2">                 nn += get_local_size(0))</span>
+<span class="s2">        {</span>
+<span class="s2">    // segment_size = $</span><span class="si">{segment_size}</span><span class="s2"></span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f (segment_size == 1):</span>
+<span class="s2">            if ((nn &lt; $</span><span class="si">{N_i}</span><span class="s2">) &amp;&amp; (get_global_id(1) &lt; $</span><span class="si">{y_len}</span><span class="s2">))</span>
+<span class="s2">            {</span>
+<span class="s2">            partialDotProduct[get_local_id(1)][get_local_id(0)] +=</span>
+<span class="s2">                A_data[$</span><span class="si">{a_starts}</span><span class="s2"> + get_global_id(1) * $</span><span class="si">{a_s0}</span><span class="s2"> + nn]</span>
+<span class="s2">                * X_data[$</span><span class="si">{x_starts}</span><span class="s2"> + nn];</span>
+<span class="s2">            }</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lse:</span>
+<span class="s2">            barrier(CLK_LOCAL_MEM_FENCE);</span>
+<span class="s2">            if ((get_local_id(1) == 0) &amp;&amp; (nn &lt; $</span><span class="si">{N_i}</span><span class="s2">))</span>
+<span class="s2">            {</span>
+<span class="s2">                lX[get_local_id(0)] = X_data[$</span><span class="si">{x_starts}</span><span class="s2"> + nn];</span>
+<span class="s2">            }</span>
+<span class="s2">            barrier(CLK_LOCAL_MEM_FENCE);</span>
+<span class="s2">            if ((nn &lt; $</span><span class="si">{N_i}</span><span class="s2">) &amp;&amp; (get_global_id(1) &lt; $</span><span class="si">{y_len}</span><span class="s2">))</span>
+<span class="s2">            {</span>
+<span class="s2">            partialDotProduct[get_local_id(1)][get_local_id(0)] +=</span>
+<span class="s2">                A_data[$</span><span class="si">{a_starts}</span><span class="s2"> + get_global_id(1) * $</span><span class="si">{a_s0}</span><span class="s2"> + nn]</span>
+<span class="s2">                * lX[get_local_id(0)];</span>
+<span class="s2">            }</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">        }</span>
+
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f (max_n_dots &gt; 1):</span>
+<span class="s2">        }</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+
+<span class="s2">        // -- Parallel reduction long work-group dimension 0</span>
+<span class="s2">        for (uint stride = 1;</span>
+<span class="s2">                  stride &lt; get_local_size(0);</span>
+<span class="s2">                  stride *= 2)</span>
+<span class="s2">        {</span>
+<span class="s2">            barrier(CLK_LOCAL_MEM_FENCE);</span>
+
+<span class="s2">            uint index = 2 * stride * get_local_id(0);</span>
+<span class="s2">            if (index + stride &lt; get_local_size(0))</span>
+<span class="s2">            {</span>
+<span class="s2">                partialDotProduct[get_local_id(1)][index] +=</span>
+<span class="s2">                    partialDotProduct[get_local_id(1)][index + stride];</span>
+<span class="s2">            }</span>
+<span class="s2">        }</span>
+<span class="s2">        // barrier(CLK_LOCAL_MEM_FENCE);</span>
+<span class="s2">        if ((get_local_id(0) == 0) &amp;&amp; (get_global_id(1) &lt; $</span><span class="si">{y_len}</span><span class="s2">)) {</span>
+<span class="s2">            Y_data[$</span><span class="si">{y_offset}</span><span class="s2"> + get_global_id(1)] = y_sum_pre[get_local_id(1)]</span>
+<span class="s2">                + $</span><span class="si">{float_alpha}</span><span class="s2"> * partialDotProduct[get_local_id(1)][0];</span>
+<span class="s2">        }</span>
+<span class="s2">    }</span>
+<span class="s2">        &quot;&quot;&quot;</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="n">as_ascii</span><span class="p">(</span><span class="n">Template</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">output_encoding</span><span class="o">=</span><span class="s2">&quot;ascii&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="o">**</span><span class="n">textconf</span><span class="p">))</span>
+
+    <span class="n">fn</span> <span class="o">=</span> <span class="n">cl</span><span class="o">.</span><span class="n">Program</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="o">.</span><span class="n">context</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span><span class="o">.</span><span class="n">build</span><span class="p">()</span><span class="o">.</span><span class="n">gemv_reduce</span>
+
+    <span class="n">full_args</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">cl_gstructure</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+    <span class="p">]</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_beta</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">cl_beta</span><span class="p">]</span>
+    <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+    <span class="p">]</span>
+
+    <span class="n">fn</span><span class="o">.</span><span class="n">set_args</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">arr</span><span class="o">.</span><span class="n">data</span> <span class="k">for</span> <span class="n">arr</span> <span class="ow">in</span> <span class="n">full_args</span><span class="p">])</span>
+    <span class="n">rval</span> <span class="o">=</span> <span class="n">Plan</span><span class="p">(</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span>
+        <span class="n">fn</span><span class="p">,</span>
+        <span class="n">gsize</span><span class="p">,</span>
+        <span class="n">lsize</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;clra_gemv.reduce_impl&quot;</span><span class="p">,</span>
+        <span class="n">tag</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">tag</span><span class="p">,</span>
+        <span class="n">bw_per_call</span><span class="o">=</span><span class="n">bw_from_geometry</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">),</span>
+        <span class="n">flops_per_call</span><span class="o">=</span><span class="n">flops_from_geometry</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">rval</span><span class="o">.</span><span class="n">full_args</span> <span class="o">=</span> <span class="n">full_args</span>  <span class="c1"># prevent GC the args</span>
+    <span class="n">rval</span><span class="o">.</span><span class="n">description</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">geometry_summary</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">rval</span>
+
+
+<span class="k">def</span> <span class="nf">many_dots_impl</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">items</span><span class="p">):</span>  <span class="c1"># noqa: C901</span>
+    <span class="c1"># target use case:</span>
+    <span class="c1"># * several very shallow gemvs (short inner prods) into each target</span>
+    <span class="c1"># * not all targets have the same size</span>
+
+    <span class="c1"># p.print_geometry_summary(items, full=True)</span>
+
+    <span class="c1"># This algorithm is blocked out so that a work-group [i, j] computes</span>
+    <span class="c1"># some segment of an output vector:</span>
+    <span class="c1"># e.g. Y[i][ 32 * j : 32 * (j + 1)]</span>
+    <span class="c1">#</span>
+    <span class="c1"># This is done for two reasons:</span>
+    <span class="c1"># - to increase occupancy when there are not so many vectors Y</span>
+    <span class="c1"># - to handle long vectors Y</span>
+
+    <span class="c1"># p.print_geometry_summary(items)</span>
+
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_beta</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride1s</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+
+    <span class="k">assert</span> <span class="n">p</span><span class="o">.</span><span class="n">float_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="k">assert</span> <span class="n">p</span><span class="o">.</span><span class="n">float_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">A_js</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># -- easy probably, but not done</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="n">A_js_shape0s</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">A_js</span><span class="o">.</span><span class="n">shape0s</span>
+    <span class="n">cl_gstructure</span><span class="p">,</span> <span class="n">textconf</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_geometry_and_textconf</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+
+    <span class="c1"># min_n_dots = min(A_js_shape0s)</span>
+    <span class="n">max_n_dots</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">A_js_shape0s</span><span class="p">)</span>
+
+    <span class="n">max_y_len</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">][</span><span class="s2">&quot;y_len&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">items</span><span class="p">)</span>
+    <span class="n">MAX_SEGMENT_SIZE</span> <span class="o">=</span> <span class="mi">16</span>  <span class="c1"># tricky to tune?</span>
+
+    <span class="n">segment_size</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">max_y_len</span><span class="p">,</span> <span class="n">MAX_SEGMENT_SIZE</span><span class="p">)</span>
+    <span class="n">dot_block_size</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span>
+        <span class="nb">max</span><span class="p">(</span><span class="n">max_n_dots</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="nb">int</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="o">.</span><span class="n">device</span><span class="o">.</span><span class="n">max_work_group_size</span> <span class="o">/</span> <span class="n">segment_size</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="n">n_segments</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">max_y_len</span><span class="p">)</span> <span class="o">/</span> <span class="n">segment_size</span><span class="p">))</span>
+    <span class="n">gsize</span> <span class="o">=</span> <span class="p">(</span><span class="n">n_segments</span> <span class="o">*</span> <span class="n">segment_size</span><span class="p">,</span> <span class="n">dot_block_size</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">))</span>
+    <span class="n">lsize</span> <span class="o">=</span> <span class="p">(</span><span class="n">segment_size</span><span class="p">,</span> <span class="n">dot_block_size</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">textconf</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;gsize&quot;</span><span class="p">:</span> <span class="n">gsize</span><span class="p">,</span>
+            <span class="s2">&quot;lsize&quot;</span><span class="p">:</span> <span class="n">lsize</span><span class="p">,</span>
+            <span class="s2">&quot;segment_size&quot;</span><span class="p">:</span> <span class="n">segment_size</span><span class="p">,</span>
+            <span class="s2">&quot;dot_block_size&quot;</span><span class="p">:</span> <span class="n">dot_block_size</span><span class="p">,</span>
+            <span class="s2">&quot;max_y_len&quot;</span><span class="p">:</span> <span class="n">max_y_len</span><span class="p">,</span>
+            <span class="s2">&quot;n_locals&quot;</span><span class="p">:</span> <span class="n">segment_size</span> <span class="o">*</span> <span class="n">dot_block_size</span><span class="p">,</span>
+            <span class="c1"># &#39;segment_idx&#39;: &#39;get_local_id(0)&#39;,</span>
+            <span class="c1"># &#39;dot_block_idx&#39;: &#39;get_local_id(1)&#39;,</span>
+            <span class="s2">&quot;segment_idx&quot;</span><span class="p">:</span> <span class="s2">&quot;segment_idx&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;dot_block_idx&quot;</span><span class="p">:</span> <span class="s2">&quot;dot_block_idx&quot;</span><span class="p">,</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">textconf</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="nb">print</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+    <span class="n">textconf</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">)</span>
+    <span class="c1">#    print(&#39;float_gamma&#39;, textconf[&#39;float_gamma&#39;])</span>
+    <span class="c1">#    print(&#39;cl_gamma&#39;, textconf[&#39;cl_gamma&#39;])</span>
+    <span class="c1">#    print(&#39;clra_gamma&#39;, textconf[&#39;clra_gamma&#39;])</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">        __kernel void gemv_many_dots(</span>
+<span class="s2">            const __global int *gstructure,</span>
+<span class="s2">            const __global $</span><span class="si">{A.cl_buf.ctype}</span><span class="s2"> *A_data,</span>
+<span class="s2">            const __global $</span><span class="si">{X.cl_buf.ctype}</span><span class="s2"> *X_data,</span>
+<span class="s2">            </span><span class="si">% i</span><span class="s2">f cl_beta is not None:</span>
+<span class="s2">            const __global $</span><span class="si">{cl_beta.ctype}</span><span class="s2"> * betas,</span>
+<span class="s2">            </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">            const __global $</span><span class="si">{Y_in.cl_buf.ctype}</span><span class="s2"> *Y_in_data,</span>
+<span class="s2">            __global $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"> *Y_data)</span>
+<span class="s2">    {</span>
+<span class="s2">        __local int lstructure[$</span><span class="si">{n_structure_vars}</span><span class="s2">];</span>
+<span class="s2">        __local $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"> y_sum_pre[$</span><span class="si">{segment_size}</span><span class="s2">];</span>
+<span class="s2">        __local $</span><span class="si">{Y.cl_buf.ctype}</span><span class="s2"> </span><span class="se">\</span>
+<span class="s2">            y_sum_post[$</span><span class="si">{dot_block_size}</span><span class="s2">][$</span><span class="si">{segment_size}</span><span class="s2">];</span>
+<span class="s2">        const int local_idx = get_local_id(0) </span><span class="se">\</span>
+<span class="s2">            + get_local_id(1) * get_local_size(0);</span>
+
+<span class="s2">        int segment_idx = get_local_id(0);</span>
+<span class="s2">        int dot_block_idx = get_local_id(1);</span>
+
+<span class="s2">        for (int ii = local_idx; ii &lt; $</span><span class="si">{n_structure_vars}</span><span class="s2">; ii += $</span><span class="si">{n_locals}</span><span class="s2">)</span>
+<span class="s2">        {</span>
+<span class="s2">            lstructure[ii] = gstructure[</span>
+<span class="s2">                get_global_id(2) * $</span><span class="si">{structure_vars_stride}</span><span class="s2"> + ii];</span>
+<span class="s2">        }</span>
+<span class="s2">        barrier(CLK_LOCAL_MEM_FENCE);</span>
+
+<span class="s2">        if (get_global_id(0) &lt; $</span><span class="si">{y_len}</span><span class="s2">)</span>
+<span class="s2">        {</span>
+
+<span class="s2">            if (dot_block_idx == 0)</span>
+<span class="s2">            {</span>
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f float_beta is not None and float_beta != 0 :</span>
+<span class="s2">                y_sum_pre[segment_idx]</span>
+<span class="s2">                = $</span><span class="si">{float_beta}</span><span class="s2"> * Y_in_data[$</span><span class="si">{y_in_starts}</span><span class="s2"> + get_global_id(0)];</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lif cl_beta is not None:</span>
+<span class="s2">                y_sum_pre[segment_idx]</span>
+<span class="s2">                = betas[$</span><span class="si">{bb}</span><span class="s2">] * Y_in_data[$</span><span class="si">{y_in_starts}</span><span class="s2"> + get_global_id(0)];</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">lse :</span>
+<span class="s2">                y_sum_pre[segment_idx] = 0;</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+
+<span class="s2">    </span><span class="si">% i</span><span class="s2">f float_gamma is not None:</span>
+<span class="s2">        </span><span class="si">% i</span><span class="s2">f float_gamma != 0:</span>
+<span class="s2">                y_sum_pre[segment_idx] += $</span><span class="si">{float_gamma}</span><span class="s2">;</span>
+<span class="s2">        </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndif</span>
+<span class="s2">            }</span>
+<span class="s2">        //printf(&quot;betaY + gamma=</span><span class="si">%f</span><span class="se">\\</span><span class="s2">n&quot;, y_sum_pre[segment_idx]);</span>
+
+<span class="s2">            // XXX Move X into shared memory first</span>
+<span class="s2">            y_sum_post[dot_block_idx][segment_idx] = 0;</span>
+<span class="s2">            for (int ii = dot_block_idx;</span>
+<span class="s2">                     ii &lt; $</span><span class="si">{n_dot_products}</span><span class="s2">;</span>
+<span class="s2">                     ii += $</span><span class="si">{dot_block_size}</span><span class="s2">)</span>
+<span class="s2">            {</span>
+<span class="s2">                for (int nn = 0; nn &lt; $</span><span class="si">{N_i}</span><span class="s2">; nn += 1)</span>
+<span class="s2">                {</span>
+<span class="s2">                    y_sum_post[dot_block_idx][segment_idx]</span>
+<span class="s2">                    += A_data[$</span><span class="si">{a_starts}</span><span class="s2"> + get_global_id(0) * $</span><span class="si">{a_s0}</span><span class="s2"> + nn]</span>
+<span class="s2">                       * X_data[$</span><span class="si">{x_starts}</span><span class="s2"> + nn];</span>
+<span class="s2">                }</span>
+<span class="s2">            }</span>
+<span class="s2">        }</span>
+<span class="s2">        barrier(CLK_LOCAL_MEM_FENCE);</span>
+<span class="s2">        //printf(&quot;AX=</span><span class="si">%f</span><span class="se">\\</span><span class="s2">n&quot;, y_sum_post[dot_block_idx][segment_idx]);</span>
+<span class="s2">        if ((get_global_id(0) &lt; $</span><span class="si">{y_len}</span><span class="s2">) &amp;&amp; (dot_block_idx == 0))</span>
+<span class="s2">        {</span>
+<span class="s2">            for (int ii = 1; ii &lt; $</span><span class="si">{dot_block_size}</span><span class="s2">; ++ii)</span>
+<span class="s2">            {</span>
+<span class="s2">                y_sum_post[0][segment_idx] += y_sum_post[ii][segment_idx];</span>
+<span class="s2">            }</span>
+<span class="s2">            Y_data[$</span><span class="si">{y_offset}</span><span class="s2"> + get_global_id(0)]</span>
+<span class="s2">                = y_sum_pre[segment_idx]</span>
+<span class="s2">                  + $</span><span class="si">{float_alpha}</span><span class="s2"> * y_sum_post[0][segment_idx];</span>
+<span class="s2">        //printf(&quot;Yout=</span><span class="si">%f</span><span class="se">\\</span><span class="s2">n&quot;, Y_data[$</span><span class="si">{y_offset}</span><span class="s2"> + get_global_id(0)]);</span>
+<span class="s2">        }</span>
+<span class="s2">    }</span>
+<span class="s2">        &quot;&quot;&quot;</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="n">as_ascii</span><span class="p">(</span><span class="n">Template</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">output_encoding</span><span class="o">=</span><span class="s2">&quot;ascii&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="o">**</span><span class="n">textconf</span><span class="p">))</span>
+    <span class="n">fn</span> <span class="o">=</span> <span class="n">cl</span><span class="o">.</span><span class="n">Program</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="o">.</span><span class="n">context</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span><span class="o">.</span><span class="n">build</span><span class="p">()</span><span class="o">.</span><span class="n">gemv_many_dots</span>
+
+    <span class="n">full_args</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">cl_gstructure</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+    <span class="p">]</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_beta</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">cl_beta</span><span class="p">]</span>
+    <span class="n">full_args</span> <span class="o">+=</span> <span class="p">[</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+    <span class="p">]</span>
+
+    <span class="n">fn</span><span class="o">.</span><span class="n">set_args</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">arr</span><span class="o">.</span><span class="n">data</span> <span class="k">for</span> <span class="n">arr</span> <span class="ow">in</span> <span class="n">full_args</span><span class="p">])</span>
+    <span class="n">rval</span> <span class="o">=</span> <span class="n">Plan</span><span class="p">(</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span>
+        <span class="n">fn</span><span class="p">,</span>
+        <span class="n">gsize</span><span class="p">,</span>
+        <span class="n">lsize</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;clra_gemv.many_dots_impl&quot;</span><span class="p">,</span>
+        <span class="n">tag</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">tag</span><span class="p">,</span>
+        <span class="n">bw_per_call</span><span class="o">=</span><span class="n">bw_from_geometry</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">),</span>
+        <span class="n">flops_per_call</span><span class="o">=</span><span class="n">flops_from_geometry</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">rval</span><span class="o">.</span><span class="n">full_args</span> <span class="o">=</span> <span class="n">full_args</span>  <span class="c1"># prevent GC the args</span>
+    <span class="n">rval</span><span class="o">.</span><span class="n">description</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">geometry_summary</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">rval</span>
+
+
+<span class="k">def</span> <span class="nf">block_impl</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">items</span><span class="p">):</span>  <span class="c1"># noqa: C901</span>
+
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">clra_beta</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_alpha</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_beta</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">cl_gamma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span> <span class="o">==</span> <span class="mi">1</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride1s</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">A_js</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># -- easy probably, but not done</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span>
+
+    <span class="c1"># --- blocking</span>
+    <span class="c1"># We want to group the dot products into blocks, so that each workgroup</span>
+    <span class="c1"># is computing a (block_y, block_x) region of a dot product. To do this,</span>
+    <span class="c1"># we create a temporary output buffer, compute each block to a separate</span>
+    <span class="c1"># region of this buffer, then reduce across the buffer in a separate kernel</span>
+
+    <span class="c1"># block_y = 8</span>
+    <span class="n">block_y</span> <span class="o">=</span> <span class="mi">32</span>
+    <span class="c1"># block_x = 32</span>
+    <span class="n">block_x</span> <span class="o">=</span> <span class="mi">128</span>
+
+    <span class="n">shape0s</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">shape1s</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Astride0s</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Astride1s</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Astarts</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Xstride0s</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Xstarts</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Ybufstarts</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Ybufstart</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="n">Yshape0s_reduce</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Yinstride0s_reduce</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Yinstarts_reduce</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Ystride0s_reduce</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Ystarts_reduce</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">Ybufinds_reduce</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">bw_reduce</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">shape0s</span><span class="p">[</span><span class="n">n</span><span class="p">]</span> <span class="o">==</span> <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">shape0s</span><span class="p">[</span><span class="n">n</span><span class="p">]</span>
+        <span class="n">shape0n</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">shape0s</span><span class="p">[</span><span class="n">n</span><span class="p">]</span>
+
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">shape0n</span><span class="p">,</span> <span class="n">block_y</span><span class="p">):</span>
+            <span class="n">shape0i</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">shape0n</span> <span class="o">-</span> <span class="n">i</span><span class="p">,</span> <span class="n">block_y</span><span class="p">)</span>
+
+            <span class="n">Ybufind_reduce</span> <span class="o">=</span> <span class="p">[]</span>
+
+            <span class="c1"># loop over dot products outputting to same Y</span>
+            <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">A_js</span><span class="p">[</span><span class="n">n</span><span class="p">])</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">X_js</span><span class="p">[</span><span class="n">n</span><span class="p">])</span>
+            <span class="k">for</span> <span class="n">aj</span><span class="p">,</span> <span class="n">xj</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">A_js</span><span class="p">[</span><span class="n">n</span><span class="p">],</span> <span class="n">p</span><span class="o">.</span><span class="n">X_js</span><span class="p">[</span><span class="n">n</span><span class="p">]):</span>
+                <span class="k">assert</span> <span class="n">aj</span><span class="o">.</span><span class="n">size</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">xj</span><span class="o">.</span><span class="n">size</span> <span class="o">==</span> <span class="mi">1</span>
+                <span class="n">aj</span><span class="p">,</span> <span class="n">xj</span> <span class="o">=</span> <span class="n">aj</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">xj</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>  <span class="c1"># to ignore numpy DeprecationWarning</span>
+
+                <span class="k">assert</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">shape0s</span><span class="p">[</span><span class="n">aj</span><span class="p">]</span> <span class="o">==</span> <span class="n">shape0n</span>
+                <span class="k">assert</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">shape1s</span><span class="p">[</span><span class="n">aj</span><span class="p">]</span> <span class="o">==</span> <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">shape0s</span><span class="p">[</span><span class="n">xj</span><span class="p">]</span>
+                <span class="k">assert</span> <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">shape1s</span><span class="p">[</span><span class="n">xj</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span>
+                <span class="n">shape1n</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">shape1s</span><span class="p">[</span><span class="n">aj</span><span class="p">]</span>
+
+                <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">shape1n</span><span class="p">,</span> <span class="n">block_x</span><span class="p">):</span>
+                    <span class="n">shape0s</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">shape0i</span><span class="p">)</span>
+                    <span class="n">shape1s</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="n">shape1n</span> <span class="o">-</span> <span class="n">j</span><span class="p">,</span> <span class="n">block_x</span><span class="p">))</span>
+                    <span class="n">Astride0s</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride0s</span><span class="p">[</span><span class="n">aj</span><span class="p">])</span>
+                    <span class="n">Astride1s</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride1s</span><span class="p">[</span><span class="n">aj</span><span class="p">])</span>
+                    <span class="n">Astarts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                        <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">starts</span><span class="p">[</span><span class="n">aj</span><span class="p">]</span> <span class="o">+</span> <span class="n">i</span> <span class="o">*</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride0s</span><span class="p">[</span><span class="n">aj</span><span class="p">]</span> <span class="o">+</span> <span class="n">j</span> <span class="o">*</span> <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">stride1s</span><span class="p">[</span><span class="n">aj</span><span class="p">]</span>
+                    <span class="p">)</span>
+                    <span class="n">Xstride0s</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">stride0s</span><span class="p">[</span><span class="n">xj</span><span class="p">])</span>
+                    <span class="n">Xstarts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">starts</span><span class="p">[</span><span class="n">xj</span><span class="p">]</span> <span class="o">+</span> <span class="n">j</span> <span class="o">*</span> <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">stride0s</span><span class="p">[</span><span class="n">xj</span><span class="p">])</span>
+
+                    <span class="n">Ybufstarts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Ybufstart</span><span class="p">)</span>
+                    <span class="n">Ybufind_reduce</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Ybufstart</span><span class="p">)</span>
+                    <span class="c1"># Ybufstart += shape0s[-1]</span>
+                    <span class="n">Ybufstart</span> <span class="o">+=</span> <span class="n">block_y</span>  <span class="c1"># keep good offset</span>
+
+            <span class="c1"># --- Y-blocking for reduce</span>
+            <span class="n">Yshape0s_reduce</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">shape0i</span><span class="p">)</span>
+            <span class="n">Yinstride0s_reduce</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">stride0s</span><span class="p">[</span><span class="n">n</span><span class="p">])</span>
+            <span class="n">Yinstarts_reduce</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">starts</span><span class="p">[</span><span class="n">n</span><span class="p">]</span> <span class="o">+</span> <span class="n">i</span> <span class="o">*</span> <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">stride0s</span><span class="p">[</span><span class="n">n</span><span class="p">])</span>
+            <span class="n">Ystride0s_reduce</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">stride0s</span><span class="p">[</span><span class="n">n</span><span class="p">])</span>
+            <span class="n">Ystarts_reduce</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">starts</span><span class="p">[</span><span class="n">n</span><span class="p">]</span> <span class="o">+</span> <span class="n">i</span> <span class="o">*</span> <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">stride0s</span><span class="p">[</span><span class="n">n</span><span class="p">])</span>
+            <span class="n">Ybufinds_reduce</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Ybufind_reduce</span><span class="p">)</span>
+            <span class="n">bw_reduce</span> <span class="o">+=</span> <span class="n">shape0i</span> <span class="o">*</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">Ybufind_reduce</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">dtype</span><span class="o">.</span><span class="n">itemsize</span>
+
+    <span class="c1"># --- create structure</span>
+    <span class="n">gstructure</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">column_stack</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">shape0s</span><span class="p">,</span>
+            <span class="n">shape1s</span><span class="p">,</span>
+            <span class="n">Astride0s</span><span class="p">,</span>
+            <span class="n">Astride1s</span><span class="p">,</span>
+            <span class="n">Astarts</span><span class="p">,</span>
+            <span class="n">Xstride0s</span><span class="p">,</span>
+            <span class="n">Xstarts</span><span class="p">,</span>
+            <span class="n">Ybufstarts</span><span class="p">,</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">cl_gstructure</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">gstructure</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+
+    <span class="c1"># --- create Y buffer</span>
+    <span class="n">clYbuf</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">Ybufstart</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span>
+
+    <span class="n">lsize0</span> <span class="o">=</span> <span class="mi">4</span>
+    <span class="c1"># lsize0 = 8</span>
+    <span class="n">lsize0_log2</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">lsize0</span><span class="p">))</span>
+    <span class="k">assert</span> <span class="mi">2</span> <span class="o">**</span> <span class="n">lsize0_log2</span> <span class="o">==</span> <span class="n">lsize0</span>
+
+    <span class="n">lsize</span> <span class="o">=</span> <span class="p">(</span><span class="n">lsize0</span><span class="p">,</span> <span class="n">block_y</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">gsize</span> <span class="o">=</span> <span class="p">(</span><span class="n">lsize</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">lsize</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">gstructure</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="k">assert</span> <span class="n">np</span><span class="o">.</span><span class="n">prod</span><span class="p">(</span><span class="n">lsize</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">block_x</span>
+
+    <span class="n">textconf</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="n">A</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="p">,</span>
+        <span class="n">X</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="p">,</span>
+        <span class="n">Ybuf</span><span class="o">=</span><span class="n">clYbuf</span><span class="p">,</span>
+        <span class="n">n_structure_vars</span><span class="o">=</span><span class="n">gstructure</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+        <span class="n">shape0</span><span class="o">=</span><span class="s2">&quot;lstructure[0]&quot;</span><span class="p">,</span>
+        <span class="n">shape1</span><span class="o">=</span><span class="s2">&quot;lstructure[1]&quot;</span><span class="p">,</span>
+        <span class="n">Astride0</span><span class="o">=</span><span class="s2">&quot;lstructure[2]&quot;</span><span class="p">,</span>
+        <span class="n">Astride1</span><span class="o">=</span><span class="s2">&quot;lstructure[3]&quot;</span><span class="p">,</span>
+        <span class="n">Astart</span><span class="o">=</span><span class="s2">&quot;lstructure[4]&quot;</span><span class="p">,</span>
+        <span class="n">Xstride0</span><span class="o">=</span><span class="s2">&quot;lstructure[5]&quot;</span><span class="p">,</span>
+        <span class="n">Xstart</span><span class="o">=</span><span class="s2">&quot;lstructure[6]&quot;</span><span class="p">,</span>
+        <span class="n">Ybufstart</span><span class="o">=</span><span class="s2">&quot;lstructure[7]&quot;</span><span class="p">,</span>
+        <span class="n">block_y</span><span class="o">=</span><span class="n">block_y</span><span class="p">,</span>
+        <span class="n">block_x</span><span class="o">=</span><span class="n">block_x</span><span class="p">,</span>
+        <span class="n">lsize0</span><span class="o">=</span><span class="n">lsize0</span><span class="p">,</span>
+        <span class="n">lsize0_log2</span><span class="o">=</span><span class="n">lsize0_log2</span><span class="p">,</span>
+        <span class="n">float_alpha</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">float_alpha</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">full_args</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">cl_gstructure</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">A</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">X</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="n">clYbuf</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    __kernel void fn(</span>
+<span class="s2">        __global const int *gstructure,</span>
+<span class="s2">        __global const $</span><span class="si">{A.ctype}</span><span class="s2"> *Adata,</span>
+<span class="s2">        __global const $</span><span class="si">{X.ctype}</span><span class="s2"> *Xdata,</span>
+<span class="s2">        __global $</span><span class="si">{Ybuf.ctype}</span><span class="s2"> *Ybufdata</span>
+<span class="s2">        )</span>
+<span class="s2">    {</span>
+<span class="s2">        const int j = get_global_id(0);</span>
+<span class="s2">        const int i = get_global_id(1);</span>
+<span class="s2">        const int n = get_global_id(2);</span>
+
+<span class="s2">        // load structure</span>
+<span class="s2">        __local int lstructure[$</span><span class="si">{n_structure_vars}</span><span class="s2">];</span>
+<span class="s2">        const int local_idx =</span>
+<span class="s2">            get_local_id(0) + get_local_id(1)*get_local_size(0);</span>
+<span class="s2">        if (local_idx &lt; $</span><span class="si">{n_structure_vars}</span><span class="s2">)</span>
+<span class="s2">            lstructure[local_idx] = gstructure[</span>
+<span class="s2">                n * $</span><span class="si">{n_structure_vars}</span><span class="s2"> + local_idx];</span>
+<span class="s2">        barrier(CLK_LOCAL_MEM_FENCE);</span>
+
+<span class="s2">        __global const $</span><span class="si">{X.ctype}</span><span class="s2"> *x = Xdata + $</span><span class="si">{Xstart}</span><span class="s2">;</span>
+<span class="s2">        __global $</span><span class="si">{Ybuf.ctype}</span><span class="s2"> *ybuf = Ybufdata + $</span><span class="si">{Ybufstart}</span><span class="s2">;</span>
+
+<span class="s2">        // load x into local memory</span>
+<span class="s2">        __local $</span><span class="si">{X.ctype}</span><span class="s2"> xlocal[$</span><span class="si">{block_x}</span><span class="s2">];</span>
+<span class="s2">        if (local_idx &lt; $</span><span class="si">{shape1}</span><span class="s2">)</span>
+<span class="s2">            xlocal[local_idx] = x[local_idx*$</span><span class="si">{Xstride0}</span><span class="s2">];</span>
+<span class="s2">        barrier(CLK_LOCAL_MEM_FENCE);</span>
+
+<span class="s2">        __local $</span><span class="si">{Ybuf.ctype}</span><span class="s2"> sums[$</span><span class="si">{block_y}</span><span class="s2">][$</span><span class="si">{lsize0}</span><span class="s2">];</span>
+<span class="s2">        sums[i][j] = 0;</span>
+
+<span class="s2">        if (i &lt; $</span><span class="si">{shape0}</span><span class="s2">) {</span>
+<span class="s2">            __global const $</span><span class="si">{A.ctype}</span><span class="s2"> *Ai = Adata + $</span><span class="si">{Astart}</span><span class="s2"> + i*$</span><span class="si">{Astride0}</span><span class="s2">;</span>
+<span class="s2">            for(int jj = j; jj &lt; $</span><span class="si">{shape1}</span><span class="s2">; jj += get_global_size(0)) {</span>
+<span class="s2">                sums[i][j] += Ai[jj*$</span><span class="si">{Astride1}</span><span class="s2">] * xlocal[jj];</span>
+<span class="s2">            }</span>
+<span class="s2">        }</span>
+<span class="s2">        barrier(CLK_LOCAL_MEM_FENCE);</span>
+
+<span class="s2">    </span><span class="si">% f</span><span class="s2">or k in range(lsize0_log2 - 1, 0, -1):</span>
+<span class="s2">        if (j &lt; ${2**k})</span>
+<span class="s2">            sums[i][j] += sums[i][${2**k} + j];</span>
+<span class="s2">        barrier(CLK_LOCAL_MEM_FENCE);</span>
+<span class="s2">    </span><span class="si">% e</span><span class="s2">ndfor</span>
+
+<span class="s2">        if (i &lt; $</span><span class="si">{shape0}</span><span class="s2"> &amp;&amp; j == 0)</span>
+<span class="s2">            ybuf[i] = $</span><span class="si">{float_alpha}</span><span class="s2"> * (sums[i][0] + sums[i][1]);</span>
+<span class="s2">    }</span>
+<span class="s2">    &quot;&quot;&quot;</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="n">as_ascii</span><span class="p">(</span><span class="n">Template</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">output_encoding</span><span class="o">=</span><span class="s2">&quot;ascii&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="o">**</span><span class="n">textconf</span><span class="p">))</span>
+    <span class="n">kernel</span> <span class="o">=</span> <span class="n">cl</span><span class="o">.</span><span class="n">Program</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="o">.</span><span class="n">context</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span><span class="o">.</span><span class="n">build</span><span class="p">()</span><span class="o">.</span><span class="n">fn</span>
+    <span class="n">kernel</span><span class="o">.</span><span class="n">set_args</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">arr</span><span class="o">.</span><span class="n">data</span> <span class="k">for</span> <span class="n">arr</span> <span class="ow">in</span> <span class="n">full_args</span><span class="p">])</span>
+
+    <span class="n">plan</span> <span class="o">=</span> <span class="n">Plan</span><span class="p">(</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span>
+        <span class="n">kernel</span><span class="p">,</span>
+        <span class="n">gsize</span><span class="p">,</span>
+        <span class="n">lsize</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;clra_gemv.block_impl&quot;</span><span class="p">,</span>
+        <span class="n">tag</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">tag</span><span class="p">,</span>
+        <span class="n">bw_per_call</span><span class="o">=</span><span class="n">bw_from_geometry</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">),</span>
+        <span class="n">flops_per_call</span><span class="o">=</span><span class="n">flops_from_geometry</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">geometry</span><span class="p">,</span> <span class="n">items</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">plan</span><span class="o">.</span><span class="n">full_args</span> <span class="o">=</span> <span class="n">full_args</span>  <span class="c1"># prevent GC the args</span>
+    <span class="n">plan</span><span class="o">.</span><span class="n">description</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">geometry_summary</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+    <span class="n">plan</span><span class="o">.</span><span class="n">Ybuf</span> <span class="o">=</span> <span class="n">clYbuf</span>
+
+    <span class="c1"># --- Reduce kernel</span>
+    <span class="n">align</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="n">Nreduce</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">Yshape0s_reduce</span><span class="p">)</span>
+    <span class="n">clYshape0s_reduce</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">Yshape0s_reduce</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+    <span class="n">clYinstride0s_reduce</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">Yinstride0s_reduce</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">clYinstarts_reduce</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">Yinstarts_reduce</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+    <span class="n">clYstride0s_reduce</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">Ystride0s_reduce</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+    <span class="n">clYstarts_reduce</span> <span class="o">=</span> <span class="n">to_device</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">Ystarts_reduce</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+    <span class="n">clYbufinds_reduce</span> <span class="o">=</span> <span class="n">CLRaggedArray</span><span class="o">.</span><span class="n">from_arrays</span><span class="p">(</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span> <span class="n">Ybufinds_reduce</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="n">align</span>
+    <span class="p">)</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">clYbufinds_reduce</span><span class="p">)</span> <span class="o">==</span> <span class="n">Nreduce</span>
+    <span class="k">assert</span> <span class="p">(</span><span class="n">clYbufinds_reduce</span><span class="o">.</span><span class="n">shape1s</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>
+
+    <span class="n">textconf_reduce</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="n">Ybuf</span><span class="o">=</span><span class="n">clYbuf</span><span class="p">,</span>
+        <span class="n">Yin</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="p">,</span>
+        <span class="n">Y</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="p">,</span>
+        <span class="n">float_beta</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">float_beta</span><span class="p">,</span>
+        <span class="n">float_gamma</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">float_gamma</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">full_args_reduce</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">clYshape0s_reduce</span><span class="p">,</span>
+        <span class="n">clYbufinds_reduce</span><span class="o">.</span><span class="n">cl_shape0s</span><span class="p">,</span>
+        <span class="n">clYbufinds_reduce</span><span class="o">.</span><span class="n">cl_starts</span><span class="p">,</span>
+        <span class="n">clYbufinds_reduce</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="n">clYbuf</span><span class="p">,</span>
+        <span class="n">clYinstride0s_reduce</span><span class="p">,</span>
+        <span class="n">clYinstarts_reduce</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y_in</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+        <span class="n">clYstride0s_reduce</span><span class="p">,</span>
+        <span class="n">clYstarts_reduce</span><span class="p">,</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">Y</span><span class="o">.</span><span class="n">cl_buf</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">lsize_reduce</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">gsize_reduce</span> <span class="o">=</span> <span class="p">(</span><span class="n">block_y</span><span class="p">,</span> <span class="n">Nreduce</span><span class="p">)</span>
+
+    <span class="n">text_reduce</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    __kernel void reduce(</span>
+<span class="s2">        __global const int *shape0s,</span>
+<span class="s2">        __global const int *Ishape0s,</span>
+<span class="s2">        __global const int *Istarts,</span>
+<span class="s2">        __global const int *Idata,</span>
+<span class="s2">        __global $</span><span class="si">{Ybuf.ctype}</span><span class="s2"> *Ybufdata,</span>
+<span class="s2">        __global const int *Yinstride0s,</span>
+<span class="s2">        __global const int *Yinstarts,</span>
+<span class="s2">        __global $</span><span class="si">{Yin.ctype}</span><span class="s2"> *Yindata,</span>
+<span class="s2">        __global const int *Ystride0s,</span>
+<span class="s2">        __global const int *Ystarts,</span>
+<span class="s2">        __global $</span><span class="si">{Y.ctype}</span><span class="s2"> *Ydata</span>
+<span class="s2">    )</span>
+<span class="s2">    {</span>
+<span class="s2">        const int i = get_global_id(0);</span>
+<span class="s2">        const int n = get_global_id(1);</span>
+<span class="s2">        if (i &gt;= shape0s[n])</span>
+<span class="s2">            return;</span>
+
+<span class="s2">        const int Ishape0 = Ishape0s[n];</span>
+
+<span class="s2">        __global const int *Ybufstart = Idata + Istarts[n];</span>
+<span class="s2">        __global $</span><span class="si">{Yin.ctype}</span><span class="s2"> *yin = Yindata + Yinstarts[n];</span>
+<span class="s2">        __global $</span><span class="si">{Y.ctype}</span><span class="s2"> *y = Ydata + Ystarts[n];</span>
+
+<span class="s2">        $</span><span class="si">{Y.ctype}</span><span class="s2"> sum = $</span><span class="si">{float_beta}</span><span class="s2"> * yin[i*Yinstride0s[n]];</span>
+<span class="s2">        for (int j = 0; j &lt; Ishape0; j++) {</span>
+<span class="s2">            sum += Ybufdata[Ybufstart[j] + i];</span>
+<span class="s2">        }</span>
+
+<span class="s2">        y[i*Ystride0s[n]] = sum + $</span><span class="si">{float_gamma}</span><span class="s2">;</span>
+<span class="s2">    }</span>
+<span class="s2">    &quot;&quot;&quot;</span>
+
+    <span class="n">text_reduce</span> <span class="o">=</span> <span class="n">as_ascii</span><span class="p">(</span>
+        <span class="n">Template</span><span class="p">(</span><span class="n">text_reduce</span><span class="p">,</span> <span class="n">output_encoding</span><span class="o">=</span><span class="s2">&quot;ascii&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="o">**</span><span class="n">textconf_reduce</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">kernel_reduce</span> <span class="o">=</span> <span class="n">cl</span><span class="o">.</span><span class="n">Program</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="o">.</span><span class="n">context</span><span class="p">,</span> <span class="n">text_reduce</span><span class="p">)</span><span class="o">.</span><span class="n">build</span><span class="p">()</span><span class="o">.</span><span class="n">reduce</span>
+    <span class="n">kernel_reduce</span><span class="o">.</span><span class="n">set_args</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">arr</span><span class="o">.</span><span class="n">data</span> <span class="k">for</span> <span class="n">arr</span> <span class="ow">in</span> <span class="n">full_args_reduce</span><span class="p">])</span>
+
+    <span class="n">plan_reduce</span> <span class="o">=</span> <span class="n">Plan</span><span class="p">(</span>
+        <span class="n">p</span><span class="o">.</span><span class="n">queue</span><span class="p">,</span>
+        <span class="n">kernel_reduce</span><span class="p">,</span>
+        <span class="n">gsize_reduce</span><span class="p">,</span>
+        <span class="n">lsize_reduce</span><span class="p">,</span>
+        <span class="n">name</span><span class="o">=</span><span class="s2">&quot;clra_gemv.block_impl_reduce&quot;</span><span class="p">,</span>
+        <span class="n">tag</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">tag</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">plan_reduce</span><span class="o">.</span><span class="n">full_args</span> <span class="o">=</span> <span class="n">full_args_reduce</span>  <span class="c1"># prevent GC of the args</span>
+    <span class="n">plan_reduce</span><span class="o">.</span><span class="n">bw_per_call</span> <span class="o">=</span> <span class="n">bw_reduce</span>
+    <span class="c1"># plan_reduce.description = p.geometry_summary(items)</span>
+
+    <span class="k">return</span> <span class="p">[</span><span class="n">plan</span><span class="p">,</span> <span class="n">plan_reduce</span><span class="p">]</span>
+
+
+<span class="k">class</span> <span class="nc">plan_ref_gemv</span><span class="p">(</span><span class="n">gemv_prog</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">choose_plans</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">ref_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">Y</span><span class="p">)))]</span>
+
+
+<span class="k">class</span> <span class="nc">plan_many_dots_gemv</span><span class="p">(</span><span class="n">gemv_prog</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">choose_plans</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">many_dots_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">Y</span><span class="p">)))]</span>
+
+
+<span class="k">class</span> <span class="nc">plan_reduce_gemv</span><span class="p">(</span><span class="n">gemv_prog</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">choose_plans</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">reduce_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">Y</span><span class="p">)))]</span>
+
+
+<span class="k">class</span> <span class="nc">plan_block_gemv</span><span class="p">(</span><span class="n">gemv_prog</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">choose_plans</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">block_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">Y</span><span class="p">))))</span>
+
+
+<span class="k">class</span> <span class="nc">plan_ragged_gather_gemv</span><span class="p">(</span><span class="n">gemv_prog</span><span class="p">):</span>
+    <span class="c1"># EH: This heuristic was designed by James to get the best speeds, but for</span>
+    <span class="c1"># large models (i.e. Spaun) just using block_impl seems to be faster.</span>
+
+    <span class="k">def</span> <span class="nf">choose_plans</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">remaining_items</span> <span class="o">=</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">Y</span><span class="p">))</span>
+        <span class="n">plans</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="n">long_dots</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">ii</span>
+            <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">remaining_items</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">][</span><span class="s2">&quot;dots&quot;</span><span class="p">])</span> <span class="o">&lt;=</span> <span class="mi">2</span>
+            <span class="ow">and</span> <span class="nb">max</span><span class="p">([</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="p">[</span><span class="n">dct</span><span class="p">[</span><span class="s2">&quot;a_shape1&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">dct</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">geometry</span><span class="p">[</span><span class="n">ii</span><span class="p">][</span><span class="s2">&quot;dots&quot;</span><span class="p">]])</span> <span class="o">&gt;</span> <span class="mi">16</span>
+        <span class="p">]</span>
+        <span class="k">if</span> <span class="n">long_dots</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">long_plan</span> <span class="o">=</span> <span class="n">reduce_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">long_dots</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">NotImplementedError</span><span class="p">:</span>
+                <span class="n">long_plan</span> <span class="o">=</span> <span class="n">ref_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">long_dots</span><span class="p">)</span>
+            <span class="n">long_plan</span><span class="o">.</span><span class="n">tag</span> <span class="o">+=</span> <span class="s2">&quot;-long</span><span class="si">%i</span><span class="s2">&quot;</span> <span class="o">%</span> <span class="nb">len</span><span class="p">(</span><span class="n">long_dots</span><span class="p">)</span>
+            <span class="n">plans</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">long_plan</span><span class="p">)</span>
+            <span class="n">remaining_items</span> <span class="o">=</span> <span class="p">[</span><span class="n">ii</span> <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">remaining_items</span> <span class="k">if</span> <span class="n">ii</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">long_dots</span><span class="p">]</span>
+
+        <span class="c1"># many_dots = [ii</span>
+        <span class="c1"># for ii in remaining_items</span>
+        <span class="c1"># if len(self.geometry[ii][&#39;dots&#39;]) &gt; 3]</span>
+        <span class="n">many_dots</span> <span class="o">=</span> <span class="n">remaining_items</span>
+        <span class="k">if</span> <span class="n">many_dots</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">many_plan</span> <span class="o">=</span> <span class="n">many_dots_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">many_dots</span><span class="p">)</span>
+                <span class="n">many_plan</span><span class="o">.</span><span class="n">tag</span> <span class="o">+=</span> <span class="s2">&quot;-many</span><span class="si">%i</span><span class="s2">&quot;</span> <span class="o">%</span> <span class="nb">len</span><span class="p">(</span><span class="n">many_dots</span><span class="p">)</span>
+                <span class="n">plans</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">many_plan</span><span class="p">)</span>
+                <span class="n">remaining_items</span> <span class="o">=</span> <span class="p">[</span><span class="n">ii</span> <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="n">remaining_items</span> <span class="k">if</span> <span class="n">ii</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">many_dots</span><span class="p">]</span>
+            <span class="k">except</span> <span class="ne">NotImplementedError</span><span class="p">:</span>
+                <span class="k">pass</span>
+
+        <span class="k">if</span> <span class="n">remaining_items</span><span class="p">:</span>
+            <span class="n">remaining_plan</span> <span class="o">=</span> <span class="n">ref_impl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">remaining_items</span><span class="p">)</span>
+            <span class="n">remaining_plan</span><span class="o">.</span><span class="n">tag</span> <span class="o">+=</span> <span class="s2">&quot;-remaining</span><span class="si">%i</span><span class="s2">&quot;</span> <span class="o">%</span> <span class="nb">len</span><span class="p">(</span><span class="n">remaining_items</span><span class="p">)</span>
+            <span class="n">plans</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">remaining_plan</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">plans</span>
+
+
+<div class="viewcode-block" id="plan_sparse_dot_inc"><a class="viewcode-back" href="../../api.html#nengo_ocl.clra_gemv.plan_sparse_dot_inc">[docs]</a><span class="k">def</span> <span class="nf">plan_sparse_dot_inc</span><span class="p">(</span><span class="n">queue</span><span class="p">,</span> <span class="n">A_indices</span><span class="p">,</span> <span class="n">A_indptr</span><span class="p">,</span> <span class="n">A_data</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">Y</span><span class="p">,</span> <span class="n">inc</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Implements a sparse matrix-vector multiply: Y += A * X or Y = A * X</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    A_indices, A_indptr : PyOpenCL array</span>
+<span class="sd">        Column sparse row index specifications</span>
+<span class="sd">    A_data : PyOpenCL array</span>
+<span class="sd">        Matrix values at those indices</span>
+<span class="sd">    X, Y : CLRaggedArrays of length 1</span>
+<span class="sd">        Input/output data.</span>
+<span class="sd">    inc : bool</span>
+<span class="sd">        Whether to increment ``Y`` (True), or set it (False).</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    This function crashes when there are &gt;10M nonzero weights. A potential solution</span>
+<span class="sd">    would be some way to tell each work item to do multiple rows.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">X</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">Y</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
+
+    <span class="k">for</span> <span class="n">arr</span> <span class="ow">in</span> <span class="p">[</span><span class="n">X</span><span class="p">,</span> <span class="n">Y</span><span class="p">]:</span>
+        <span class="k">assert</span> <span class="p">(</span><span class="n">arr</span><span class="o">.</span><span class="n">stride1s</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="p">((</span><span class="n">arr</span><span class="o">.</span><span class="n">shape1s</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()</span> <span class="ow">and</span> <span class="p">(</span><span class="n">arr</span><span class="o">.</span><span class="n">stride0s</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()):</span>
+            <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+                <span class="s2">&quot;OCL SparseDot only supports matrix-vector currently, not matrix-matrix&quot;</span>
+            <span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">arr</span> <span class="ow">in</span> <span class="p">[</span><span class="n">A_indices</span><span class="p">,</span> <span class="n">A_indptr</span><span class="p">,</span> <span class="n">A_data</span><span class="p">]:</span>
+        <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
+        <span class="k">assert</span> <span class="n">arr</span><span class="o">.</span><span class="n">strides</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">arr</span><span class="o">.</span><span class="n">dtype</span><span class="o">.</span><span class="n">itemsize</span>  <span class="c1"># contiguous</span>
+
+    <span class="k">assert</span> <span class="n">A_indices</span><span class="o">.</span><span class="n">size</span> <span class="o">==</span> <span class="n">A_data</span><span class="o">.</span><span class="n">size</span>
+
+    <span class="k">assert</span> <span class="n">A_data</span><span class="o">.</span><span class="n">ctype</span> <span class="o">==</span> <span class="n">X</span><span class="o">.</span><span class="n">ctype</span> <span class="o">==</span> <span class="n">Y</span><span class="o">.</span><span class="n">ctype</span>
+    <span class="k">assert</span> <span class="n">A_indices</span><span class="o">.</span><span class="n">ctype</span> <span class="o">==</span> <span class="n">A_indptr</span><span class="o">.</span><span class="n">ctype</span> <span class="o">==</span> <span class="s2">&quot;int&quot;</span>
+
+    <span class="n">kern</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    __kernel void sparsedot_inc(</span>
+<span class="s2">        __global const int *A_indices,</span>
+<span class="s2">        __global const int *A_indptr,</span>
+<span class="s2">        __global const $</span><span class="si">{dtype}</span><span class="s2"> *A_data,</span>
+<span class="s2">        __global const int *Xstarts,</span>
+<span class="s2">        __global const $</span><span class="si">{dtype}</span><span class="s2"> *Xdata,</span>
+<span class="s2">        __global const int *Ystarts,</span>
+<span class="s2">        __global $</span><span class="si">{dtype}</span><span class="s2"> *Ydata</span>
+<span class="s2">    )</span>
+<span class="s2">    {</span>
+<span class="s2">        // n can later be used to keep track of multiple arrays</span>
+<span class="s2">        const int n = 0;</span>
+<span class="s2">        const int irow = get_global_id(0);</span>
+
+<span class="s2">        __global const $</span><span class="si">{dtype}</span><span class="s2"> *x = Xdata + Xstarts[n];</span>
+<span class="s2">        __global $</span><span class="si">{dtype}</span><span class="s2"> *y = Ydata + Ystarts[n];</span>
+
+<span class="s2">    </span><span class="si">%i</span><span class="s2">f not inc:</span>
+<span class="s2">        y[irow] = 0;</span>
+<span class="s2">    </span><span class="si">%e</span><span class="s2">ndif</span>
+<span class="s2">        const int end = A_indptr[irow + 1];</span>
+<span class="s2">        for (int k = A_indptr[irow]; k &lt; end; k++) {</span>
+<span class="s2">            y[irow] += A_data[k] * x[A_indices[k]];</span>
+<span class="s2">        }</span>
+<span class="s2">    }</span>
+<span class="s2">    &quot;&quot;&quot;</span>
+    <span class="n">textconf</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">A_data</span><span class="o">.</span><span class="n">ctype</span><span class="p">,</span> <span class="n">IndType</span><span class="o">=</span><span class="n">A_indices</span><span class="o">.</span><span class="n">ctype</span><span class="p">,</span> <span class="n">inc</span><span class="o">=</span><span class="n">inc</span><span class="p">)</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="n">as_ascii</span><span class="p">(</span><span class="n">Template</span><span class="p">(</span><span class="n">kern</span><span class="p">,</span> <span class="n">output_encoding</span><span class="o">=</span><span class="s2">&quot;ascii&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="o">**</span><span class="n">textconf</span><span class="p">))</span>
+    <span class="n">full_args</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">A_indices</span><span class="o">.</span><span class="n">base_data</span><span class="p">,</span>
+        <span class="n">A_indptr</span><span class="o">.</span><span class="n">base_data</span><span class="p">,</span>
+        <span class="n">A_data</span><span class="o">.</span><span class="n">base_data</span><span class="p">,</span>
+        <span class="n">X</span><span class="o">.</span><span class="n">cl_starts</span><span class="o">.</span><span class="n">data</span><span class="p">,</span>
+        <span class="n">X</span><span class="o">.</span><span class="n">cl_buf</span><span class="o">.</span><span class="n">data</span><span class="p">,</span>
+        <span class="n">Y</span><span class="o">.</span><span class="n">cl_starts</span><span class="o">.</span><span class="n">data</span><span class="p">,</span>
+        <span class="n">Y</span><span class="o">.</span><span class="n">cl_buf</span><span class="o">.</span><span class="n">data</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">_fn</span> <span class="o">=</span> <span class="n">cl</span><span class="o">.</span><span class="n">Program</span><span class="p">(</span><span class="n">queue</span><span class="o">.</span><span class="n">context</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span><span class="o">.</span><span class="n">build</span><span class="p">()</span><span class="o">.</span><span class="n">sparsedot_inc</span>
+    <span class="n">_fn</span><span class="o">.</span><span class="n">set_args</span><span class="p">(</span><span class="o">*</span><span class="n">full_args</span><span class="p">)</span>
+
+    <span class="n">gsize</span> <span class="o">=</span> <span class="p">(</span><span class="n">Y</span><span class="o">.</span><span class="n">sizes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">1</span><span class="p">)</span>  <span class="c1"># this only works for a single operation</span>
+    <span class="n">lsize</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">plan</span> <span class="o">=</span> <span class="n">Plan</span><span class="p">(</span><span class="n">queue</span><span class="p">,</span> <span class="n">_fn</span><span class="p">,</span> <span class="n">gsize</span><span class="p">,</span> <span class="n">lsize</span><span class="o">=</span><span class="n">lsize</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;cl_sparsedot&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">tag</span><span class="p">)</span>
+    <span class="n">plan</span><span class="o">.</span><span class="n">full_args</span> <span class="o">=</span> <span class="n">full_args</span>  <span class="c1"># prevent garbage-collection</span>
+    <span class="n">plan</span><span class="o">.</span><span class="n">flops_per_call</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">A_data</span><span class="o">.</span><span class="n">size</span>
+    <span class="n">plan</span><span class="o">.</span><span class="n">bw_per_call</span> <span class="o">=</span> <span class="n">A_data</span><span class="o">.</span><span class="n">nbytes</span> <span class="o">*</span> <span class="mi">3</span> <span class="o">+</span> <span class="n">A_indices</span><span class="o">.</span><span class="n">nbytes</span> <span class="o">+</span> <span class="n">A_indptr</span><span class="o">.</span><span class="n">nbytes</span>
+    <span class="n">plan</span><span class="o">.</span><span class="n">description</span> <span class="o">=</span> <span class="s2">&quot;groups: </span><span class="si">%d</span><span class="s2">; shape: (</span><span class="si">%d</span><span class="s2">, </span><span class="si">%d</span><span class="s2">); nonzeros: </span><span class="si">%d</span><span class="s2">&quot;</span> <span class="o">%</span> <span class="p">(</span>
+        <span class="mi">1</span><span class="p">,</span>
+        <span class="n">Y</span><span class="o">.</span><span class="n">sizes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">X</span><span class="o">.</span><span class="n">sizes</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">A_data</span><span class="o">.</span><span class="n">size</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">plan</span></div>
+</pre></div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div><footer class="text-light footer-main gradient-bottom">
+  <p class="small text-center mb-0">
+    <a class="no-hover-line" href="https://appliedbrainresearch.com">
+      <img
+        src="https://appliedbrainresearch.com/img/logo-blue-notext.svg"
+        height="48"
+      />
+    </a>
+    <a href="https://www.nengo.ai/">What is Nengo?</a>
+    <a href="https://www.nengo.ai/examples/">Examples</a>
+    <a href="https://www.nengo.ai/documentation/">Documentation</a>
+    <a href="https://www.nengo.ai/getting-started/">Getting started</a>
+    <a href="https://www.nengo.ai/privacy/">Privacy</a>
+  </p>
+  <p class="small text-center mb-0">&copy; Applied Brain Research</p>
+</footer>
+<script>
+  var elements = document.querySelectorAll('.sidenav');
+  Stickyfill.add(elements);
+</script>
+<script>
+  ScrollReveal().reveal(".fade-in", {
+      scale: 0.85,
+      duration: 1000,
+      delay: 250,
+      interval: 50
+  });
+</script>
+<script>
+  $('a.toggle-sidenav').on('click', function(e) {
+    e.preventDefault();
+    if ( $(this).hasClass('active') ) {
+      $(this).removeClass('active');
+      $('.sidenav').removeClass('open');
+    } else {
+      $(this).addClass('active');
+      $('.sidenav').addClass('open');
+    }
+  });
+</script>
+<script>
+  var lists = document.querySelectorAll('.toctree ul');
+  lists.forEach((ul) => {
+      ul.classList.add("nav");
+  });
+  var links = document.querySelectorAll('.toctree a');
+  links.forEach((link) => {
+      link.classList.add("nav-link");
+  });
+  $("body").scrollspy({target: ".sidenav"});
+</script>
+  </body>
+</html>
