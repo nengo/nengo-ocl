@@ -1,31 +1,44 @@
 #!/usr/bin/env python
 import sys
-
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
+import yaml
 from collections import OrderedDict
-
-by_name = OrderedDict()
-
-for recfile in sys.argv[1:]:
-    records = pickle.load(open(recfile, "rb"))
-    for rec in records:
-        rec["filename"] = recfile
-        by_name.setdefault(rec["name"], []).append(rec)
 
 import matplotlib.pyplot as plt
 
-nr = by_name.items()
+by_recfile = OrderedDict()
+by_name = OrderedDict()
 
-# nr[1:1] = [('JavaNengo', None)]
+# the units used on the x-axis, either "dim" (for dimensions) or "neurons"
+x_units = None
 
-for name, recs in nr:
-    if name == "JavaNengo":
-        plt.plot([100, 200, 500], [9, 18, 45], ".-", markersize=30, label="JavaNengo")
-        continue
+benchmarks = set()
+for recfile in sys.argv[1:]:
+    with open(recfile, "r") as fh:
+        records = yaml.load(fh, Loader=yaml.Loader)
+        by_recfile[recfile] = records
 
+    for rec in records:
+        benchmarks.add(rec["benchmark"])
+
+for recfile, records in by_recfile.items():
+    for rec in records:
+        rec["filename"] = recfile
+        name = rec["name"]
+        if len(benchmarks) > 1:
+            name = "%s %s" % (rec["benchmark"], name)
+
+        by_name.setdefault(name, []).append(rec)
+
+        if x_units is None:
+            x_units = "dim" if "dim" in rec else "neurons"
+
+        if x_units not in rec:
+            raise ValueError(
+                "Trying to use %r for the x-axis, but one of the records in "
+                "%r does not have %r" % (x_units, recfile, x_units)
+            )
+
+for name, recs in by_name.items():
     print(name.strip())
     if name.strip() == "Tahiti":
         name = "ATI Radeon HD 7970"
@@ -41,15 +54,23 @@ for name, recs in nr:
         name = "Intel Core i7-3770 @ 3.40GHz"
 
     oks = [rec for rec in recs if rec["status"] == "ok"]
-    dims = [rec["dim"] for rec in oks]
-    runtimes = [rec["runtime"] for rec in oks]
+    x = [rec[x_units] for rec in oks]
+    buildtimes = [rec.get("buildtime", 0) for rec in oks]
+    warmtimes = [rec.get("warmtime", 0) for rec in oks]
+    runtimes = [rec.get("runtime", 0) for rec in oks]
+    tottimes = [sum(t) for t in zip(buildtimes, warmtimes, runtimes)]
     filenames = [rec["filename"] for rec in oks]
-    for dim, rt, fname in zip(dims, runtimes, filenames):
-        print("  %4d, %8.3f, %s" % (dim, rt, fname))
-    plt.plot(dims, runtimes, ".-", markersize=30, label=name.strip())
-    # plt.semilogy(dims, runtimes, '.-', markersize=30, label=name.strip())
 
-plt.xlabel("n. dimensions convolved")
+    for xx, rt, fname in zip(x, runtimes, filenames):
+        print("  %4d, %8.3f, %s" % (xx, rt, fname))
+
+    plt.plot(x, runtimes, ".-", markersize=30, label=name.strip() + " run")
+    # plt.plot(x, buildtimes, ".-", markersize=30, label=name.strip() + " build")
+    # plt.plot(x, warmtimes, ".-", markersize=30, label=name.strip() + " warm")
+    # plt.plot(x, tottimes, ".-", markersize=30, label=name.strip() + " tot")
+    # plt.yscale("log")
+
+plt.xlabel("n. dimensions convolved" if x_units == "dim" else "n. neurons")
 plt.ylabel("simulation time (seconds)")
 # plt.ylim(0, 20)
 plt.legend(loc=2)

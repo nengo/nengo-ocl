@@ -22,6 +22,12 @@ Release History
 2.0.1 (unreleased)
 ==================
 
+**Changed**
+
+- Changes to improve benchmarks, including comparing between benchmarks. (`#182`_)
+
+.. _#182: https://github.com/nengo-labs/nengo-ocl/pull/182
+
 2.0.0 (Sept 4, 2020)
 ====================
 

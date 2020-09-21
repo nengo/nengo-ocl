@@ -22,12 +22,9 @@ Example usage:
 from collections import OrderedDict
 import datetime
 
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
 import sys
 import time
+import yaml
 
 import numpy as np
 import pyopencl as cl
@@ -45,11 +42,14 @@ if sys.argv[1] == "ref":
     sim_name = "ref" if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo.Simulator
     sim_kwargs = {}
-elif sys.argv[1] == "ocl":
+elif sys.argv[1].startswith("ocl"):
+    assert sys.argv[1] in ("ocl", "ocl_profile")
+    profiling = sys.argv[1] == "ocl_profile"
+
     ctx = cl.create_some_context()
     sim_name = ctx.devices[0].name if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo_ocl.Simulator
-    sim_kwargs = dict(context=ctx)
+    sim_kwargs = dict(context=ctx, profiling=profiling)
 else:
     raise Exception("unknown sim", sys.argv[1])
 
@@ -108,6 +108,9 @@ for i, dim in enumerate(dims):
             sim.run(simtime)
             t_run = time.time()
 
+            if getattr(sim, "profiling", False):
+                sim.print_profiling(sort=1)
+
         # error for sanity checking (should be below ~0.25, definitely 0.5)
         y = sim.data[C_p]
         crms = nengo.utils.numpy.rms(c)
@@ -133,6 +136,7 @@ for i, dim in enumerate(dims):
         )
         print(records[-1])
         print("%s, dims=%d successful" % (sim_name, dim))
+        del model, sim
     except Exception as e:
         records.append(
             OrderedDict(
@@ -151,8 +155,8 @@ for i, dim in enumerate(dims):
         print("%s, dims=%d exception" % (sim_name, dim))
         raise
 
-filename = "records_circconv_%s.pkl" % (
+filename = "records_circconv_%s.yml" % (
     (datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
 )
-with open(filename, "wb") as fh:
-    pickle.dump(records, fh)
+with open(filename, "w") as fh:
+    yaml.dump(records, fh)
