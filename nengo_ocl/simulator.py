@@ -51,7 +51,7 @@ from nengo_ocl.clra_nonlinearities import (
     plan_oja,
     plan_voja,
 )
-from nengo_ocl.operators import MultiDotInc
+from nengo_ocl.operators import MultiDotInc, simplify_operators
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.planners import greedy_planner
 from nengo_ocl.ast_conversion import OCL_Function
@@ -243,7 +243,10 @@ class Simulator(object):
 
         # --- operators
         with Timer() as planner_timer:
-            operators = list(self.model.operators)
+            all_operators = list(self.model.operators)
+
+            # remove unneeded operators
+            operators = simplify_operators(all_operators)
 
             # convert DotInc and Copy to MultiDotInc
             operators = list(map(MultiDotInc.convert_to, operators))
@@ -263,13 +266,13 @@ class Simulator(object):
         with Timer() as signals_timer:
             # Initialize signals
             all_signals = stable_unique(
-                sig for op in operators for sig in op.all_signals
+                sig for op in all_operators for sig in op.all_signals
             )
             all_bases = stable_unique(sig.base for sig in all_signals)
 
             # create SignalDict and add all signals from operators
             sigdict = SignalDict()  # map from Signal.base -> ndarray
-            for op in operators:
+            for op in all_operators:
                 op.init_signals(sigdict)
 
             # separate dense and sparse signals

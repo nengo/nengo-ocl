@@ -19,14 +19,23 @@ Release History
    - Removed
    - Fixed
 
-2.0.1 (unreleased)
+2.1.0 (unreleased)
 ==================
+
+**Added**
+
+- Added ``remove_zero_incs`` and ``remove_unmodified_resets`` simplifications for
+  the operator list. These are enabled by default, and remove unnecessary operators
+  (e.g. that are multiplying by zero and adding that to a signal). This increases both
+  build speed and run speed. These simplifications can be disabled by modifying
+  ``nengo_ocl.operators.simplifications``. (`#183`_)
 
 **Changed**
 
 - Changes to improve benchmarks, including comparing between benchmarks. (`#182`_)
 
 .. _#182: https://github.com/nengo-labs/nengo-ocl/pull/182
+.. _#183: https://github.com/nengo-labs/nengo-ocl/pull/183
 
 2.0.0 (Sept 4, 2020)
 ====================
