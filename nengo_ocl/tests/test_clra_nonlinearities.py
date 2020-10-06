@@ -1,3 +1,5 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring
+
 import logging
 import numpy as np
 import pyopencl as cl
@@ -68,21 +70,21 @@ def test_lif_step(ctx, upsample):
     plan = plan_lif(queue, dt, clJ, clV, clW, clOS, ref, clTaus, amp, upsample=upsample)
     plan()
 
-    if 1:
-        a, b = V, clV
-        for i in range(len(a)):
-            nc, _ = not_close(a[i], b[i]).nonzero()
-            if len(nc) > 0:
-                j = nc[0]
-                print("i", i, "j", j)
-                print("J", J[i][j], clJ[i][j])
-                print("V", V[i][j], clV[i][j])
-                print("W", W[i][j], clW[i][j])
-                print("...", len(nc) - 1, "more")
+    # print not close values
+    a, b = V, clV
+    for i, _ in enumerate(a):
+        nc, _ = not_close(a[i], b[i]).nonzero()
+        if len(nc) > 0:
+            j = nc[0]
+            print("i", i, "j", j)
+            print("J", J[i][j], clJ[i][j])
+            print("V", V[i][j], clV[i][j])
+            print("W", W[i][j], clW[i][j])
+            print("...", len(nc) - 1, "more")
 
     n_spikes = np.sum([np.sum(os) for os in OS])
     if n_spikes < 1.0:
-        logger.warn("LIF spiking mechanism was not tested!")
+        logger.warning("LIF spiking mechanism was not tested!")
     assert ra.allclose(J, clJ.to_host())
     assert ra.allclose(V, clV.to_host())
     assert ra.allclose(W, clW.to_host())
@@ -130,7 +132,7 @@ def test_lif_speed(ctx, rng, heterogeneous):
         )
 
         with Timer() as timer:
-            for j in range(n_iters):
+            for _ in range(n_iters):
                 plan()
 
         print("plan %d: blockify = %s, dur = %0.3f" % (i, blockify, timer.duration))
@@ -166,7 +168,7 @@ def test_lif_rate(ctx, blockify):
 
     rate_sum = np.sum([np.sum(r) for r in R])
     if rate_sum < 1.0:
-        logger.warn("LIF rate was not tested above the firing threshold!")
+        logger.warning("LIF rate was not tested above the firing threshold!")
     assert ra.allclose(J, clJ.to_host())
     assert ra.allclose(R, clR.to_host())
 
@@ -385,7 +387,8 @@ def test_linearfilter(ctx, n_per_kind, rng):
     plans = plan_linearfilter(queue, clX, clY, clA, clB, clXbuf, clYbuf)
     with Timer() as timer:
         for _ in range(n_calls):
-            [plan() for plan in plans]
+            for plan in plans:
+                plan()
 
     print(timer.duration)
 

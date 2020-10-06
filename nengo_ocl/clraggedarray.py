@@ -1,7 +1,8 @@
 """
 OpenCL-based implementation of RaggedArray data structure.
-
 """
+
+# pylint: disable=missing-function-docstring
 
 from io import StringIO
 
@@ -61,7 +62,7 @@ def to_host(queue, data, dtype, start, shape, elemstrides, is_blocking=True):
     )
 
 
-class CLRaggedArray(object):
+class CLRaggedArray:
     """A linear device buffer partitioned into sections of various lengths.
 
     Can also be viewed as an efficient way of storing a list of arrays on

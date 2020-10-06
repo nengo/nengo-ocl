@@ -1,7 +1,9 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring
+
 import logging
 import numpy as np
 import pyopencl as cl
-import pyopencl.array  # noqa: F401
+import pyopencl.array  # noqa: F401, pylint: disable=unused-import
 import pytest
 
 from nengo.utils.stdlib import Timer
@@ -33,9 +35,9 @@ def pytest_generate_tests(metafunc):
         )
 
 
-def allclose(raA, raB):
+def ra_allclose(raA, raB):
     assert len(raA) == len(raB)
-    for i in range(len(raA)):
+    for i, _ in enumerate(raA):
         if not np.allclose(raA[i], raB[i]):
             return False
     return True
@@ -58,9 +60,9 @@ def test_basic(ctx):
     clA = CLRA(queue, A)
     clX = CLRA(queue, X)
     clY = CLRA(queue, Y)
-    assert allclose(A, clA)
-    assert allclose(X, clX)
-    assert allclose(Y, clY)
+    assert ra_allclose(A, clA)
+    assert ra_allclose(X, clX)
+    assert ra_allclose(Y, clY)
 
     # -- run cl computation
     prog = plan_ragged_gather_gemv(queue, alpha, clA, A_js, clX, X_js, beta, clY)
@@ -70,7 +72,7 @@ def test_basic(ctx):
         plan()
 
     # -- ensure they match
-    for i in range(len(A_js)):
+    for i, _ in enumerate(A_js):
         aj, xj = int(A_js[i]), int(X_js[i])
         ref = alpha * np.dot(A[aj], X[xj]) + beta * Y[i]
         sim = clY[i]
@@ -108,9 +110,9 @@ def _test_random(ctx, k=4, p=1, m=10, n=10):
     clA = CLRA(queue, A)
     clX = CLRA(queue, X)
     clY = CLRA(queue, Y)
-    assert allclose(A, clA)
-    assert allclose(X, clX)
-    assert allclose(Y, clY)
+    assert ra_allclose(A, clA)
+    assert ra_allclose(X, clX)
+    assert ra_allclose(Y, clY)
 
     # -- run cl computation
     prog = plan_ragged_gather_gemv(queue, alpha, clA, A_js, clX, X_js, beta, clY)
@@ -163,9 +165,9 @@ def check_from_shapes(ctx, planner, alpha, beta, gamma, A_shapes, X_shapes, A_js
     clA = CLRA(queue, A)
     clX = CLRA(queue, X)
     clY = CLRA(queue, Y)
-    assert allclose(A, clA)
-    assert allclose(X, clX)
-    assert allclose(Y, clY)
+    assert ra_allclose(A, clA)
+    assert ra_allclose(X, clX)
+    assert ra_allclose(Y, clY)
 
     # -- run cl computation
     prog = planner(queue, alpha, clA, A_js, clX, X_js, beta, clY, gamma=gamma)
@@ -275,7 +277,7 @@ def test_one_short_segment_many_longer_dots(ctx, planner):
 
 def test_speed(ctx, rng):  # noqa: C901
     try:
-        import pyopencl_blas
+        import pyopencl_blas  # pylint: disable=import-outside-toplevel
     except ImportError:
         pyopencl_blas = None
 
@@ -346,7 +348,7 @@ def test_speed(ctx, rng):  # noqa: C901
 
         queue.finish()
         with Timer() as timer:
-            if 0:
+            if 0:  # pylint: disable=using-constant-test
                 # use a single queue
                 for A, X, Y in zip(clAs, clXs, clYs):
                     pyopencl_blas.gemv(queue, A, X, Y)
@@ -369,7 +371,7 @@ def test_sparse(ctx, inc, rng, allclose):
     scipy_sparse = pytest.importorskip("scipy.sparse")
 
     # -- prepare initial conditions on host
-    if 0:
+    if 0:  # pylint: disable=using-constant-test
         # diagonal matrix
         shape = (32, 32)
         s = min(shape[0], shape[1])

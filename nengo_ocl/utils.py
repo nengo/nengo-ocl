@@ -1,11 +1,10 @@
+"""Utility functions and compatibility imports."""
+
+# pylint: disable=missing-class-docstring,missing-function-docstring
+
 from collections import OrderedDict
 
 import numpy as np
-
-try:
-    from nengo.utils.stdlib import Timer
-except ImportError:
-    from nengo.utils.testing import Timer  # noqa: F401
 
 
 def as_ascii(string):

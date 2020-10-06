@@ -1,3 +1,7 @@
+"""OpenCL kernels for performing general matrix-vector multiplies (GEMV)."""
+
+# pylint: disable=missing-class-docstring,missing-function-docstring
+
 from collections import defaultdict
 
 import numpy as np
@@ -65,7 +69,7 @@ def bw_from_geometry(geometry, items):
     return n_bytes
 
 
-class DotSignature(object):
+class DotSignature:
     def __init__(self, dct):
         self.y_len = dct["y_len"]
         self.Ax_dims = tuple([(d["a_shape1"], d["a_stride0"]) for d in dct["dots"]])
@@ -92,7 +96,7 @@ class DotSignature(object):
         )
 
 
-class gemv_prog(object):
+class gemv_prog:
     def __init__(
         self, queue, alpha, A, A_js, X, X_js, beta, Y, Y_in=None, gamma=0.0, tag=None
     ):
@@ -133,7 +137,7 @@ class gemv_prog(object):
         dots = np.array([len(g["dots"]) for g in gg])
         shape0s = np.array([g["y_len"] for g in gg])
         shape1s = np.hstack([[d["a_shape1"] for d in g["dots"]] for g in gg])
-        return (
+        return (  # pylint: disable=bad-string-format-type
             "outputs: %d; dots: %0.1f [%d, %d]; "
             "shape: %0.1f [%d, %d] x %0.1f [%d, %d]"
             % (
@@ -174,7 +178,7 @@ class gemv_prog(object):
         Y_shape0s = self.Y.shape0s
 
         rval = []
-        for bb in range(len(Y_shape0s)):
+        for bb, _ in enumerate(Y_shape0s):
             dbb = {
                 "y_len": Y_shape0s[bb],
                 "dots": [],
@@ -271,7 +275,7 @@ def ref_impl(p, items):  # noqa: C901
     if p.clra_gamma is not None:
         raise NotImplementedError()
     cl_items = to_device(p.queue, np.asarray(items, dtype="int32"))
-    if 0:
+    if 0:  # pylint: disable=using-constant-test
         if len(items) < 10:
             print("Falling back on reference implementation")
             p.print_geometry_summary(items, full=True)
@@ -501,7 +505,7 @@ def reduce_impl(p, items, group_size=None, segment_size=None):  # noqa: C901
             "max_n_dots": max_n_dots,
         }
     )
-    if 0:
+    if 0:  # pylint: disable=using-constant-test
         for k, v in textconf.items():
             print(k, v)
 
@@ -733,7 +737,7 @@ def many_dots_impl(p, items):  # noqa: C901
             "dot_block_idx": "dot_block_idx",
         }
     )
-    if 0:
+    if 0:  # pylint: disable=using-constant-test
         for k, v in textconf.items():
             print(k, v)
     textconf.update(p.__dict__)

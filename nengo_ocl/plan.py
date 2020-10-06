@@ -1,3 +1,7 @@
+"""Classes for organizing and executing plans, which are groups of operators."""
+
+# pylint: disable=missing-class-docstring,missing-function-docstring
+
 import time
 
 import pyopencl as cl
@@ -5,7 +9,7 @@ import pyopencl as cl
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 
-class BasePlan(object):
+class BasePlan:
     def __init__(self, name="", tag=None, flops_per_call=None, bw_per_call=None):
         self.name = name
         self.tag = tag
@@ -34,7 +38,7 @@ class BasePlan(object):
 
 class PythonPlan(BasePlan):
     def __init__(self, function, **kwargs):
-        super(PythonPlan, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.function = function
 
     def __call__(self, profiling=False):
@@ -51,7 +55,7 @@ class PythonPlan(BasePlan):
 
 class Plan(BasePlan):
     def __init__(self, queue, kern, gsize, lsize=None, **kwargs):
-        super(Plan, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.queue = queue
         self.kern = kern
         self.gsize = self._format_size(gsize)
@@ -104,7 +108,7 @@ class Plan(BasePlan):
         )
 
 
-class Plans(object):
+class Plans:
     def __init__(self, planlist, profiling):
         self.plans = planlist
         self.profiling = profiling

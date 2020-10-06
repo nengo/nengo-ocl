@@ -15,12 +15,11 @@
    deal with this better, though.
 """
 
-try:
-    import __builtin__
-except ImportError:
-    # Renamed in Python 3
-    import builtins as __builtin__
+# pylint: disable=missing-class-docstring,missing-function-docstring
+# pylint: disable=eval-used
+
 import ast
+import builtins
 import inspect
 import math
 from collections import OrderedDict
@@ -267,7 +266,7 @@ vector_attr = {
 OUTPUT_NAME = "OUTPUT__"
 
 
-class Expression(object):
+class Expression:
     """Represents a numerical expression"""
 
     def _init_expr(self, expr):
@@ -467,14 +466,14 @@ class IfExp(Expression):
         return ("(%s)" % s) if wrap else s
 
 
-class Function_Finder(ast.NodeVisitor):
+class FunctionFinder(ast.NodeVisitor):
     """Finds a FunctionDef or Lambda in an Abstract Syntax Tree"""
 
     def __init__(self):
         self.fn_node = None
 
     def generic_visit(self, stmt):
-        if isinstance(stmt, ast.Lambda) or isinstance(stmt, ast.FunctionDef):
+        if isinstance(stmt, (ast.Lambda, ast.FunctionDef)):
             if self.fn_node is None:
                 self.fn_node = stmt
             else:
@@ -483,12 +482,14 @@ class Function_Finder(ast.NodeVisitor):
                     "contains more than one function definition"
                 )
 
-        super(self.__class__, self).generic_visit(stmt)
+        super().generic_visit(stmt)
 
 
-class OCL_Translator(ast.NodeVisitor):
+class OclTranslator(ast.NodeVisitor):
+    # pylint: disable=too-many-public-methods
+
     MAX_VECTOR_LENGTH = 25
-    builtins = __builtin__.__dict__
+    builtins = builtins.__dict__
 
     def _check_vector_length(self, length):
         if length > self.MAX_VECTOR_LENGTH:
@@ -507,7 +508,7 @@ class OCL_Translator(ast.NodeVisitor):
 
         # parse and make code
         a = ast.parse(source)
-        ff = Function_Finder()
+        ff = FunctionFinder()
         ff.visit(a)
         function_def = ff.fn_node
 
@@ -840,7 +841,7 @@ def strip_leading_whitespace(source):
         return source
 
 
-class OCL_Function(object):
+class OclFunction:
     def __init__(self, fn, in_dims=None, out_dim=None):
         if in_dims is not None and not is_iterable(in_dims):
             in_dims = [in_dims]
@@ -887,18 +888,17 @@ class OCL_Function(object):
         except AttributeError:
             globals_dict = fn.__globals__
             closure_dict = (
-                {
-                    var: contents
-                    for var, contents in zip(
+                dict(
+                    zip(
                         fn.__code__.co_freevars,
                         [c.cell_contents for c in fn.__closure__],
                     )
-                }
+                )
                 if fn.__closure__ is not None
                 else {}
             )
 
-        return OCL_Translator(
+        return OclTranslator(
             source,
             globals_dict,
             closure_dict,
@@ -928,171 +928,3 @@ class OCL_Function(object):
     @property
     def code(self):
         return "\n".join(self._flatten(self.translator.body))
-
-
-if __name__ == "__main__":  # noqa: C901
-
-    def ocl_f(*args, **kwargs):
-        ocl_fn = OCL_Function(*args, **kwargs)
-        print(ocl_fn.init)
-        print(ocl_fn.code)
-        print("")
-        return ocl_fn
-
-    print("*" * 5 + "Raw" + "*" * 50)
-    ocl_f(np.sin, in_dims=(1,))
-
-    print("*" * 5 + "Multi sine" + "*" * 50)
-    ocl_f(np.sin, in_dims=(3,))
-
-    print("*" * 5 + "List-return" + "*" * 50)
-
-    def func(t):
-        return [1, 2, 3]
-
-    ocl_f(func, in_dims=(1,))
-
-    print("*" * 5 + "Multi-arg" + "*" * 50)
-
-    def func(t, x):
-        return t + x[:2] + x[2]
-
-    ocl_f(func, in_dims=(1, 3))
-
-    print("*" * 5 + "Simplify" + "*" * 50)
-
-    def func(y):
-        return y + np.sin([1, 2, 3])
-
-    ocl_f(func, in_dims=(1,))
-
-    multiplier = 3842.012
-
-    def square(x):
-        print("wow: %f, %d, %s" % (x[0], 9, "hello"))
-
-        if 1 + (2 == 2):
-            y = 2.0 * x
-            z -= 4 + (3 if x > 99 else 2)  # noqa: F821
-        elif x == 2:
-            y *= 9.12 if 3 > 4 else 0
-            z = 4 * (x - 2)
-        else:
-            y = 9 * x
-            z += x ** (-1.1)
-
-        return np.sin(multiplier * (y * z) + np.square(y))
-
-    ocl_f(square, in_dims=1)
-
-    print("*" * 5 + "Vector lambda" + "*" * 50)
-    insert = -0.5
-    func = lambda x: x + 3 if all(x > 2) else x - 1
-    ocl_f(func, in_dims=3)
-
-    if 0:
-        print("*" * 5 + "Large input" + "*" * 50)
-        insert = -0.5
-        func = lambda x: [x[1] * x[1051], x[3] * x[62]]
-        ocl_f(func, in_dims=1100)
-
-    print("*" * 5 + "List comprehension" + "*" * 50)
-    insert = -0.5
-    func = lambda x: [np.maximum(0.1, np.sin(2)) * x[4 - i] for i in range(5)]
-    ocl_f(func, in_dims=5)
-
-    print("*" * 5 + "Unary minus" + "*" * 50)
-    insert = -0.5
-
-    def function(x):
-        return x * -insert
-
-    ocl_f(function, in_dims=1)
-
-    print("*" * 5 + "Subtract" + "*" * 50)
-
-    def function(x):
-        return np.subtract(x[1], x[0])
-
-    ocl_f(function, in_dims=2)
-
-    print("*" * 5 + "List" + "*" * 50)
-
-    def function(y):
-        z = y[0] * y[1]
-        return [y[1], z]
-
-    ocl_f(function, in_dims=2)
-
-    print("*" * 5 + "Array" + "*" * 50)
-    value = np.arange(3)
-
-    def function(y):
-        return value
-
-    ocl_f(function, in_dims=value.size)
-
-    print("*" * 5 + "AsArray" + "*" * 50)
-
-    def function(y):
-        return np.asarray([y[0], y[1], 3])
-
-    ocl_f(function, in_dims=2)
-
-    print("*" * 5 + "IfExp" + "*" * 50)
-
-    def function(y):
-        return 5 if y > 3 else 0
-
-    ocl_f(function, in_dims=1)
-
-    print("*" * 5 + "Sign" + "*" * 50)
-
-    def function(y):
-        return np.sign(y)
-
-    ocl_f(function, in_dims=1)
-
-    print("*" * 5 + "Radians" + "*" * 50)
-    power = 2
-
-    def function(y):
-        return np.radians(y ** power)
-
-    ocl_f(function, in_dims=1)
-
-    print("*" * 5 + "Boolop" + "*" * 50)
-    power = 3.2
-
-    def function(y):
-        if y > 3 and y < 5:
-            return y ** power
-        else:
-            return np.sign(y)
-
-    ocl_f(function, in_dims=1)
-
-    print("*" * 5 + "Nested return" + "*" * 50)
-    power = 3.2
-
-    def function(y):
-        if y > 3 and y < 5:
-            return y ** power
-
-        return np.sign(y)
-
-    ocl_f(function, in_dims=1)
-
-    print("*" * 5 + "Math constants" + "*" * 50)
-
-    def function(y):
-        return np.sin(np.pi * y) + np.e
-
-    ocl_f(function, in_dims=1)
-
-    print("*" * 5 + "Vector functions" + "*" * 50)
-    ocl_f(lambda x: x[: len(x) / 2], in_dims=4)
-    ocl_f(lambda x: np.sum(x), in_dims=3)
-    ocl_f(lambda x: np.mean(x), in_dims=3)
-    ocl_f(lambda x: x.min(), in_dims=4)
-    ocl_f(lambda x: np.sqrt((x ** 2).mean()), in_dims=5)

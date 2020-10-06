@@ -1,3 +1,5 @@
+"""Planners for scheduling operator execution order."""
+
 from collections import defaultdict
 
 from nengo.builder.operator import Operator
@@ -5,6 +7,12 @@ from nengo.utils.simulator import operator_dependency_graph
 
 
 def greedy_planner(operators):  # noqa: C901
+    """Plan operator execution order in a greedy manner.
+
+    First schedules ops with no predecessors, then continues with ops whose predecessors
+    have all been scheduled, until all ops are scheduled.
+    """
+
     edges = operator_dependency_graph(operators)
 
     is_op = lambda op: isinstance(op, Operator)

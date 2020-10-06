@@ -1,7 +1,8 @@
 """
 Numpy implementation of RaggedArray data structure.
-
 """
+
+# pylint: disable=missing-function-docstring
 
 from io import StringIO
 
@@ -28,7 +29,7 @@ def allclose(a, b, atol=1e-3, rtol=1e-3):
     return True
 
 
-class RaggedArray(object):
+class RaggedArray:
     """A linear buffer partitioned into sections of various lengths.
 
     Can also be viewed as an efficient way of storing a list of arrays,
@@ -217,8 +218,8 @@ class RaggedArray(object):
     def __setitem__(self, item, val):
         try:
             item = int(item)
-        except TypeError:
-            raise NotImplementedError()
+        except TypeError as e:
+            raise NotImplementedError("`item` must be castable to int") from e
         self[item][...] = val
 
     def add_views(self, starts, shape0s, shape1s, stride0s, stride1s, names=None):

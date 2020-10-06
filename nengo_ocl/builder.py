@@ -1,3 +1,9 @@
+"""NengoOCL-specific build functionality.
+
+NengoOCL primarily uses the Nengo core builder, but may override some build functions,
+which is done in this file.
+"""
+
 import nengo.builder
 from nengo.builder import Signal
 from nengo.builder.learning_rules import build_or_passthrough, get_post_ens, SimPES

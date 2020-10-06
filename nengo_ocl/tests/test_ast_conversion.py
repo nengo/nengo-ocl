@@ -1,3 +1,8 @@
+"""Test ast_conversion.py"""
+
+# pylint: disable=missing-class-docstring,missing-function-docstring
+# pylint: disable=redefined-outer-name,broad-except
+
 import math
 import numpy as np
 import pytest
@@ -7,17 +12,17 @@ from nengo.dists import Uniform
 
 import nengo_ocl
 import nengo_ocl.ast_conversion as ast_conversion
-from nengo_ocl.ast_conversion import OCL_Function
+from nengo_ocl.ast_conversion import OclFunction
 
 
 @pytest.fixture(scope="session")
 def OclOnlySimulator(request, ctx):
     """A nengo_ocl.Simulator that only allows OCL python functions"""
 
-    def OclOnlySimulator(*args, **kwargs):
+    def ocl_only_sim(*args, **kwargs):
         return nengo_ocl.Simulator(*args, context=ctx, if_python_code="error", **kwargs)
 
-    return OclOnlySimulator
+    return ocl_only_sim
 
 
 def test_slice():
@@ -26,7 +31,7 @@ def test_slice():
     def func(x):
         return x[s]
 
-    ocl_fn = OCL_Function(func, in_dims=(3,))
+    ocl_fn = OclFunction(func, in_dims=(3,))
     assert ocl_fn.code  # assert that we can make the code (no exceptions)
 
 
@@ -37,7 +42,7 @@ def test_nested():
     def func(x):
         return f(x)
 
-    ocl_fn = OCL_Function(func, in_dims=(3,))
+    ocl_fn = OclFunction(func, in_dims=(3,))
     print(ocl_fn.init)
     print(ocl_fn.code)
 
@@ -243,7 +248,7 @@ def test_functions(OclOnlySimulator, capsys, n_points=10):  # noqa: C901
             if fn in ast_conversion.direct_funcs:
 
                 def wrapper(x):
-                    return fn(x[0])
+                    return fn(x[0])  # pylint: disable=cell-var-from-loop
 
                 wrapper.__name__ = fn.__name__ + "_" + wrapper.__name__
                 _test_conn(
@@ -263,12 +268,12 @@ def test_functions(OclOnlySimulator, capsys, n_points=10):  # noqa: C901
                 if dims == 1:
 
                     def wrapper(x):
-                        return fn(x[0])
+                        return fn(x[0])  # pylint: disable=cell-var-from-loop
 
                 elif dims == 2:
 
                     def wrapper(x):
-                        return fn(x[0], x[1])
+                        return fn(x[0], x[1])  # pylint: disable=cell-var-from-loop
 
                 else:
                     raise ValueError("Cannot test functions with more than 2 arguments")
@@ -301,12 +306,13 @@ def test_vector_functions(OclOnlySimulator, capsys):
             if fn in boolean:
 
                 def wrapper(x):
+                    # pylint: disable=cell-var-from-loop
                     return fn(np.asarray(x) > 0)
 
             else:
 
                 def wrapper(x):
-                    return fn(x)
+                    return fn(x)  # pylint: disable=cell-var-from-loop
 
             _test_conn(OclOnlySimulator, wrapper, d, n=10)
 
@@ -320,3 +326,182 @@ def test_vector_functions(OclOnlySimulator, capsys):
                 )
 
     assert all_passed, "Some functions failed, " "see logger warnings for details"
+
+
+def print_various_ocl():  # noqa: C901
+    # pylint: disable=chained-comparison
+    # pylint: disable=comparison-with-itself
+    # pylint: disable=function-redefined
+    # pylint: disable=unnecessary-lambda
+    # pylint: disable=using-constant-test
+
+    def ocl_f(*args, **kwargs):
+        ocl_fn = OclFunction(*args, **kwargs)
+        print(ocl_fn.init)
+        print(ocl_fn.code)
+        print("")
+        return ocl_fn
+
+    print("*" * 5 + "Raw" + "*" * 50)
+    ocl_f(np.sin, in_dims=(1,))
+
+    print("*" * 5 + "Multi sine" + "*" * 50)
+    ocl_f(np.sin, in_dims=(3,))
+
+    print("*" * 5 + "List-return" + "*" * 50)
+
+    def func(t):
+        return [1, 2, 3]
+
+    ocl_f(func, in_dims=(1,))
+
+    print("*" * 5 + "Multi-arg" + "*" * 50)
+
+    def func(t, x):
+        return t + x[:2] + x[2]
+
+    ocl_f(func, in_dims=(1, 3))
+
+    print("*" * 5 + "Simplify" + "*" * 50)
+
+    def func(y):
+        return y + np.sin([1, 2, 3])
+
+    ocl_f(func, in_dims=(1,))
+
+    multiplier = 3842.012
+
+    def square(x):
+        # pylint: disable=undefined-variable
+
+        # print("wow: %f, %d, %s" % (x[0], 9, "hello"))
+
+        if 1 + (2 == 2):
+            y = 2.0 * x
+            z -= 4 + (3 if x > 99 else 2)  # noqa: F821
+        elif x == 2:
+            y *= 9.12 if 3 > 4 else 0
+            z = 4 * (x - 2)
+        else:
+            y = 9 * x
+            z += x ** (-1.1)
+
+        return np.sin(multiplier * (y * z) + np.square(y))
+
+    ocl_f(square, in_dims=1)
+
+    print("*" * 5 + "Vector lambda" + "*" * 50)
+    insert = -0.5
+    func = lambda x: x + 3 if all(x > 2) else x - 1
+    ocl_f(func, in_dims=3)
+
+    if 0:
+        print("*" * 5 + "Large input" + "*" * 50)
+        insert = -0.5
+        func = lambda x: [x[1] * x[1051], x[3] * x[62]]
+        ocl_f(func, in_dims=1100)
+
+    print("*" * 5 + "List comprehension" + "*" * 50)
+    insert = -0.5
+    func = lambda x: [np.maximum(0.1, np.sin(2)) * x[4 - i] for i in range(5)]
+    ocl_f(func, in_dims=5)
+
+    print("*" * 5 + "Unary minus" + "*" * 50)
+    insert = -0.5
+
+    def function(x):
+        return x * -insert
+
+    ocl_f(function, in_dims=1)
+
+    print("*" * 5 + "Subtract" + "*" * 50)
+
+    def function(x):
+        return np.subtract(x[1], x[0])
+
+    ocl_f(function, in_dims=2)
+
+    print("*" * 5 + "List" + "*" * 50)
+
+    def function(y):
+        z = y[0] * y[1]
+        return [y[1], z]
+
+    ocl_f(function, in_dims=2)
+
+    print("*" * 5 + "Array" + "*" * 50)
+    value = np.arange(3)
+
+    def function(y):
+        return value
+
+    ocl_f(function, in_dims=value.size)
+
+    print("*" * 5 + "AsArray" + "*" * 50)
+
+    def function(y):
+        return np.asarray([y[0], y[1], 3])
+
+    ocl_f(function, in_dims=2)
+
+    print("*" * 5 + "IfExp" + "*" * 50)
+
+    def function(y):
+        return 5 if y > 3 else 0
+
+    ocl_f(function, in_dims=1)
+
+    print("*" * 5 + "Sign" + "*" * 50)
+
+    def function(y):
+        return np.sign(y)
+
+    ocl_f(function, in_dims=1)
+
+    print("*" * 5 + "Radians" + "*" * 50)
+    power = 2
+
+    def function(y):
+        return np.radians(y ** power)
+
+    ocl_f(function, in_dims=1)
+
+    print("*" * 5 + "Boolop" + "*" * 50)
+    power = 3.2
+
+    def function(y):
+        if y > 3 and y < 5:
+            return y ** power
+        else:
+            return np.sign(y)
+
+    ocl_f(function, in_dims=1)
+
+    print("*" * 5 + "Nested return" + "*" * 50)
+    power = 3.2
+
+    def function(y):
+        if y > 3 and y < 5:
+            return y ** power
+
+        return np.sign(y)
+
+    ocl_f(function, in_dims=1)
+
+    print("*" * 5 + "Math constants" + "*" * 50)
+
+    def function(y):
+        return np.sin(np.pi * y) + np.e
+
+    ocl_f(function, in_dims=1)
+
+    print("*" * 5 + "Vector functions" + "*" * 50)
+    ocl_f(lambda x: x[len(x) // 2 :], in_dims=4)
+    ocl_f(lambda x: np.sum(x), in_dims=3)
+    ocl_f(lambda x: np.mean(x), in_dims=3)
+    ocl_f(lambda x: x.min(), in_dims=4)
+    ocl_f(lambda x: np.sqrt((x ** 2).mean()), in_dims=5)
+
+
+if __name__ == "__main__":
+    print_various_ocl()

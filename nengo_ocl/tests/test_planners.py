@@ -1,3 +1,5 @@
+# pylint: disable=missing-module-docstring,missing-function-docstring
+
 import nengo
 
 import nengo_ocl
@@ -23,7 +25,7 @@ def feedforward_network(extra_node=False):
         # u = nengo.Node([1] * n)
         nodes = [nengo.Node(nengo.processes.WhiteNoise()) for _ in range(n)]
         ensembles = [nengo.Ensemble(1, 1) for _ in range(n)]
-        [nengo.Probe(e, synapse=0.01) for e in ensembles]
+        probes = [nengo.Probe(e, synapse=0.01) for e in ensembles]
 
         for i in range(n):
             nengo.Connection(nodes[i], ensembles[i], synapse=None)
@@ -33,11 +35,11 @@ def feedforward_network(extra_node=False):
             nengo.Connection(nodes[0], v, synapse=None)
             nengo.Connection(v, ensembles[0], synapse=None)
 
-    return model
+    return model, probes
 
 
 def test_greedy_planner_feedforward():
-    model = feedforward_network()
+    model, _ = feedforward_network()
 
     with nengo_ocl.Simulator(model, planner=greedy_planner) as sim:
         check_op_groups(sim)

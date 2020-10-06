@@ -1,10 +1,16 @@
+"""OpenCL kernels for everything other than GEMV."""
+
+# pylint: disable=missing-class-docstring,missing-function-docstring
+
 from collections import OrderedDict
 
-import numpy as np
-import pyopencl as cl
 from mako.template import Template
 import nengo.dists as nengod
 from nengo.utils.numpy import is_number
+import numpy as np
+import pyopencl as cl
+
+from nengo_ocl import ast_conversion
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
@@ -924,8 +930,6 @@ def plan_probes(queue, periods, X, Y, tag=None):
 
 
 def plan_direct(queue, code, init, input_names, inputs, output, tag=None):
-    from . import ast_conversion
-
     assert len(input_names) == len(inputs)
 
     N = len(inputs[0])
@@ -1264,9 +1268,9 @@ def _plan_template(  # noqa: C901
     declares="",
     tag=None,
     blockify=True,
-    inputs={},
-    outputs={},
-    parameters={},
+    inputs=None,
+    outputs=None,
+    parameters=None,
 ):
     """Template for making a plan for vector nonlinearities.
 
@@ -1290,6 +1294,10 @@ def _plan_template(  # noqa: C901
         constant.
 
     """
+    inputs = {} if inputs is None else inputs
+    outputs = {} if outputs is None else outputs
+    parameters = {} if parameters is None else parameters
+
     input0 = list(inputs.values())[0]  # input to use as reference for lengths
 
     # split parameters into static and updated params
@@ -1470,7 +1478,7 @@ def init_rngs(queue, rngs, seeds):
     assert np.all(rngs.shape0s == rngs.shape0s[0])
     assert np.all(rngs.shape1s == 28)
 
-    global _init_rng_kernel
+    global _init_rng_kernel  # pylint: disable=global-statement
     if _init_rng_kernel is None:
         text = """
             #define RANLUXCL_LUX 2  // do not need highest quality

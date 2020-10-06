@@ -1,5 +1,7 @@
 """Additional operators, and functions for pruning/simplifying operators."""
 
+# pylint: disable=missing-function-docstring
+
 from collections import OrderedDict
 import numpy as np
 
@@ -19,6 +21,8 @@ class MultiDotInc(Operator):
     r"""``y <- gamma + beta * y_in + \sum_i dot(A_i, x_i)``"""
 
     def __init__(self, Y, Y_in, beta, gamma, tag=None):
+        super().__init__(tag=tag)
+
         assert Y.ndim == 1
         self.Y = Y
         self.Y_in = Y_in
@@ -38,7 +42,6 @@ class MultiDotInc(Operator):
             self._signal_beta = None
 
         self.gamma = float(gamma)
-        self.tag = tag
         self.As = []
         self.Xs = []
         self._incs_Y = (
@@ -187,6 +190,9 @@ class MultiDotInc(Operator):
             X_views.append(X_view)
 
         return A_views, X_views, Y_view, Y_in_view, beta_view
+
+    def make_step(self, signals, dt, rng):
+        raise NotImplementedError("MultiDotInc is only supported in OCL")
 
 
 def signal_io_dicts(operators):

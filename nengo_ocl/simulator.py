@@ -1,3 +1,7 @@
+"""The NengoOCL Simulator, which runs Nengo models using OpenCL."""
+
+# pylint: disable=missing-class-docstring,missing-function-docstring
+
 from collections.abc import Mapping
 from collections import defaultdict
 import inspect
@@ -21,7 +25,7 @@ from nengo.builder.signal import SignalDict
 from nengo.utils.filter_design import ss2tf
 from nengo.utils.numpy import scipy_sparse
 from nengo.utils.progress import ProgressTracker, Progress
-from nengo.utils.stdlib import groupby
+from nengo.utils.stdlib import groupby, Timer
 
 from nengo_ocl.builder import Builder
 from nengo_ocl.raggedarray import RaggedArray
@@ -54,8 +58,8 @@ from nengo_ocl.clra_nonlinearities import (
 from nengo_ocl.operators import MultiDotInc, simplify_operators
 from nengo_ocl.plan import BasePlan, PythonPlan, Plans
 from nengo_ocl.planners import greedy_planner
-from nengo_ocl.ast_conversion import OCL_Function
-from nengo_ocl.utils import get_closures, indent, split, stable_unique, Timer
+from nengo_ocl.ast_conversion import OclFunction
+from nengo_ocl.utils import get_closures, indent, split, stable_unique
 from nengo_ocl.version import (
     bad_nengo_versions,
     latest_nengo_version,
@@ -66,7 +70,7 @@ logger = logging.getLogger(__name__)
 PROFILING_ENABLE = cl.command_queue_properties.PROFILING_ENABLE
 
 
-class ViewBuilder(object):
+class ViewBuilder:
     def __init__(self, bases, rarray, is_sparse=None):
         self.sidx = {bb: ii for ii, bb in enumerate(bases)}
         assert len(bases) == len(self.sidx)
@@ -139,7 +143,7 @@ class ViewBuilder(object):
                 self.append_view(view)
 
 
-class Simulator(object):
+class Simulator:
     """Simulator for running Nengo models in OpenCL.
 
     Parameters
@@ -208,7 +212,7 @@ class Simulator(object):
             print("Calling pyopencl.create_some_context() for you now:")
             Simulator.some_context = cl.create_some_context()
         if profiling is None:
-            profiling = int(os.getenv("NENGO_OCL_PROFILING", 0))
+            profiling = int(os.getenv("NENGO_OCL_PROFILING", "0"))
         self.context = Simulator.some_context if context is None else context
         self.profiling = profiling
         self.queue = cl.CommandQueue(
@@ -239,7 +243,7 @@ class Simulator(object):
                 # Build the network into the model
                 self.model.build(network)
 
-        logger.info("Nengo build in %0.3f s" % nengo_timer.duration)
+        logger.info("Nengo build in %0.3f s", nengo_timer.duration)
 
         # --- operators
         with Timer() as planner_timer:
@@ -261,7 +265,7 @@ class Simulator(object):
             self.operators = operators
             self.op_groups = op_groups
 
-        logger.info("Planning in %0.3f s" % planner_timer.duration)
+        logger.info("Planning in %0.3f s", planner_timer.duration)
 
         with Timer() as signals_timer:
             # Initialize signals
@@ -337,7 +341,7 @@ class Simulator(object):
             self._probe_outputs = dict(self.model.params)  # init with build output
             self.data = SimulationData(self._probe_outputs)
 
-        logger.info("Signals in %0.3f s" % signals_timer.duration)
+        logger.info("Signals in %0.3f s", signals_timer.duration)
 
         # --- set seed
         if seed is None:
@@ -357,10 +361,10 @@ class Simulator(object):
         plans = []
         with Timer() as plans_timer:
             for op_type, op_list in op_groups:
-                plans.extend(self.plan_op_group(op_type, op_list))
-            plans.extend(self.plan_probes())
+                plans.extend(self._plan_op_group(op_type, op_list))
+            plans.extend(self._plan_probes())
 
-        logger.info("Plans in %0.3f s" % plans_timer.duration)
+        logger.info("Plans in %0.3f s", plans_timer.duration)
 
         # -- create object to execute list of plans
         self._plans = Plans(plans, self.profiling)
@@ -434,6 +438,8 @@ class Simulator(object):
         """Get/set [properly-shaped] signal value (either 0d, 1d, or 2d)"""
 
         class Accessor(Mapping):
+            # pylint: disable=no-self-argument
+
             def __iter__(_):
                 return iter(self.all_bases)
 
@@ -559,7 +565,7 @@ class Simulator(object):
 
         for clra, ra in self._raggedarrays_to_reset.items():
             # TODO: copy all data on at once
-            for i in range(len(clra)):
+            for i, _ in enumerate(clra):
                 clra[i] = ra[i]
 
         self._reset_rngs()
@@ -705,7 +711,7 @@ class Simulator(object):
         return self.dt * steps[steps % period < 1]
 
     # --- Planning
-    def plan_probes(self):
+    def _plan_probes(self):
         plans = []
         if len(self.model.probes) == 0:
             self._max_steps_between_probes = self.n_prealloc_probes
@@ -733,15 +739,15 @@ class Simulator(object):
         assert self._max_steps_between_probes >= 1
         return plans
 
-    def plan_op_group(self, op_type, ops):
-        return getattr(self, "plan_" + op_type.__name__)(ops)
+    def _plan_op_group(self, op_type, ops):
+        return getattr(self, "_plan_" + op_type.__name__)(ops)
 
-    def plan_PreserveValue(self, ops):  # LEGACY
+    def _plan_PreserveValue(self, ops):  # LEGACY
         # This op was removed in Nengo version 2.3.1+, but remains here
         # for compatibility with older versions of Nengo.
         return []  # do nothing
 
-    def plan_MultiDotInc(self, ops):
+    def _plan_MultiDotInc(self, ops):
         constant_bs = [op for op in ops if op._float_beta is not None]
         vector_bs = [
             op
@@ -813,23 +819,23 @@ class Simulator(object):
         )
         return rval.plans
 
-    def plan_TimeUpdate(self, ops):
+    def _plan_TimeUpdate(self, ops):
         (op,) = ops
         step = self.all_data[[self.sidx[op.step]]]
         time = self.all_data[[self.sidx[op.time]]]
         return [plan_timeupdate(self.queue, step, time, self.model.dt)]
 
-    def plan_Reset(self, ops):
+    def _plan_Reset(self, ops):
         targets = self.all_data[[self.sidx[op.dst] for op in ops]]
         values = self.Array([op.value for op in ops])
         return [plan_reset(self.queue, targets, values)]
 
-    def plan_SlicedCopy(self, ops):  # LEGACY
+    def _plan_SlicedCopy(self, ops):  # LEGACY
         # This op was removed in Nengo version 2.3.1+, but remains here
         # for compatibility with older versions of Nengo.
         return self.plan_Copy(ops, legacy=True)
 
-    def plan_Copy(self, ops, legacy=False):
+    def _plan_Copy(self, ops, legacy=False):
         noslice = Ellipsis if legacy else None  # LEGACY
         copies, ops = split(
             ops, lambda op: (op.src_slice is noslice and op.dst_slice is noslice)
@@ -866,13 +872,13 @@ class Simulator(object):
 
         return plans
 
-    def plan_ElementwiseInc(self, ops):
+    def _plan_ElementwiseInc(self, ops):
         A = self.all_data[[self.sidx[op.A] for op in ops]]
         X = self.all_data[[self.sidx[op.X] for op in ops]]
         Y = self.all_data[[self.sidx[op.Y] for op in ops]]
         return [plan_elementwise_inc(self.queue, A, X, Y)]
 
-    def plan_SparseDotInc(self, ops):
+    def _plan_SparseDotInc(self, ops):
         assert scipy_sparse is not None
 
         # currently gives one plan per sparse operation instead of combining them all
@@ -890,7 +896,7 @@ class Simulator(object):
 
         return plans
 
-    def plan_SimPyFunc(self, ops):
+    def _plan_SimPyFunc(self, ops):
         groups = groupby(ops, lambda op: op.fn)
         # ^ NOTE: Groups functions based on equality `==`, not identity `is`.
         #   I think this is what we want in all cases.
@@ -925,7 +931,7 @@ class Simulator(object):
         # --- try to turn Python function into OCL code
         plans = []
         unplanned_signals = []
-        for x_dim, group in groups:
+        for _, group in groups:
             tt, xx, yy = zip(*group)
 
             # if any functions have no output, must do them in Python
@@ -944,7 +950,7 @@ class Simulator(object):
             else:
                 try:
                     plans.append(self._plan_fn_in_ocl(fn, tt, xx, yy, fn_name))
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-except
                     self._found_python_code(
                         "Function %r could not be converted to OCL due to %s%s"
                         % (fn_name, type(e).__name__, e.args)
@@ -988,7 +994,7 @@ class Simulator(object):
 
         # try to get OCL code
         in_dims = ([1] if t_in else []) + ([x_dim] if x_in else [])
-        ocl_fn = OCL_Function(fn, in_dims=in_dims, out_dim=y_dim)
+        ocl_fn = OclFunction(fn, in_dims=in_dims, out_dim=y_dim)
         input_names = ocl_fn.translator.arg_names
         inputs = []
         if t_in:  # append time
@@ -1031,7 +1037,7 @@ class Simulator(object):
 
         return PythonPlan(step, name="python_fn", tag=fn_name)
 
-    def plan_SimNeurons(self, all_ops):
+    def _plan_SimNeurons(self, all_ops):
         groups = groupby(all_ops, lambda op: op.neurons.__class__)
         plans = []
         for neuron_class, ops in groups:
@@ -1156,7 +1162,7 @@ class Simulator(object):
         )
         return [plan_sigmoid(self.queue, J, R, ref)]
 
-    def plan_SimProcess(self, all_ops):
+    def _plan_SimProcess(self, all_ops):
         class_groups = groupby(all_ops, lambda op: type(op.process))
         plan_groups = defaultdict(list)
         python_ops = []
@@ -1185,7 +1191,7 @@ class Simulator(object):
             shape(op.input), shape(op.output), self.model.dt, rng=rng, state=state
         )
         plans = self._plan_python_fn(fn, [op.t], [op.input], [op.output])
-        (plan,) = plans  # should only be one
+        assert len(plans) == 1  # should only be one
         self._python_rngs[rng] = rng.get_state()
         return plans
 
@@ -1286,7 +1292,7 @@ class Simulator(object):
         dt = self.model.dt
         return [plan_presentinput(self.queue, Y, t, inputs, dt, pres_t=pres_t)]
 
-    def plan_ConvInc(self, ops):
+    def _plan_ConvInc(self, ops):
         plans = []
         for op in ops:
             assert op.conv.dimensions in (1, 2)
@@ -1330,7 +1336,7 @@ class Simulator(object):
 
         return plans
 
-    def plan_SimPES(self, ops):
+    def _plan_SimPES(self, ops):
         assert all(
             op.encoders is None for op in ops
         ), "SimPES encoders should be handled by custom `builder.py:build_pes`"
@@ -1346,7 +1352,7 @@ class Simulator(object):
             )
         ]
 
-    def plan_SimBCM(self, ops):
+    def _plan_SimBCM(self, ops):
         pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
         post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
         theta = self.all_data[[self.sidx[op.theta] for op in ops]]
@@ -1354,7 +1360,7 @@ class Simulator(object):
         alpha = self.Array([op.learning_rate * self.model.dt for op in ops])
         return [plan_bcm(self.queue, pre, post, theta, delta, alpha)]
 
-    def plan_SimOja(self, ops):
+    def _plan_SimOja(self, ops):
         pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
         post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
         weights = self.all_data[[self.sidx[op.weights] for op in ops]]
@@ -1363,7 +1369,7 @@ class Simulator(object):
         beta = self.Array([op.beta for op in ops])
         return [plan_oja(self.queue, pre, post, weights, delta, alpha, beta)]
 
-    def plan_SimVoja(self, ops):
+    def _plan_SimVoja(self, ops):
         pre = self.all_data[[self.sidx[op.pre_decoded] for op in ops]]
         post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
         encoders = self.all_data[[self.sidx[op.scaled_encoders] for op in ops]]
