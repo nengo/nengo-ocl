@@ -297,6 +297,9 @@ class NumExp(Expression):
     def __init__(self, value):
         self.value = value
 
+    def to_ast(self):
+        return ast.Num(int(self.value) if isinstance(self.value, bool) else self.value)
+
     def to_ocl(self, wrap=False):
         if isinstance(self.value, float):
             # Append an 'f' to floats, o.w. some calls (e.g. pow) ambiguous
@@ -317,7 +320,7 @@ class UnaryExp(Expression):
         op, right = self.op, self.right
         if isinstance(right, NumExp) and not isinstance(op, str):
             # simplify and return NumExp
-            a = self._init_expr(ast.Num(right.value))
+            a = self._init_expr(right.to_ast())
             c = self._init_expr(ast.UnaryOp(op, a))
             return NumExp(eval(compile(ast.Expression(c), "<string>", "eval")))
         else:
@@ -353,8 +356,8 @@ class BinExp(Expression):
             and not isinstance(op, str)
         ):
             # simplify and return NumExp
-            a = self._init_expr(ast.Num(left.value))
-            b = self._init_expr(ast.Num(right.value))
+            a = self._init_expr(left.to_ast())
+            b = self._init_expr(right.to_ast())
             if isinstance(self.op, ast.cmpop):
                 c = self._init_expr(ast.Compare(a, [op], [b]))
             else:
