@@ -14,6 +14,7 @@ from nengo.builder.operator import (
     Reset,
 )
 from nengo.builder.signal import Signal
+from nengo.builder.transforms import ConvInc
 from nengo.transforms import SparseMatrix
 
 
@@ -268,7 +269,7 @@ def remove_zero_incs(operators):
     Remove any operators where we know the input (and therefore output) is
     zero.
 
-    If the input to a DotInc/ElementwiseInc/Copy is zero then we know
+    If the input to a DotInc/ElementwiseInc/Copy/ConvInc is zero then we know
     that the output of the op will be zero, so we can just get rid of it.
 
     Parameters
@@ -299,7 +300,7 @@ def remove_zero_incs(operators):
 
     new_operators = []
     for op in operators:
-        if isinstance(op, (DotInc, ElementwiseInc, Copy)):
+        if isinstance(op, (DotInc, ElementwiseInc, Copy, ConvInc)):
             for src in op.reads:
                 # check if the input is the output of a Node (in which case the
                 # value might change, so we should never get rid of this op).
