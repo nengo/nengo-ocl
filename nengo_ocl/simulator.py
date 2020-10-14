@@ -1337,9 +1337,6 @@ class Simulator:
         return plans
 
     def _plan_SimPES(self, ops):
-        assert all(
-            op.encoders is None for op in ops
-        ), "SimPES encoders should be handled by custom `builder.py:build_pes`"
         pre = self.all_data[[self.sidx[op.pre_filtered] for op in ops]]
         error = self.all_data[[self.sidx[op.error] for op in ops]]
         delta = self.all_data[[self.sidx[op.delta] for op in ops]]
