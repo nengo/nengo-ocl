@@ -30,7 +30,7 @@ root = os.path.dirname(os.path.realpath(__file__))
 version = runpy.run_path(os.path.join(root, "nengo_ocl", "version.py"))["version"]
 
 install_req = [
-    "nengo>=3.0.0,<3.1.0",
+    "nengo>=3.1.0",
     "mako",
     "pyopencl",
 ]

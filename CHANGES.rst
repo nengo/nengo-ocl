@@ -22,6 +22,8 @@ Release History
 2.1.0 (unreleased)
 ==================
 
+*Compatible with Nengo 3.1.0*
+
 **Added**
 
 - Added ``remove_zero_incs`` and ``remove_unmodified_resets`` simplifications for
@@ -32,13 +34,17 @@ Release History
 
 **Changed**
 
+- Added support for Nengo 3.1.0, and retired support for Nengo 3.0.0. (`#180`_)
 - Changes to improve benchmarks, including comparing between benchmarks. (`#182`_)
 
+.. _#180: https://github.com/nengo-labs/nengo-ocl/pull/180
 .. _#182: https://github.com/nengo-labs/nengo-ocl/pull/182
 .. _#183: https://github.com/nengo-labs/nengo-ocl/pull/183
 
 2.0.0 (Sept 4, 2020)
 ====================
+
+*Compatible with Nengo 3.0.0*
 
 **Added**
 

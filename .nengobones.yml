@@ -30,7 +30,7 @@ setup_py:
   include_package_data: True
   python_requires: ">=3.5"
   install_req:
-    - nengo>=3.0.0,<3.1.0
+    - nengo>=3.1.0
     - mako
     - pyopencl
   docs_req:
