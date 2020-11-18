@@ -1371,6 +1371,9 @@ class Simulator:
         beta = self.Array([op.beta for op in ops])
         return [plan_oja(self.queue, pre, post, weights, delta, alpha, beta)]
 
+    def _plan_SimRLS(self, ops):
+        raise NotImplementedError("RLS learning rule not yet supported")
+
     def _plan_SimVoja(self, ops):
         pre = self.all_data[[self.sidx[op.pre_decoded] for op in ops]]
         post = self.all_data[[self.sidx[op.post_filtered] for op in ops]]
