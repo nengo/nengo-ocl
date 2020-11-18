@@ -4,16 +4,16 @@
 
 from collections import OrderedDict
 
-from mako.template import Template
 import nengo.dists as nengod
-from nengo.utils.numpy import is_number
 import numpy as np
 import pyopencl as cl
+from mako.template import Template
+from nengo.utils.numpy import is_number
 
 from nengo_ocl import ast_conversion
-from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
+from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.utils import as_ascii, indent, nonelist, round_up
 
 

@@ -4,8 +4,8 @@ import numpy as np
 import pyopencl as cl
 
 from nengo_ocl import raggedarray as ra
-from nengo_ocl.raggedarray import RaggedArray as RA
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
+from nengo_ocl.raggedarray import RaggedArray as RA
 
 
 def make_random_ra(n, d, low=20, high=40, rng=None):

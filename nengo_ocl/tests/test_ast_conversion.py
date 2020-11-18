@@ -4,10 +4,10 @@
 # pylint: disable=redefined-outer-name,broad-except
 
 import math
-import numpy as np
-import pytest
 
 import nengo
+import numpy as np
+import pytest
 from nengo.dists import Uniform
 
 import nengo_ocl

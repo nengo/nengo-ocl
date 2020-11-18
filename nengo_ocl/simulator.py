@@ -2,63 +2,62 @@
 
 # pylint: disable=missing-class-docstring,missing-function-docstring
 
-from collections.abc import Mapping
-from collections import defaultdict
 import inspect
 import logging
-from io import StringIO
 import os
 import warnings
-
-import numpy as np
-import pyopencl as cl
+from collections import defaultdict
+from collections.abc import Mapping
+from io import StringIO
 
 import nengo
-import nengo.version
 import nengo.utils.numpy as npext
-from nengo.cache import get_default_decoder_cache
-from nengo.exceptions import ReadonlyError, SimulatorClosed, ValidationError
-from nengo.simulator import SimulationData
+import nengo.version
+import numpy as np
+import pyopencl as cl
 from nengo.builder.builder import Model
 from nengo.builder.operator import Reset
 from nengo.builder.signal import SignalDict
+from nengo.cache import get_default_decoder_cache
+from nengo.exceptions import ReadonlyError, SimulatorClosed, ValidationError
+from nengo.simulator import SimulationData
 from nengo.utils.filter_design import ss2tf
 from nengo.utils.numpy import scipy_sparse
-from nengo.utils.progress import ProgressTracker, Progress
-from nengo.utils.stdlib import groupby, Timer
+from nengo.utils.progress import Progress, ProgressTracker
+from nengo.utils.stdlib import Timer, groupby
 
+from nengo_ocl.ast_conversion import OclFunction
 from nengo_ocl.builder import Builder
-from nengo_ocl.raggedarray import RaggedArray
-from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.clra_gemv import plan_block_gemv, plan_sparse_dot_inc
 from nengo_ocl.clra_nonlinearities import (
-    plan_timeupdate,
-    plan_reset,
+    create_rngs,
+    get_dist_enums_params,
+    init_rngs,
+    plan_bcm,
+    plan_conv2d,
     plan_copy,
-    plan_slicedcopy,
     plan_direct,
+    plan_elementwise_inc,
     plan_lif,
     plan_lif_rate,
-    plan_rectified_linear,
-    plan_spiking_rectified_linear,
-    plan_sigmoid,
-    plan_probes,
     plan_linearfilter,
-    plan_elementwise_inc,
-    create_rngs,
-    init_rngs,
-    get_dist_enums_params,
-    plan_whitenoise,
-    plan_presentinput,
-    plan_conv2d,
-    plan_bcm,
     plan_oja,
+    plan_presentinput,
+    plan_probes,
+    plan_rectified_linear,
+    plan_reset,
+    plan_sigmoid,
+    plan_slicedcopy,
+    plan_spiking_rectified_linear,
+    plan_timeupdate,
     plan_voja,
+    plan_whitenoise,
 )
+from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.operators import MultiDotInc, simplify_operators
-from nengo_ocl.plan import BasePlan, PythonPlan, Plans
+from nengo_ocl.plan import BasePlan, Plans, PythonPlan
 from nengo_ocl.planners import greedy_planner
-from nengo_ocl.ast_conversion import OclFunction
+from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.utils import get_closures, indent, split, stable_unique
 from nengo_ocl.version import (
     bad_nengo_versions,

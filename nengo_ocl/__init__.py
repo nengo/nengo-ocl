@@ -7,8 +7,8 @@ import numpy as np
 import pyopencl as cl
 
 # --- imports from this package
-from .version import version as __version__
 from .simulator import Simulator
+from .version import version as __version__
 
 numpy_relaxed_strides = np.ones((2, 1), order="C").flags.f_contiguous
 pyopencl_relaxed_strides = hasattr(cl.compyte.array, "equal_strides")

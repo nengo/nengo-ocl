@@ -6,9 +6,8 @@ Numpy implementation of RaggedArray data structure.
 
 from io import StringIO
 
-from nengo.utils.numpy import is_iterable
-
 import numpy as np
+from nengo.utils.numpy import is_iterable
 
 from nengo_ocl.utils import round_up
 

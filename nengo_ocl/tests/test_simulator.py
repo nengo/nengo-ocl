@@ -1,9 +1,8 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring
 
+import nengo
 import numpy as np
 import pytest
-
-import nengo
 from nengo.builder import Model
 from nengo.builder.operator import DotInc, Reset
 from nengo.builder.signal import Signal

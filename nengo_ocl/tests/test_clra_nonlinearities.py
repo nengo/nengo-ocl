@@ -1,28 +1,28 @@
 # pylint: disable=missing-module-docstring,missing-function-docstring
 
 import logging
+
+import nengo
 import numpy as np
 import pyopencl as cl
 import pytest
-
-import nengo
-from nengo.utils.stdlib import Timer
 from nengo.utils.filter_design import ss2tf
+from nengo.utils.stdlib import Timer
 
 import nengo_ocl
 from nengo_ocl import raggedarray as ra
-from nengo_ocl.raggedarray import RaggedArray
-from nengo_ocl.clraggedarray import CLRaggedArray as CLRA, to_device
-
 from nengo_ocl.clra_nonlinearities import (
+    plan_copy,
+    plan_elementwise_inc,
     plan_lif,
     plan_lif_rate,
-    plan_reset,
-    plan_copy,
-    plan_slicedcopy,
-    plan_elementwise_inc,
     plan_linearfilter,
+    plan_reset,
+    plan_slicedcopy,
 )
+from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
+from nengo_ocl.clraggedarray import to_device
+from nengo_ocl.raggedarray import RaggedArray
 
 logger = logging.getLogger(__name__)
 RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)

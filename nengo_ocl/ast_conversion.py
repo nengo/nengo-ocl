@@ -25,7 +25,6 @@ import math
 from collections import OrderedDict
 
 import numpy as np
-
 from nengo.utils.numpy import is_iterable, is_number
 
 

@@ -6,10 +6,10 @@ OpenCL-based implementation of RaggedArray data structure.
 
 from io import StringIO
 
-import pyopencl as cl
-from pyopencl.array import Array, to_device
-from nengo.utils.numpy import is_iterable
 import numpy as np
+import pyopencl as cl
+from nengo.utils.numpy import is_iterable
+from pyopencl.array import Array, to_device
 
 from nengo_ocl.raggedarray import RaggedArray
 from nengo_ocl.utils import equal_strides

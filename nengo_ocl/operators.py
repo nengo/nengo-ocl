@@ -3,8 +3,8 @@
 # pylint: disable=missing-function-docstring
 
 from collections import OrderedDict
-import numpy as np
 
+import numpy as np
 from nengo.builder.operator import (
     BsrDotInc,
     Copy,
