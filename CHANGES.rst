@@ -19,8 +19,8 @@ Release History
    - Removed
    - Fixed
 
-2.1.0 (unreleased)
-==================
+2.1.0 (Nov 23, 2020)
+====================
 
 *Compatible with Nengo 3.1.0*
 
