@@ -1,3 +1,18 @@
+.. image:: https://img.shields.io/pypi/v/nengo-ocl.svg
+  :target: https://pypi.org/project/nengo-ocl
+  :alt: Latest PyPI version
+
+.. image:: https://img.shields.io/pypi/pyversions/nengo-ocl.svg
+  :target: https://pypi.org/project/nengo-ocl
+  :alt: Python versions
+
+|
+
+.. image:: https://www.nengo.ai/design/_images/nengo-ocl-full-light.svg
+  :target: https://labs.nengo.ai/nengo-ocl
+  :alt: NengoOCL
+  :width: 400px
+
 ****************************
 OpenCL-based Nengo Simulator
 ****************************
