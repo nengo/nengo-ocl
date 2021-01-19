@@ -16,11 +16,9 @@ for recfile in sys.argv[1:]:
         records = yaml.load(fh, Loader=yaml.Loader)
         by_recfile[recfile] = records
 
-    for rec in records:
-        benchmarks.add(rec["benchmark"])
-
 for recfile, records in by_recfile.items():
     for rec in records:
+        benchmarks.add(rec["benchmark"])
         rec["filename"] = recfile
         name = rec["name"]
         if len(benchmarks) > 1:
@@ -29,7 +27,13 @@ for recfile, records in by_recfile.items():
         by_name.setdefault(name, []).append(rec)
 
         if x_units is None:
-            x_units = "dim" if "dim" in rec else "neurons"
+            x_units = (
+                "dim"
+                if "dim" in rec
+                else "synapses"
+                if "synapses" in rec
+                else "neurons"
+            )
 
         if x_units not in rec:
             raise ValueError(
@@ -68,8 +72,9 @@ for name, recs in by_name.items():
     # plt.plot(x, warmtimes, ".-", markersize=30, label=name.strip() + " warm")
     # plt.plot(x, tottimes, ".-", markersize=30, label=name.strip() + " tot")
     # plt.yscale("log")
+    # plt.xscale("log")
 
-plt.xlabel("n. dimensions convolved" if x_units == "dim" else "n. neurons")
+plt.xlabel("n. dimensions convolved" if x_units == "dim" else "n. " + x_units)
 plt.ylabel("simulation time (seconds)")
 # plt.ylim(0, 20)
 plt.legend(loc=2)

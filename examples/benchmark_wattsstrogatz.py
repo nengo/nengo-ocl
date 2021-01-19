@@ -33,14 +33,14 @@ import nengo_ocl
 
 ### User options ###
 simtime = 1.0
-fan_outs = 8
+fan_outs = 100
 rewire_frac = 0.2
 directed = True
 n_prealloc_probes = 32  # this applies to OCL and DL
 sparse = True  # setting to False will probably overwhelm your GPU memory
 
 ### Command line options ###
-if len(sys.argv) not in (3, 4):
+if len(sys.argv) not in (3, 4, 5):
     print(__doc__)
     sys.exit()
 
@@ -50,7 +50,7 @@ sim_config = {}
 if sys.argv[1] == "ref":
     sim_name = "ref" if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo.Simulator
-    sim_kwargs = dict()
+    sim_kwargs = dict(progress_bar=False)
 elif sys.argv[1].startswith("ocl"):
     assert sys.argv[1] in ("ocl", "ocl_profile")
     profiling = sys.argv[1] == "ocl_profile"
@@ -59,14 +59,17 @@ elif sys.argv[1].startswith("ocl"):
     sim_name = ctx.devices[0].name if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo_ocl.Simulator
     sim_kwargs = dict(
-        context=ctx, profiling=profiling, n_prealloc_probes=n_prealloc_probes
+        context=ctx,
+        profiling=profiling,
+        n_prealloc_probes=n_prealloc_probes,
+        progress_bar=False,
     )
 elif sys.argv[1] == "dl":
     import nengo_dl
 
     sim_name = "dl" if len(sys.argv) == 3 else sys.argv[3]
     sim_class = nengo_dl.Simulator
-    sim_kwargs = dict()
+    sim_kwargs = dict(progress_bar=False)
     max_steps = n_prealloc_probes
     sim_config["dl_inference_only"] = True
 else:
@@ -111,7 +114,8 @@ for i, n_neurons in enumerate(ns_neurons):
             nengo_dl.configure_settings(inference_only=True)
 
         # inputA = nengo.Node(a)
-        ens = nengo.Ensemble(n_neurons, 1)
+        neuron_type = nengo.neurons.LIF(tau_ref=0.001)
+        ens = nengo.Ensemble(n_neurons, 1, neuron_type=neuron_type)
         # nengo.Connection(inputA, ens.neurons, synapse=0.03)
 
         weimat = wattsstrogatz_adjacencies(n_neurons)
@@ -156,6 +160,7 @@ for i, n_neurons in enumerate(ns_neurons):
                 "benchmark": "watts-strogatz",
                 "name": sim_name,
                 "neurons": n_neurons,
+                "synapses": n_neurons * fan_outs,
                 "simtime": simtime,
                 "status": "ok",
                 "profiling": getattr(sim, "profiling", 0),
@@ -182,8 +187,11 @@ for i, n_neurons in enumerate(ns_neurons):
         print("%s, n_neurons=%d exception" % (sim_name, n_neurons))
         raise
 
-filename = "records_wattsstrogatz_%s.yml" % (
-    (datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-)
+if len(sys.argv) > 4:
+    filename = sys.argv[4]
+else:
+    filename = "records_wattsstrogatz_%s.yml" % (
+        (datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    )
 with open(filename, "w") as fh:
     yaml.dump(records, fh)
