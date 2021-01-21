@@ -2,6 +2,7 @@
 
 # pylint: disable=missing-class-docstring,missing-function-docstring
 
+import os
 import warnings
 
 import nengo
@@ -49,6 +50,10 @@ def nonelist(*args):
 
 def round_up(x, n):
     return int(np.ceil(float(x) / n)) * n
+
+
+def round_up_power_of_2(x):
+    return 1 if abs(x) < 1 else int(np.sign(x)) * 2 ** int(np.ceil(np.log2(abs(x))))
 
 
 def split(iterator, criterion):
@@ -120,7 +125,7 @@ class RefRunner(SimRunner):
 
 
 class OCLRunner(SimRunner):
-    def __init__(self, name=None, n_prealloc_probes=32, **kwargs):
+    def __init__(self, name=None, n_prealloc_probes=32, spmv_algorithm=None, **kwargs):
         super().__init__(name=name, **kwargs)
 
         context = self.kwargs.get("context", None)
@@ -130,8 +135,12 @@ class OCLRunner(SimRunner):
 
         self.name = context.devices[0].name if name is None else name
         self.n_prealloc_probes = n_prealloc_probes
+        self.spmv_algorithm = spmv_algorithm
 
     def make_sim(self, network):
+        if self.spmv_algorithm is not None:
+            os.environ["NENGO_OCL_SPMV_ALGORITHM"] = self.spmv_algorithm
+
         return nengo_ocl.Simulator(
             network,
             n_prealloc_probes=self.n_prealloc_probes,
@@ -174,4 +183,6 @@ class DLRunner(SimRunner):
 SimRunner.register_runner("ref", RefRunner)
 SimRunner.register_runner("ocl", OCLRunner)
 SimRunner.register_runner("ocl-profile", OCLRunner, profiling=True)
+SimRunner.register_runner("ocl-csr", OCLRunner, spmv_algorithm="CSR")
+SimRunner.register_runner("ocl-ell", OCLRunner, spmv_algorithm="ELLPACK")
 SimRunner.register_runner("dl", DLRunner)

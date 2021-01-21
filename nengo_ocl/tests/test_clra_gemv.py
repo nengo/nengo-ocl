@@ -10,13 +10,16 @@ from nengo.utils.stdlib import Timer
 
 from nengo_ocl.clra_gemv import (
     plan_block_gemv,
+    plan_csr,
+    plan_ellpack,
+    plan_ellpack_nonlocal,
+    plan_ellpack_serial,
+    plan_ellpack_tree,
     plan_many_dots_gemv,
     plan_ragged_gather_gemv,
     plan_reduce_gemv,
-    plan_sparse_dot_inc,
 )
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
-from nengo_ocl.clraggedarray import to_device
 from nengo_ocl.raggedarray import RaggedArray
 
 logger = logging.getLogger(__name__)
@@ -34,6 +37,18 @@ def pytest_generate_tests(metafunc):
                 plan_ragged_gather_gemv,
             ],
         )
+    if "sparse_planner" in metafunc.fixturenames:
+        metafunc.parametrize(
+            "sparse_planner",
+            [
+                plan_ellpack,
+                # plan_ellpack_twostep,
+                # plan_ellpack_nonlocal,
+                # plan_ellpack_tree,
+                # plan_ellpack_serial,
+                plan_csr,
+            ],
+        )
 
 
 def ra_allclose(raA, raB):
@@ -44,7 +59,7 @@ def ra_allclose(raA, raB):
     return True
 
 
-def test_basic(ctx):
+def test_basic(ctx, planner):
     # -- prepare initial conditions on host
     A = RA([[[0.1, 0.2], [0.3, 0.4]], [[0.5, 0.6]]])
     X = RA([[3, 5]])
@@ -66,7 +81,7 @@ def test_basic(ctx):
     assert ra_allclose(Y, clY)
 
     # -- run cl computation
-    prog = plan_ragged_gather_gemv(queue, alpha, clA, A_js, clX, X_js, beta, clY)
+    prog = planner(queue, alpha, clA, A_js, clX, X_js, beta, clY)
     # plans = prog.choose_plans()
     # assert len(plans) == 1
     for plan in prog.plans:
@@ -367,48 +382,84 @@ def test_speed(ctx, rng):  # noqa: C901
         print("clBLAS: %0.3f" % timer.duration)
 
 
-@pytest.mark.parametrize("inc", [False, True])
-def test_sparse(ctx, inc, rng, allclose):
+@pytest.mark.parametrize(
+    "inc, long_row, sparsity, shape",
+    [
+        (True, False, 0.02, 511),
+        (False, False, 0.1, 511),
+        (False, False, 0.02, 5000),
+        (False, True, 0.02, 5000),
+        (True, False, 0.1, 5000),
+        (False, False, 0.02, (2047, 5007)),
+        (True, True, 0.07, (2048, 5003)),
+        (True, False, 0.02, (2057, 5981)),
+        (False, False, 0.02, (1, 4999)),
+        (False, False, 0.02, (5001, 1)),
+        # (False, False, 0.05, (1000, 160000)),  # speed test for wg_size
+    ],
+)
+def test_sparse(sparse_planner, inc, long_row, sparsity, shape, ctx, rng, allclose):
     scipy_sparse = pytest.importorskip("scipy.sparse")
 
+    queue = cl.CommandQueue(ctx)
+    max_wgs = queue.device.max_work_group_size
+
     # -- prepare initial conditions on host
+    if isinstance(shape, int):
+        shape = (shape, shape)
     if 0:  # pylint: disable=using-constant-test
         # diagonal matrix
-        shape = (32, 32)
         s = min(shape[0], shape[1])
-        data = list(range(s))
+        data = list(np.ones(s))
         ii = list(range(s))
         jj = list(range(s))[::-1]
-        A = scipy_sparse.coo_matrix((data, (ii, jj)), shape=shape).tocsr()
+        A = scipy_sparse.coo_matrix((data, (ii, jj)), shape=shape)
         X = RA([np.arange(1, shape[1] + 1)])
         Y = RA([np.arange(1, shape[0] + 1)])
-    else:
+    elif 1:  # pylint: disable=using-constant-test
         # random sparse matrix
-        shape = (500, 500)
-        sparsity = 0.002
         mask = rng.uniform(size=shape) < sparsity
+        if long_row:
+            long_ii = np.unique(rng.randint(0, shape[0], size=10))
+            long_len = min(max_wgs + 1, shape[1])
+            mask[long_ii, :long_len] = 1
+
         ii, jj = mask.nonzero()
-        assert len(ii) > 0
-        data = rng.uniform(-1, 1, size=len(ii))
-        A = scipy_sparse.coo_matrix((data, (ii, jj)), shape=shape).tocsr()
-        X = RA([rng.uniform(-1, 1, size=shape[1])])
-        Y = RA([rng.uniform(-1, 1, size=shape[0])])
+        assert len(ii) > 0, "All elements zero; test is ineffective."
+
+        data = rng.uniform(0, 1, size=len(ii))
+        A = scipy_sparse.coo_matrix((data, (ii, jj)), shape=shape)
+        X = RA([rng.uniform(0, 1, size=shape[1])])
+        Y = RA([rng.uniform(0, 1, size=shape[0])])
 
     # -- prepare initial conditions on device
-    queue = cl.CommandQueue(ctx)
-    A_data = to_device(queue, A.data.astype(np.float32))
-    A_indices = to_device(queue, A.indices.astype(np.int32))
-    A_indptr = to_device(queue, A.indptr.astype(np.int32))
     clX = CLRA(queue, X)
     clY = CLRA(queue, Y)
     assert allclose(X, clX)
     assert allclose(Y, clY)
 
-    # -- run cl computation
-    plan = plan_sparse_dot_inc(queue, A_indices, A_indptr, A_data, clX, clY, inc=inc)
-    plan()
+    # -- check for anticipated failures
+    max_row_len = np.diff(A.tocsr().indptr).max()
 
-    # -- ensure they match
-    ref = (Y[0] if inc else 0) + A.dot(X[0])
-    sim = clY[0]
-    assert allclose(ref, sim, atol=1e-7)
+    if sparse_planner in [plan_ellpack_serial, plan_ellpack_tree] and (
+        max_row_len > max_wgs
+    ):
+        with pytest.raises(ValueError, match="work group size"):
+            sparse_planner(queue, A, clX, clY, inc=inc)
+
+    else:
+        # -- make plans (check for anticipated failures first)
+        prog = sparse_planner(queue, A, clX, clY, inc=inc)
+
+        # -- run cl computation
+        plans = prog.plans
+        with Timer() as timer:
+            for plan in plans:
+                plan()
+
+        print(f"sparse dot: {timer.duration:0.3f}")
+
+        # -- ensure they match
+        ref = (Y[0] if inc else 0) + A.dot(X[0])
+        sim = clY[0]
+        assert allclose(ref, sim, atol=1e-6)
