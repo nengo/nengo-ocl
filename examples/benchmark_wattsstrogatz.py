@@ -30,51 +30,24 @@ import yaml
 from nengo.utils.numpy import scipy_sparse
 
 import nengo_ocl
+from nengo_ocl.utils import SimRunner
 
-### User options ###
+# --- User options
 simtime = 1.0
 fan_outs = 100
 rewire_frac = 0.2
 directed = True
-n_prealloc_probes = 32  # this applies to OCL and DL
+# n_prealloc_probes = 32  # this applies to OCL and DL
 sparse = True  # setting to False will probably overwhelm your GPU memory
 
-### Command line options ###
+# --- Command line options
 if len(sys.argv) not in (3, 4, 5):
     print(__doc__)
     sys.exit()
 
-max_steps = None
-sim_config = {}
-
-if sys.argv[1] == "ref":
-    sim_name = "ref" if len(sys.argv) == 3 else sys.argv[3]
-    sim_class = nengo.Simulator
-    sim_kwargs = dict(progress_bar=False)
-elif sys.argv[1].startswith("ocl"):
-    assert sys.argv[1] in ("ocl", "ocl_profile")
-    profiling = sys.argv[1] == "ocl_profile"
-
-    ctx = cl.create_some_context()
-    sim_name = ctx.devices[0].name if len(sys.argv) == 3 else sys.argv[3]
-    sim_class = nengo_ocl.Simulator
-    sim_kwargs = dict(
-        context=ctx,
-        profiling=profiling,
-        n_prealloc_probes=n_prealloc_probes,
-        progress_bar=False,
-    )
-elif sys.argv[1] == "dl":
-    import nengo_dl
-
-    sim_name = "dl" if len(sys.argv) == 3 else sys.argv[3]
-    sim_class = nengo_dl.Simulator
-    sim_kwargs = dict(progress_bar=False)
-    max_steps = n_prealloc_probes
-    sim_config["dl_inference_only"] = True
-else:
-    raise Exception("unknown sim", sys.argv[1])
-
+sim_runner = SimRunner.get_runner(
+    sys.argv[1], name=sys.argv[3] if len(sys.argv) > 3 else None
+)
 ns_neurons = map(int, sys.argv[2].split(","))
 
 
@@ -109,9 +82,8 @@ for i, n_neurons in enumerate(ns_neurons):
     # a = rng.normal(scale=np.sqrt(1./dim), size=n_neurons)
 
     # --- Model
-    with nengo.Network(seed=9) as model:
-        if sim_config.get("dl_inference_only", False):
-            nengo_dl.configure_settings(inference_only=True)
+    with nengo.Network(seed=9) as net:
+        sim_runner.configure_network(net)
 
         # inputA = nengo.Node(a)
         neuron_type = nengo.neurons.LIF(tau_ref=0.001)
@@ -133,23 +105,16 @@ for i, n_neurons in enumerate(ns_neurons):
         t_start = time.time()
 
         # -- build
-        with sim_class(model, **sim_kwargs) as sim:
+        sim = sim_runner.make_sim(net)
+        with sim:
             t_sim = time.time()
 
             # -- warmup
-            sim.run(0.01)
+            sim_runner.run_sim(sim, simtime=0.01)
             t_warm = time.time()
 
             # -- long-term timing
-            if max_steps is None:
-                sim.run(simtime)
-            else:
-                n_steps = int(np.round(simtime / sim.dt))
-                while n_steps > 0:
-                    steps = min(n_steps, max_steps)
-                    sim.run_steps(steps)
-                    n_steps -= steps
-
+            sim_runner.run_sim(sim, simtime=simtime)
             t_run = time.time()
 
             if getattr(sim, "profiling", False):
@@ -158,7 +123,7 @@ for i, n_neurons in enumerate(ns_neurons):
         records.append(
             {
                 "benchmark": "watts-strogatz",
-                "name": sim_name,
+                "name": sim_runner.name,
                 "neurons": n_neurons,
                 "synapses": n_neurons * fan_outs,
                 "simtime": simtime,
@@ -170,13 +135,13 @@ for i, n_neurons in enumerate(ns_neurons):
             }
         )
         print(records[-1])
-        print("%s, n_neurons=%d successful" % (sim_name, n_neurons))
-        del model, sim
+        print("%s, n_neurons=%d successful" % (sim_runner.name, n_neurons))
+
     except Exception as e:
         records.append(
             {
                 "benchmark": "watts-strogatz",
-                "name": sim_name,
+                "name": sim_runner.name,
                 "n_neurons": n_neurons,
                 "simtime": simtime,
                 "status": "exception",
@@ -184,7 +149,7 @@ for i, n_neurons in enumerate(ns_neurons):
             }
         )
         print(records[-1])
-        print("%s, n_neurons=%d exception" % (sim_name, n_neurons))
+        print("%s, n_neurons=%d exception" % (sim_runner.name, n_neurons))
         raise
 
 if len(sys.argv) > 4:

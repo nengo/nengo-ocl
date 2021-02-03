@@ -30,27 +30,15 @@ import yaml
 from nengo.networks.circularconvolution import circconv
 
 import nengo_ocl
+from nengo_ocl.utils import SimRunner
 
 if len(sys.argv) not in (3, 4, 5):
     print(__doc__)
     sys.exit()
 
-if sys.argv[1] == "ref":
-    sim_name = "ref" if len(sys.argv) == 3 else sys.argv[3]
-    sim_class = nengo.Simulator
-    sim_kwargs = {}
-elif sys.argv[1].startswith("ocl"):
-    assert sys.argv[1] in ("ocl", "ocl_profile")
-    profiling = sys.argv[1] == "ocl_profile"
-
-    ctx = cl.create_some_context()
-    sim_name = ctx.devices[0].name if len(sys.argv) == 3 else sys.argv[3]
-    sim_class = nengo_ocl.Simulator
-    sim_kwargs = dict(context=ctx, profiling=profiling)
-else:
-    raise Exception("unknown sim", sys.argv[1])
-
-
+sim_runner = SimRunner.get_runner(
+    sys.argv[1], name=sys.argv[3] if len(sys.argv) > 3 else None
+)
 dims = map(int, sys.argv[2].split(","))
 
 # neurons_per_product = 128
@@ -68,7 +56,9 @@ for i, dim in enumerate(dims):
     c = circconv(a, b)
 
     # --- Model
-    with nengo.Network(seed=9) as model:
+    with nengo.Network(seed=9) as net:
+        sim_runner.configure_network(net)
+
         inputA = nengo.Node(a)
         inputB = nengo.Node(b)
         A = nengo.networks.EnsembleArray(neurons_per_product, dim, radius=radius)
@@ -94,15 +84,16 @@ for i, dim in enumerate(dims):
         t_start = time.time()
 
         # -- build
-        with sim_class(model, **sim_kwargs) as sim:
+        sim = sim_runner.make_sim(net)
+        with sim:
             t_sim = time.time()
 
             # -- warmup
-            sim.run(0.01)
+            sim_runner.run_sim(sim, simtime=0.01)
             t_warm = time.time()
 
             # -- long-term timing
-            sim.run(simtime)
+            sim_runner.run_sim(sim, simtime=simtime)
             t_run = time.time()
 
             if getattr(sim, "profiling", False):
@@ -116,11 +107,11 @@ for i, dim in enumerate(dims):
         records.append(
             {
                 "benchmark": "circ-conv",
-                "name": sim_name,
+                "name": sim_runner.name,
                 "dim": dim,
                 "simtime": simtime,
                 "neurons_per_product": neurons_per_product,
-                "neurons": sum(e.n_neurons for e in model.all_ensembles),
+                "neurons": sum(e.n_neurons for e in net.all_ensembles),
                 "status": "ok",
                 "profiling": getattr(sim, "profiling", 0),
                 "buildtime": t_sim - t_start,
@@ -130,13 +121,13 @@ for i, dim in enumerate(dims):
             }
         )
         print(records[-1])
-        print("%s, dims=%d successful" % (sim_name, dim))
-        del model, sim
+        print("%s, dims=%d successful" % (sim_runner.name, dim))
+
     except Exception as e:
         records.append(
             {
                 "benchmark": "circ-conv",
-                "name": sim_name,
+                "name": sim_runner.name,
                 "dim": dim,
                 "simtime": simtime,
                 "neurons_per_product": neurons_per_product,
@@ -145,7 +136,7 @@ for i, dim in enumerate(dims):
             }
         )
         print(records[-1])
-        print("%s, dims=%d exception" % (sim_name, dim))
+        print("%s, dims=%d exception" % (sim_runner.name, dim))
         raise
 
 if len(sys.argv) > 4:
