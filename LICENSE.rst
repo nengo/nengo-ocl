@@ -4,7 +4,7 @@
 NengoOCL license
 ****************
 
-Copyright (c) 2013-2020 Applied Brain Research
+Copyright (c) 2013-2021 Applied Brain Research
 
 NengoOCL is made available under a proprietary license
 that permits using, copying, sharing, and making derivative works from
