@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 import sys
-import yaml
 from collections import OrderedDict
 
 import matplotlib.pyplot as plt
+import yaml
 
 by_recfile = OrderedDict()
 by_name = OrderedDict()

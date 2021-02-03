@@ -1,10 +1,6 @@
-import time
-
+import nengo
 import numpy as np
 import pyopencl as cl
-
-import nengo
-from nengo.networks.circularconvolution import circconv, transform_in
 
 import nengo_ocl
 

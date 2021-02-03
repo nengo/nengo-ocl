@@ -1,9 +1,7 @@
-import time
-
+import matplotlib.pyplot as plt
+import nengo
 import numpy as np
 import pyopencl as cl
-
-import nengo
 from nengo.networks.circularconvolution import circconv, transform_in
 
 import nengo_ocl
@@ -61,8 +59,6 @@ with nengo_ocl.Simulator(model, context=ctx, profiling=True) as sim:
     sim.print_profiling(sort=1)
 
 # --- results
-import matplotlib.pyplot as plt
-
 t = sim.trange()
 
 

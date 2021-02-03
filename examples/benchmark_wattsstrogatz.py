@@ -19,17 +19,15 @@ Example usage:
   python benchmark_wattsstrogatz.py ref 128,256,512 "Reference simulator"
 """
 
-from collections import OrderedDict
 import datetime
-
 import sys
 import time
-import yaml
-
-import numpy as np
-import pyopencl as cl
+from collections import OrderedDict
 
 import nengo
+import numpy as np
+import pyopencl as cl
+import yaml
 from nengo.utils.numpy import scipy_sparse
 
 import nengo_ocl
