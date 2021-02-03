@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 import sys
-from collections import OrderedDict
 
 import matplotlib.pyplot as plt
 import yaml
 
-by_recfile = OrderedDict()
-by_name = OrderedDict()
+by_recfile = {}
+by_name = {}
 
 # the units used on the x-axis, either "dim" (for dimensions) or "neurons"
 x_units = None

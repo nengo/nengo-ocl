@@ -2,8 +2,6 @@
 
 # pylint: disable=missing-class-docstring,missing-function-docstring
 
-from collections import OrderedDict
-
 import numpy as np
 
 
@@ -32,9 +30,7 @@ def equal_strides(strides1, strides2, shape):
 
 
 def get_closures(f):
-    return OrderedDict(
-        zip(f.__code__.co_freevars, (c.cell_contents for c in f.__closure__))
-    )
+    return dict(zip(f.__code__.co_freevars, (c.cell_contents for c in f.__closure__)))
 
 
 def indent(s, i):

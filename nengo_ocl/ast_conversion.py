@@ -22,7 +22,6 @@ import ast
 import builtins
 import inspect
 import math
-from collections import OrderedDict
 
 import numpy as np
 from nengo.utils.numpy import is_iterable, is_number
@@ -505,8 +504,8 @@ class OclTranslator(ast.NodeVisitor):
         self.closures = closure_dict
 
         # self.init: key=local variable name, value=initialization statement
-        self.init = OrderedDict()
-        self.temp_names = OrderedDict()  # for comprehensions
+        self.init = {}
+        self.temp_names = {}  # for comprehensions
 
         # parse and make code
         a = ast.parse(source)

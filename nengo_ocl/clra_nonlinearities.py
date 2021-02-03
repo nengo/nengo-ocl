@@ -2,8 +2,6 @@
 
 # pylint: disable=missing-class-docstring,missing-function-docstring
 
-from collections import OrderedDict
-
 import nengo.dists as nengod
 import numpy as np
 import pyopencl as cl
@@ -1042,7 +1040,7 @@ def plan_lif(
     inc_n=None,
     upsample=1,
     fastlif=False,
-    **kwargs
+    **kwargs,
 ):
     adaptive = N is not None
     assert J.ctype == "float"
@@ -1325,8 +1323,8 @@ def _plan_template(  # noqa: C901
     input0 = list(inputs.values())[0]  # input to use as reference for lengths
 
     # split parameters into static and updated params
-    static_params = OrderedDict()  # static params (hard-coded)
-    params = OrderedDict()  # variable params (updated)
+    static_params = {}  # static params (hard-coded)
+    params = {}  # variable params (updated)
     for k, v in parameters.items():
         if isinstance(v, CLRaggedArray):
             params[k] = v
@@ -1337,7 +1335,7 @@ def _plan_template(  # noqa: C901
                 "Parameter %r must be CLRaggedArray or float (got %s)" % (k, type(v))
             )
 
-    avars = OrderedDict()
+    avars = {}
     bw_per_call = 0
     for vname, v in list(inputs.items()) + list(outputs.items()) + list(params.items()):
         assert vname not in avars, "Name clash"
@@ -1351,9 +1349,9 @@ def _plan_template(  # noqa: C901
         avars[vname] = (v.ctype, offset)
         bw_per_call += v.nbytes
 
-    ivars = OrderedDict((k, avars[k]) for k in inputs.keys())
-    ovars = OrderedDict((k, avars[k]) for k in outputs.keys())
-    pvars = OrderedDict((k, avars[k]) for k in params.keys())
+    ivars = {k: avars[k] for k in inputs}
+    ovars = {k: avars[k] for k in outputs}
+    pvars = {k: avars[k] for k in params}
 
     fn_name = str(name)
     textconf = dict(

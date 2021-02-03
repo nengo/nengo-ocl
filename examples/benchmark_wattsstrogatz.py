@@ -22,7 +22,6 @@ Example usage:
 import datetime
 import sys
 import time
-from collections import OrderedDict
 
 import nengo
 import numpy as np
@@ -153,35 +152,31 @@ for i, n_neurons in enumerate(ns_neurons):
                 sim.print_profiling(sort=1)
 
         records.append(
-            OrderedDict(
-                (
-                    ("benchmark", "watts-strogatz"),
-                    ("name", sim_name),
-                    ("neurons", n_neurons),
-                    ("simtime", simtime),
-                    ("status", "ok"),
-                    ("profiling", getattr(sim, "profiling", 0)),
-                    ("buildtime", t_sim - t_start),
-                    ("warmtime", t_warm - t_sim),
-                    ("runtime", t_run - t_warm),
-                )
-            )
+            {
+                "benchmark": "watts-strogatz",
+                "name": sim_name,
+                "neurons": n_neurons,
+                "simtime": simtime,
+                "status": "ok",
+                "profiling": getattr(sim, "profiling", 0),
+                "buildtime": t_sim - t_start,
+                "warmtime": t_warm - t_sim,
+                "runtime": t_run - t_warm,
+            }
         )
         print(records[-1])
         print("%s, n_neurons=%d successful" % (sim_name, n_neurons))
         del model, sim
     except Exception as e:
         records.append(
-            OrderedDict(
-                (
-                    ("benchmark", "watts-strogatz"),
-                    ("name", sim_name),
-                    ("n_neurons", n_neurons),
-                    ("simtime", simtime),
-                    ("status", "exception"),
-                    ("exception", str(e)),
-                )
-            )
+            {
+                "benchmark": "watts-strogatz",
+                "name": sim_name,
+                "n_neurons": n_neurons,
+                "simtime": simtime,
+                "status": "exception",
+                "exception": str(e),
+            }
         )
         print(records[-1])
         print("%s, n_neurons=%d exception" % (sim_name, n_neurons))

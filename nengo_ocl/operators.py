@@ -2,8 +2,6 @@
 
 # pylint: disable=missing-function-docstring
 
-from collections import OrderedDict
-
 import numpy as np
 from nengo.builder.operator import (
     BsrDotInc,
@@ -112,8 +110,8 @@ class MultiDotInc(Operator):
 
     @classmethod
     def compress(cls, operators):
-        sets = OrderedDict()
-        incs = OrderedDict()
+        sets = {}
+        incs = {}
         rval = []
         for op in operators:
             if isinstance(op, cls):

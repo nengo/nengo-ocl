@@ -22,7 +22,6 @@ Example usage:
 import datetime
 import sys
 import time
-from collections import OrderedDict
 
 import nengo
 import numpy as np
@@ -115,39 +114,35 @@ for i, dim in enumerate(dims):
         rmse = (nengo.utils.numpy.rms(y - c[None, :], axis=1) / crms).mean()
 
         records.append(
-            OrderedDict(
-                (
-                    ("benchmark", "circ-conv"),
-                    ("name", sim_name),
-                    ("dim", dim),
-                    ("simtime", simtime),
-                    ("neurons_per_product", neurons_per_product),
-                    ("neurons", sum(e.n_neurons for e in model.all_ensembles)),
-                    ("status", "ok"),
-                    ("profiling", getattr(sim, "profiling", 0)),
-                    ("buildtime", t_sim - t_start),
-                    ("warmtime", t_warm - t_sim),
-                    ("runtime", t_run - t_warm),
-                    ("rmse", rmse),
-                )
-            )
+            {
+                "benchmark": "circ-conv",
+                "name": sim_name,
+                "dim": dim,
+                "simtime": simtime,
+                "neurons_per_product": neurons_per_product,
+                "neurons": sum(e.n_neurons for e in model.all_ensembles),
+                "status": "ok",
+                "profiling": getattr(sim, "profiling", 0),
+                "buildtime": t_sim - t_start,
+                "warmtime": t_warm - t_sim,
+                "runtime": t_run - t_warm,
+                "rmse": rmse,
+            }
         )
         print(records[-1])
         print("%s, dims=%d successful" % (sim_name, dim))
         del model, sim
     except Exception as e:
         records.append(
-            OrderedDict(
-                (
-                    ("benchmark", "circ-conv"),
-                    ("name", sim_name),
-                    ("dim", dim),
-                    ("simtime", simtime),
-                    ("neurons_per_product", neurons_per_product),
-                    ("status", "exception"),
-                    ("exception", str(e)),
-                )
-            )
+            {
+                "benchmark": "circ-conv",
+                "name": sim_name,
+                "dim": dim,
+                "simtime": simtime,
+                "neurons_per_product": neurons_per_product,
+                "status": "exception",
+                "exception": str(e),
+            }
         )
         print(records[-1])
         print("%s, dims=%d exception" % (sim_name, dim))
