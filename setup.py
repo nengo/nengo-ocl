@@ -35,6 +35,7 @@ install_req = [
     "pyopencl",
 ]
 docs_req = [
+    "click>=7.0",
     "matplotlib>=1.4",
     "nbsphinx",
     "nengo-sphinx-theme>=1.2.0",
