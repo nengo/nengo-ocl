@@ -1418,24 +1418,6 @@ class plan_ellpack_tree(plan_ellpack):
             self.X,
             self.Y,
             inc=self.inc,
-            serial_reduction=False,
-            tag=self.tag,
-        )
-        return [plan]
-
-
-class plan_ellpack_serial(plan_ellpack):
-    """SPMV program with the ELLPACK format, uses a serial accumulation approach."""
-
-    def choose_plans(self):
-        plan = spmv_ellpack_impl(
-            self.queue,
-            self.dAstruct.columns,
-            self.dAstruct.entries,
-            self.X,
-            self.Y,
-            inc=self.inc,
-            serial_reduction=True,
             tag=self.tag,
         )
         return [plan]
@@ -1506,22 +1488,6 @@ class plan_ellpack_twostep(plan_ellpack):
         )
         lclplan.description = "Local step - " + desc
         gblplan.description = "Global step - " + desc
-
-
-class plan_ellpack_nonlocal(plan_ellpack):
-    """SPMV program with the ELLPACK format, uses global memory only."""
-
-    def choose_plans(self):
-        plan = spmv_ellpacknonlocal_impl(
-            self.queue,
-            self.dAstruct.columns,
-            self.dAstruct.entries,
-            self.X,
-            self.Y,
-            inc=self.inc,
-            tag=self.tag,
-        )
-        return [plan]
 
 
 class plan_csr(spmv_prog):
@@ -1679,9 +1645,7 @@ def spmv_csr_impl(queue, A_indices, A_indptr, A_data, X, Y, inc=False, tag=None)
     return plan
 
 
-def spmv_ellpack_impl(
-    queue, A_columns, A_entries, X, Y, inc=False, tag=None, serial_reduction=False
-):
+def spmv_ellpack_impl(queue, A_columns, A_entries, X, Y, inc=False, tag=None):
     """SPMV kernel with the ELLPACK format.
 
     Parameters
@@ -1694,10 +1658,6 @@ def spmv_ellpack_impl(
         Input/output data.
     inc : bool
         Whether to increment ``Y`` (True), or set it (False).
-    serial_reduction : bool
-        Accumulate each row with a single worker without local memory or parallel
-        multiplication. Non-performant; purpose is to assess the performance effect
-        of using local memory only, as opposed to local memory plus parallel reduction.
 
     Returns
     -------
@@ -1736,13 +1696,6 @@ def spmv_ellpack_impl(
         barrier(CLK_LOCAL_MEM_FENCE);
 
         // Do reduction across work group
-    %if serial_reduction:
-        if (iellcol == 0) {
-            for (int k = 1; k < ${ellwidth}; k++) {
-                products[0] += products[k];
-            }
-        }
-    %else:
         for (int offset = ${wg_size}/2; offset > 0; offset >>= 1) {
             barrier(CLK_LOCAL_MEM_FENCE);
             if (iellcol < offset && iellcol + offset < ${wg_size}) {
@@ -1750,7 +1703,6 @@ def spmv_ellpack_impl(
             }
         }
         barrier(CLK_LOCAL_MEM_FENCE);
-    %endif
 
         // Store value
         if (iellcol == 0) {
@@ -1783,70 +1735,6 @@ def spmv_ellpack_impl(
         inc=inc,
         ellwidth=A_ellwidth,
         wg_size=wg_size,
-        serial_reduction=serial_reduction,
-    )
-    text = as_ascii(Template(kern, output_encoding="ascii").render(**textconf))
-    full_args = (
-        A_columns.base_data,
-        A_entries.base_data,
-        X.cl_starts.data,
-        X.cl_buf.data,
-        Y.cl_starts.data,
-        Y.cl_buf.data,
-    )
-    _fn = cl.Program(queue.context, text).build().ellpack_inc
-    _fn.set_args(*full_args)
-
-    plan = Plan(queue, _fn, gsize, lsize=lsize, name="cl_ellpack", tag=tag)
-    plan.full_args = full_args  # prevent garbage-collection
-
-    return plan
-
-
-def spmv_ellpacknonlocal_impl(queue, A_columns, A_entries, X, Y, inc=False, tag=None):
-    """SPMV kernel with the ELLPACK format, avoiding local memory.
-
-    Sum accumulation is serial. This is non-performant; purpose is to test the ELLPACK
-    data interface and assess the performance effect of coalesced memory access only.
-
-    Parameters
-    ----------
-    See spmv_ellpack_impl
-    """
-    kern = """
-    __kernel void ellpack_inc(
-        __global const ${IndType} *A_columns,
-        __global const ${dtype} *A_entries,
-        __global const int *Xstarts,
-        __global const ${dtype} *Xdata,
-        __global const int *Ystarts,
-        __global ${dtype} *Ydata
-    )
-    {
-        // n can later be used to keep track of multiple arrays
-        const int n = 0;
-        const int irow = get_global_id(0);
-
-        __global const ${dtype} *x = Xdata + Xstarts[n];
-        __global ${dtype} *y = Ydata + Ystarts[n];
-
-    %if not inc:
-        y[irow] = 0;
-    %endif
-        for (int k = 0; k < ${ellwidth}; k++) {
-            y[irow] += A_entries[irow * ${ellwidth} + k]
-                     * x[A_columns[irow * ${ellwidth} + k]];
-        }
-    }
-    """
-    # --- dimensioning
-    nneurons, A_ellwidth = A_columns.shape
-    gsize = (nneurons, 1)
-    lsize = None
-
-    # --- make the program
-    textconf = dict(
-        dtype=A_entries.ctype, IndType=A_columns.ctype, inc=inc, ellwidth=A_ellwidth
     )
     text = as_ascii(Template(kern, output_encoding="ascii").render(**textconf))
     full_args = (
@@ -2061,8 +1949,6 @@ def plan_sparse_dot_inc(queue, hA, X, Y, inc=False, tag=None, algorithm=None):
 algostr_to_planner = {
     "ELLPACK": plan_ellpack,
     "ELLPACK-tree": plan_ellpack_tree,
-    "ELLPACK-serial": plan_ellpack_serial,
-    "ELLPACK-nonlocal": plan_ellpack_nonlocal,
     "ELLPACK-twostep": plan_ellpack_twostep,
     "CSR": plan_csr,
 }

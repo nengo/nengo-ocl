@@ -12,8 +12,6 @@ from nengo_ocl.clra_gemv import (
     plan_block_gemv,
     plan_csr,
     plan_ellpack,
-    plan_ellpack_nonlocal,
-    plan_ellpack_serial,
     plan_ellpack_tree,
     plan_many_dots_gemv,
     plan_ragged_gather_gemv,
@@ -43,9 +41,7 @@ def pytest_generate_tests(metafunc):
             [
                 plan_ellpack,
                 # plan_ellpack_twostep,
-                # plan_ellpack_nonlocal,
                 # plan_ellpack_tree,
-                # plan_ellpack_serial,
                 plan_csr,
             ],
         )
@@ -441,9 +437,7 @@ def test_sparse(sparse_planner, inc, long_row, sparsity, shape, ctx, rng, allclo
     # -- check for anticipated failures
     max_row_len = np.diff(A.tocsr().indptr).max()
 
-    if sparse_planner in [plan_ellpack_serial, plan_ellpack_tree] and (
-        max_row_len > max_wgs
-    ):
+    if sparse_planner is plan_ellpack_tree and max_row_len > max_wgs:
         with pytest.raises(ValueError, match="work group size"):
             sparse_planner(queue, A, clX, clY, inc=inc)
 
