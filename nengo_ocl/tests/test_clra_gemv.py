@@ -16,6 +16,7 @@ from nengo_ocl.clra_gemv import (
     plan_many_dots_gemv,
     plan_ragged_gather_gemv,
     plan_reduce_gemv,
+    spmv_algorithm_heuristic,
 )
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 from nengo_ocl.raggedarray import RaggedArray
@@ -457,3 +458,32 @@ def test_sparse(sparse_planner, inc, long_row, sparsity, shape, ctx, rng, allclo
         ref = (Y[0] if inc else 0) + A.dot(X[0])
         sim = clY[0]
         assert allclose(ref, sim, atol=1e-6)
+
+
+def test_spmv_impl_heuristic(ctx):
+    scipy_sparse = pytest.importorskip("scipy.sparse")
+
+    queue = cl.CommandQueue(ctx)
+    # Set the soft threshold artificially low to save memory during testing
+    testing_limit = 1e-7
+    bytes_limit = queue.device.global_mem_size * testing_limit
+    s = int(3 * (8 * bytes_limit))  # This works out to about 20,000 on an 8GB GPU
+
+    A_best_for_ELL = scipy_sparse.eye(s, format="csr")
+    A_bad_for_ELL = A_best_for_ELL.copy()
+    A_bad_for_ELL[0, :] = 1
+    A_ok_for_ELL = A_best_for_ELL.copy()
+    A_ok_for_ELL[:, 0] = 1
+    A_small = scipy_sparse.eye(10, format="csr")
+    A_small[0, :] = 1
+
+    for A, answer in [
+        (A_best_for_ELL, "ELLPACK"),
+        (A_ok_for_ELL, "ELLPACK"),
+        (A_bad_for_ELL, "CSR"),
+        (A_small, "ELLPACK"),
+    ]:
+        assert (
+            spmv_algorithm_heuristic(queue, A, footprint_soft_limit=testing_limit)
+            == answer
+        )

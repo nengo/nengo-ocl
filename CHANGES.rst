@@ -22,6 +22,29 @@ Release History
 2.1.1 (unreleased)
 ==================
 
+*Compatible with Nengo 3.1.0*
+
+**Added**
+
+- The benchmarks in the ``examples`` folder now have nicer command-line interfaces.
+  Use the ``--help`` flag with any benchmark to learn more about the options. (`#187`_)
+- The new ``examples/benchmark_backends.py`` script makes it easier to compare between
+  different backends on any of the benchmarks. (`#187`_)
+
+**Changed**
+
+- Sparse matrix multiplication is now faster in many cases by using the ELLPACK matrix
+  format. It uses more memory for some sparse matrices, though; for matrices where it
+  would result in a large increase in memory usage, we fall back on the old CSR format.
+  To force a particular format, set the ``NENGO_OCL_SPMV_ALGORITHM`` environment
+  variable to either "ELLPACK" or "CSR". (`#188`_)
+
+**Removed**
+
+- Dropped support for Python 3.5. (`#187`_)
+
+.. _#187: https://github.com/nengo-labs/nengo-ocl/pull/187
+.. _#188: https://github.com/nengo-labs/nengo-ocl/pull/188
 
 2.1.0 (Nov 23, 2020)
 ====================

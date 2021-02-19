@@ -1918,8 +1918,8 @@ def spmv_ellpacktwostep_impl(queue, A_columns, A_entries, X, Y, inc=False, tag=N
 def plan_sparse_dot_inc(queue, hA, X, Y, inc=False, tag=None, algorithm=None):
     """Determines which planner to use for sparse matrix-vector multiplication.
 
-    based on argument or the "NENGO_OCL_SPMV_ALGORITHM" environment variable
-    This function is mainly just to interface with the pattern in Simulator
+    First, checks the "NENGO_OCL_SPMV_ALGORITHM" environment variable. If it is unset,
+    uses `spmv_algorithm_heuristic` to determine the algorithm.
 
     For full parameter details, see ``spmv_prog.__init__``
 
@@ -1934,15 +1934,54 @@ def plan_sparse_dot_inc(queue, hA, X, Y, inc=False, tag=None, algorithm=None):
         An initialized spmv_prog object from which to get plans
     """
     if algorithm is None:
-        pass  # Get from a config object. Not currently implemented
+        # Get from an environment variable
+        algorithm = os.environ.get("NENGO_OCL_SPMV_ALGORITHM", None)
+
     if algorithm is None:
-        algorithm = os.environ.get(
-            "NENGO_OCL_SPMV_ALGORITHM", None
-        )  # Get from an environment variable
-    if algorithm is None:
-        algorithm = "ELLPACK"  # The default
+        # Get from CSR vs. ELLPACK heuristic.
+        algorithm = spmv_algorithm_heuristic(queue, hA)
+
     planner_type = algostr_to_planner[algorithm]
     return planner_type(queue, hA, X, Y, inc=False, tag=None)
+
+
+def spmv_algorithm_heuristic(
+    queue, hA, footprint_hard_limit=0.8, footprint_soft_limit=0.05, soft_limit_ratio=0.1
+):
+    """Heuristic choosing between CSR and ELLPACK based on memory footprint.
+
+    ELLPACK is preferred because it is always faster, but CSR is always less memory.
+    The default limits are intended for use with a single
+
+    Parameters
+    ----------
+    queue: pyopencl.CommandQueue
+        Queue where the multiplication will occur
+    hA: scipy.sparse.csr_matrix
+        Matrix for which to implement sparse matrix-vector multiply
+    footprint_hard_limit: float
+        Proportion of total device memory above which always use CSR
+    footprint_soft_limit: float
+        Proportion of total device memory below which always use ELLPACK
+    soft_limit_ratio: float
+        Ratio of CSR to ELLPACK footprints below which CSR is selected
+
+    Returns
+    -------
+    str
+        Name of the selected algorithm
+    """
+    ellwidth = max(np.diff(hA.indptr))
+    ell_bytes = 2 * 4 * ellwidth * hA.shape[1]
+    csr_bytes = 2 * 4 * hA.nnz
+
+    ell_device_ratio = ell_bytes / queue.device.global_mem_size
+    if ell_device_ratio > footprint_hard_limit:
+        return "CSR"
+    elif ell_device_ratio < footprint_soft_limit:
+        return "ELLPACK"
+    else:
+        return "CSR" if csr_bytes / ell_bytes < soft_limit_ratio else "ELLPACK"
 
 
 #: Map of strings to planners
