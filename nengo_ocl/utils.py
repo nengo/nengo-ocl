@@ -8,6 +8,7 @@ import warnings
 import nengo
 import numpy as np
 import pyopencl as cl
+from nengo.utils.numpy import scipy_sparse
 
 import nengo_ocl
 
@@ -77,6 +78,32 @@ def stable_unique(seq):
             seen.add(item)
             rval.append(item)
     return rval
+
+
+class HostSparseMatrix:
+    """Represents a sparse matrix on the host in a variety of formats."""
+
+    def __init__(self, spmatrix):
+        scipy_spmatrix = None if scipy_sparse is None else scipy_sparse.spmatrix
+        if scipy_spmatrix is None:
+            raise NotImplementedError("Sparse matrices not supported without Scipy")
+        elif not isinstance(spmatrix, (np.ndarray, scipy_spmatrix)):
+            raise NotImplementedError(
+                "Sparse matrices must be instances of `scipy.sparse.spmatrix`"
+            )
+
+        self.matrix = spmatrix
+        self.clear_cache()
+
+    def clear_cache(self):
+        self._csr = None
+
+    @property
+    def csr(self):
+        if self._csr is None:
+            self._csr = scipy_sparse.csr_matrix(self.matrix)
+
+        return self._csr
 
 
 class SimRunner:

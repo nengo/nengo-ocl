@@ -8,11 +8,10 @@ from collections import defaultdict, namedtuple
 import numpy as np
 import pyopencl as cl
 from mako.template import Template
-from nengo.utils.numpy import scipy_sparse
 
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
-from nengo_ocl.utils import as_ascii, round_up_power_of_2
+from nengo_ocl.utils import HostSparseMatrix, as_ascii, round_up_power_of_2
 
 
 def float_cl_clra(queue, arg, cl_dtype, N):
@@ -1259,8 +1258,8 @@ class spmv_prog:
     ----------
     queue : cl.CommandQueue
         The queue for this plan.
-    hA : np.array or scipy.sparse.spmat
-        Matrix to multiply in any Numpy or Scipy format. ``Y = hA.dot(X)``
+    hA : HostSparseMatrix
+        Matrix to multiply. ``Y = hA.dot(X)``
     X, Y : CLRaggedArrays of length 1
         Input/output data.
     inc : bool
@@ -1285,8 +1284,11 @@ class spmv_prog:
             - create the plans
         Most often, the caller will use prog_obj.plans after initializing
         """
+        if not isinstance(hA, HostSparseMatrix):
+            hA = HostSparseMatrix(hA)
+
         self.queue = queue
-        self.hA = hA  # Host matrix in numpy or scipy sparse with methods such as "dot"
+        self.hA = hA
         self.X = X
         self.Y = Y
         self.inc = inc
@@ -1324,9 +1326,8 @@ class plan_ellpack(spmv_prog):
     """
 
     @staticmethod
-    def scipy2elldata(scipy_mat, force_nonempty=True):
-        """ Works with scipy sparse or numpy dense argument """
-        csrmat = scipy_sparse.csr_matrix(scipy_mat)
+    def scipy2elldata(sparse_mat, force_nonempty=True):
+        csrmat = sparse_mat.csr
 
         shape = csrmat.shape
         rowlens = np.diff(csrmat.indptr).astype(np.int32)
@@ -1494,8 +1495,8 @@ class plan_csr(spmv_prog):
     """SPMV program with the CSR (compressed sparse row) format."""
 
     @staticmethod
-    def scipy2csrdata(scipy_mat, force_nonempty=True):
-        scipy_csr = scipy_sparse.csr_matrix(scipy_mat)
+    def scipy2csrdata(sparse_mat, force_nonempty=True):
+        scipy_csr = sparse_mat.csr
         return csr_matdata(
             np.asarray(scipy_csr.indices, dtype=np.int32),
             np.asarray(scipy_csr.indptr, dtype=np.int32),
@@ -1933,6 +1934,8 @@ def plan_sparse_dot_inc(queue, hA, X, Y, inc=False, tag=None, algorithm=None):
     spmv_prog
         An initialized spmv_prog object from which to get plans
     """
+    assert isinstance(hA, HostSparseMatrix)
+
     if algorithm is None:
         # Get from an environment variable
         algorithm = os.environ.get("NENGO_OCL_SPMV_ALGORITHM", None)
@@ -1957,7 +1960,7 @@ def spmv_algorithm_heuristic(
     ----------
     queue: pyopencl.CommandQueue
         Queue where the multiplication will occur
-    hA: scipy.sparse.csr_matrix
+    hA: HostSparseMatrix
         Matrix for which to implement sparse matrix-vector multiply
     footprint_hard_limit: float
         Proportion of total device memory above which always use CSR
@@ -1971,9 +1974,10 @@ def spmv_algorithm_heuristic(
     str
         Name of the selected algorithm
     """
-    ellwidth = max(np.diff(hA.indptr))
-    ell_bytes = 2 * 4 * ellwidth * hA.shape[1]
-    csr_bytes = 2 * 4 * hA.nnz
+    csr = hA.csr
+    ellwidth = max(np.diff(csr.indptr))
+    ell_bytes = 2 * 4 * ellwidth * csr.shape[1]
+    csr_bytes = 2 * 4 * csr.nnz
 
     ell_device_ratio = ell_bytes / queue.device.global_mem_size
     if ell_device_ratio > footprint_hard_limit:

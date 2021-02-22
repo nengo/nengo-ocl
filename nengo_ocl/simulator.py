@@ -58,7 +58,7 @@ from nengo_ocl.operators import MultiDotInc, simplify_operators
 from nengo_ocl.plan import BasePlan, Plans, PythonPlan
 from nengo_ocl.planners import greedy_planner
 from nengo_ocl.raggedarray import RaggedArray
-from nengo_ocl.utils import get_closures, indent, split, stable_unique
+from nengo_ocl.utils import HostSparseMatrix, get_closures, indent, split, stable_unique
 from nengo_ocl.version import (
     bad_nengo_versions,
     latest_nengo_version,
@@ -320,17 +320,9 @@ class Simulator:
             del view_builder
 
             # --- set up sparse data
-            spmatrix = None if scipy_sparse is None else scipy_sparse.spmatrix
-            sparse_data = [sigdict[sb] for sb in sparse_bases]
-            if spmatrix is None and len(sparse_data) > 0:
-                raise NotImplementedError("Sparse matrices not supported without Scipy")
-            elif not all(isinstance(x, spmatrix) for x in sparse_data):
-                raise NotImplementedError(
-                    "All sparse matrices must be instances of `scipy.sparse.spmatrix`"
-                )
-
             sparse_sidx_map = {b: i for i, b in enumerate(sparse_bases)}
             self.sparse_sidx = {s: np.int32(sparse_sidx_map[s]) for s in sparse_signals}
+            sparse_data = [HostSparseMatrix(sigdict[sb]) for sb in sparse_bases]
 
             # Copy data to device
             self.all_data = CLRaggedArray(self.queue, dense_data)

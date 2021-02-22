@@ -20,6 +20,7 @@ from nengo_ocl.clra_gemv import (
 )
 from nengo_ocl.clraggedarray import CLRaggedArray as CLRA
 from nengo_ocl.raggedarray import RaggedArray
+from nengo_ocl.utils import HostSparseMatrix
 
 logger = logging.getLogger(__name__)
 RA = lambda arrays, dtype=np.float32: RaggedArray(arrays, dtype=dtype)
@@ -460,6 +461,7 @@ def test_sparse(sparse_planner, inc, long_row, sparsity, shape, ctx, rng, allclo
         assert allclose(ref, sim, atol=1e-6)
 
 
+@pytest.mark.filterwarnings("ignore:Changing the sparsity structure of a csr_matrix")
 def test_spmv_impl_heuristic(ctx):
     scipy_sparse = pytest.importorskip("scipy.sparse")
 
@@ -483,7 +485,8 @@ def test_spmv_impl_heuristic(ctx):
         (A_bad_for_ELL, "CSR"),
         (A_small, "ELLPACK"),
     ]:
+        hA = HostSparseMatrix(A)
         assert (
-            spmv_algorithm_heuristic(queue, A, footprint_soft_limit=testing_limit)
+            spmv_algorithm_heuristic(queue, hA, footprint_soft_limit=testing_limit)
             == answer
         )
