@@ -853,7 +853,7 @@ class Simulator:
 
             dupl = lambda s: (
                 s is not None
-                and not (isinstance(s, np.ndarray) and s.dtype == np.bool)
+                and not (isinstance(s, np.ndarray) and s.dtype == bool)
                 and len(s) != len(set(s))
             )
             if any(dupl(i) for i in xinds) or any(dupl(i) for i in yinds):
