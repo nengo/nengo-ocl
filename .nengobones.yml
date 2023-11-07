@@ -1,9 +1,10 @@
 project_name: NengoOCL
 pkg_name: nengo_ocl
-repo_name: nengo-labs/nengo-ocl
+repo_name: nengo/nengo-ocl
 description: OpenCL-based simulator for Nengo neural models
 
 copyright_start: 2013
+license: gpl-v2
 
 contributing_rst: {}
 
@@ -23,10 +24,9 @@ docs_conf_py:
   intersphinx_mapping:
     pyopencl: https://documen.tician.de/pyopencl/
     scipy: https://docs.scipy.org/doc/scipy/reference/
-  tagmanager_id: GTM-KWCR2HN
 
 setup_py:
-  url: https://labs.nengo.ai/nengo-ocl/
+  url: https://www.nengo.ai/nengo-ocl/
   include_package_data: True
   install_req:
     - nengo>=3.1.0
@@ -52,7 +52,6 @@ setup_py:
     - "Development Status :: 4 - Beta"
     - "Framework :: Nengo"
     - "Intended Audience :: Science/Research"
-    - "License :: Free for non-commercial use"
     - "Operating System :: OS Independent"
     - "Programming Language :: Python"
     - "Programming Language :: Python :: 3.6"

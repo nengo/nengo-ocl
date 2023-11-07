@@ -13,7 +13,7 @@ Filing issues
 If you find a bug in NengoOCL,
 or think that a certain feature is missing,
 please consider
-`filing an issue <https://github.com/nengo-labs/nengo-ocl/issues>`_!
+`filing an issue <https://github.com/nengo/nengo-ocl/issues>`_!
 Please search the currently open issues first
 to see if your bug or feature request already exists.
 If so, feel free to add a comment to the issue
@@ -26,10 +26,6 @@ If you want to fix a bug or add a feature to NengoOCL,
 we welcome pull requests.
 Ensure that you fill out all sections of the pull request template,
 deleting the comments as you go.
-We check most aspects of code style automatically.
-Please refer to our
-`code style guide <https://www.nengo.ai/nengo-bones/style.html>`_
-for things that we check manually.
 
 Contributor agreement
 =====================

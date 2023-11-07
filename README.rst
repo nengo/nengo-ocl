@@ -9,7 +9,7 @@
 |
 
 .. image:: https://www.nengo.ai/design/_images/nengo-ocl-full-light.svg
-  :target: https://labs.nengo.ai/nengo-ocl
+  :target: https://www.nengo.ai/nengo-ocl
   :alt: NengoOCL
   :width: 400px
 

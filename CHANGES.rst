@@ -43,8 +43,8 @@ Release History
 
 - Dropped support for Python 3.5. (`#187`_)
 
-.. _#187: https://github.com/nengo-labs/nengo-ocl/pull/187
-.. _#188: https://github.com/nengo-labs/nengo-ocl/pull/188
+.. _#187: https://github.com/nengo/nengo-ocl/pull/187
+.. _#188: https://github.com/nengo/nengo-ocl/pull/188
 
 2.1.0 (Nov 23, 2020)
 ====================
@@ -64,9 +64,9 @@ Release History
 - Added support for Nengo 3.1.0, and retired support for Nengo 3.0.0. (`#180`_)
 - Changes to improve benchmarks, including comparing between benchmarks. (`#182`_)
 
-.. _#180: https://github.com/nengo-labs/nengo-ocl/pull/180
-.. _#182: https://github.com/nengo-labs/nengo-ocl/pull/182
-.. _#183: https://github.com/nengo-labs/nengo-ocl/pull/183
+.. _#180: https://github.com/nengo/nengo-ocl/pull/180
+.. _#182: https://github.com/nengo/nengo-ocl/pull/182
+.. _#183: https://github.com/nengo/nengo-ocl/pull/183
 
 2.0.0 (Sept 4, 2020)
 ====================
@@ -75,7 +75,6 @@ Release History
 
 **Added**
 
-- The documentation is now online at https://labs.nengo.ai/nengo-ocl/ (`#179`_)
 - ``Sparse`` transforms are now supported. (`#176`_)
 - Added ``Simulator.clear_probes`` method to clear probe data stored in memory.
   (`#179`_)
@@ -88,9 +87,9 @@ Release History
 - ``Convolution`` transforms are now supported. The previous code supporting ``Conv2d``
   and ``Pool2d`` processes (from NengoExtras) has been removed. (`#172`_)
 
-.. _#172: https://github.com/nengo-labs/nengo-ocl/pull/172
-.. _#176: https://github.com/nengo-labs/nengo-ocl/pull/176
-.. _#179: https://github.com/nengo-labs/nengo-ocl/pull/179
+.. _#172: https://github.com/nengo/nengo-ocl/pull/172
+.. _#176: https://github.com/nengo/nengo-ocl/pull/176
+.. _#179: https://github.com/nengo/nengo-ocl/pull/179
 
 1.4.0 (July 4, 2018)
 ====================
