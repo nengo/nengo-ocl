@@ -607,7 +607,7 @@ class Simulator:
             )
             self.run_steps(steps, progress_bar=progress_bar)
 
-    def run_steps(self, steps, progress_bar=True):  # noqa: C901
+    def run_steps(self, steps, progress_bar=None):  # noqa: C901
         """Simulate for the given number of ``dt`` steps.
 
         Parameters
