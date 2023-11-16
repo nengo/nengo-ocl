@@ -125,6 +125,6 @@ setup_cfg:
 version_py:
   major: 3
   minor: 0
-  patch: 0
-  release: true
+  patch: 1
+  release: false
 
