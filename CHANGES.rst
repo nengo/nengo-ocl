@@ -19,8 +19,8 @@ Release History
    - Removed
    - Fixed
 
-2.1.1 (unreleased)
-==================
+3.0.0 (November 16, 2023)
+=========================
 
 *Compatible with Nengo 3.1.0*
 
@@ -38,6 +38,7 @@ Release History
   would result in a large increase in memory usage, we fall back on the old CSR format.
   To force a particular format, set the ``NENGO_OCL_SPMV_ALGORITHM`` environment
   variable to either "ELLPACK" or "CSR". (`#188`_)
+- Made NengoOCL available under the GPLv2 license. (`#191`_)
 
 **Removed**
 
@@ -45,6 +46,7 @@ Release History
 
 .. _#187: https://github.com/nengo/nengo-ocl/pull/187
 .. _#188: https://github.com/nengo/nengo-ocl/pull/188
+.. _#191: https://github.com/nengo/nengo-ocl/pull/191
 
 2.1.0 (Nov 23, 2020)
 ====================

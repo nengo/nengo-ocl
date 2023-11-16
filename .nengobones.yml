@@ -121,3 +121,10 @@ setup_cfg:
       # tol for synapses is high b/c Nengo uses SS and we use num/den
       - tests/test_synapses.py::test_* atol=1e-5
       - tests/test_transforms.py::test_convolution[* atol=1e-5
+
+version_py:
+  major: 3
+  minor: 0
+  patch: 0
+  release: true
+
