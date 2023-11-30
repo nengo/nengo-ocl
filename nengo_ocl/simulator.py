@@ -1289,7 +1289,6 @@ class Simulator:
 
     def _plan_WhiteSignal(self, ops):
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        # t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
         t = self.step_data[[0]]
 
         dt = self.model.dt
@@ -1307,7 +1306,6 @@ class Simulator:
     def _plan_PresentInput(self, ops):
         ps = [op.process for op in ops]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        # t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
         t = self.step_data[[0]]
         inputs = self.RaggedArray(
             [p.inputs.reshape(p.inputs.shape[0], -1) for p in ps], dtype=np.float32
