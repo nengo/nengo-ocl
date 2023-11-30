@@ -7,7 +7,6 @@ import numpy as np
 import pyopencl as cl
 from mako.template import Template
 from nengo.utils.numpy import is_number
-
 from nengo_ocl import ast_conversion
 from nengo_ocl.clraggedarray import CLRaggedArray, to_device
 from nengo_ocl.plan import Plan
@@ -112,7 +111,8 @@ def blockify_vector(max_size, ra):
 
 def plan_timeupdate(queue, step, time, dt):
     assert len(step) == len(time) == 1
-    assert step.ctype == time.ctype == "float"
+    assert step.ctype == "int"
+    assert time.ctype == "float"
     assert step.shape0s[0] == step.shape1s[0] == 1
     assert time.shape0s[0] == time.shape1s[0] == 1
 
@@ -120,12 +120,12 @@ def plan_timeupdate(queue, step, time, dt):
         ////////// MAIN FUNCTION //////////
         __kernel void timeupdate(
             __global const int *step_starts,
-            __global float *step_data,
+            __global int *step_data,
             __global const int *time_starts,
             __global float *time_data
         )
         {
-            __global float *step = step_data + step_starts[0];
+            __global int *step = step_data + step_starts[0];
             __global float *time = time_data + time_starts[0];
             step[0] += 1;
             time[0] = ${dt} * step[0];

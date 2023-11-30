@@ -25,7 +25,6 @@ from nengo.utils.filter_design import ss2tf
 from nengo.utils.numpy import scipy_sparse
 from nengo.utils.progress import Progress, ProgressTracker
 from nengo.utils.stdlib import Timer, groupby
-
 from nengo_ocl.ast_conversion import OclFunction
 from nengo_ocl.builder import Builder
 from nengo_ocl.clra_gemv import plan_block_gemv, plan_sparse_dot_inc
@@ -121,7 +120,9 @@ class ViewBuilder:
         )
 
     def setup_views(self, ops):
-        all_views = [sig for op in ops for sig in op.all_signals]
+        # Get all signals from ops. Note that "step" signal is omitted since it is not
+        # included in `all_data` and is handled differently (see `step_data` in Simulator)
+        all_views = [sig for op in ops for sig in op.all_signals if sig.name != "step"]
         for op in (op for op in ops if isinstance(op, MultiDotInc)):
             A_views, X_views, Y_view, Y_in_view, beta_view = op.get_views()
             multidotinc_views = (
@@ -283,8 +284,15 @@ class Simulator:
             if any(s.is_view for s in sparse_signals):
                 raise NotImplementedError("Sparse signal views not yet supported")
 
-            dense_bases = [sig for sig in all_bases if not sig.sparse]
+            dense_bases = [
+                sig for sig in all_bases if (not sig.sparse and sig.name != "step")
+            ]
             sparse_bases = [sig for sig in all_bases if sig.sparse]
+
+            # Get base signal for `step` signal. Unlike dense signals, will use int32
+            # to represent `step` value.
+            step_base = [sig for sig in all_bases if sig.name == "step"]
+            assert len(step_base) == 1  # Should only have 1 `step` signal
 
             # --- create dense data on host and add views
             dense_data = []  # the actual arrays (from `sigdict`) for each dense base
@@ -312,6 +320,16 @@ class Simulator:
                 view_builder.append_view(self.model.sig[probe]["in"])
             view_builder.add_views_to(dense_data)
 
+            # --- create step data on host
+            # Use int32 to represent step value, instead of float32. This is so that the
+            # maximum step value is 2**31 rather than 2**24. If using float32, at the
+            # value 2**24, 2**24 + 1 = 2**24 (precision error).
+            step_data = RaggedArray(
+                [sigdict[step_base[0]]],
+                names=[getattr(sb, "name", "") for sb in step_base],
+                dtype=np.int32,
+            )
+
             self.all_bases = dense_bases
             self.sidx = {k: np.int32(v) for k, v in view_builder.sidx.items()}
             self._A_views = view_builder._A_views
@@ -326,6 +344,7 @@ class Simulator:
 
             # Copy data to device
             self.all_data = CLRaggedArray(self.queue, dense_data)
+            self.step_data = CLRaggedArray(self.queue, step_data)
             self.sparse_data = sparse_data  # sparse data currently handled on host
 
             # Provide an interface to simulation data (build output and probe data)
@@ -397,7 +416,11 @@ class Simulator:
         """
         Return internally shaped signals, which are always 2d
         """
-        return self.all_data[self.sidx[item]]
+        if item.name == "step":
+            # `step` signal value is not contained in `self.all_data`
+            return self.step_data[0]
+        else:
+            return self.all_data[self.sidx[item]]
 
     def __getstate__(self):
         raise NotImplementedError("NengoOCL simulator does not yet support pickling")
@@ -438,6 +461,10 @@ class Simulator:
                 return len(self.all_bases)
 
             def __getitem__(_, item):
+                if item.name == "step":
+                    # `step` signal value is not contained in `self.all_data`
+                    return self.step_data[0]
+
                 raw = self.all_data[self.sidx[item]]
                 if item.ndim == 0:
                     return raw[0, 0]
@@ -625,9 +652,9 @@ class Simulator:
         if self.closed:
             raise SimulatorClosed("Simulator cannot run because it is closed.")
 
-        if self.n_steps + steps >= 2 ** 24:
-            # since n_steps is float32, point at which `n_steps == n_steps + 1`
-            raise ValueError("Cannot handle more than 2**24 steps")
+        if self.n_steps + steps >= 2**31:
+            # since n_steps is int32, point at which `n_steps + 1` will overflow
+            raise ValueError("Cannot handle more than 2**31 steps")
 
         if steps < 0:
             raise ValueError("Cannot run for negative steps (got %r)" % (steps,))
@@ -817,7 +844,7 @@ class Simulator:
 
     def _plan_TimeUpdate(self, ops):
         (op,) = ops
-        step = self.all_data[[self.sidx[op.step]]]
+        step = self.step_data[[0]]
         time = self.all_data[[self.sidx[op.time]]]
         return [plan_timeupdate(self.queue, step, time, self.model.dt)]
 
@@ -1262,7 +1289,8 @@ class Simulator:
 
     def _plan_WhiteSignal(self, ops):
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        # t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        t = self.step_data[[0]]
 
         dt = self.model.dt
         signals = []
@@ -1279,7 +1307,8 @@ class Simulator:
     def _plan_PresentInput(self, ops):
         ps = [op.process for op in ops]
         Y = self.all_data[[self.sidx[op.output] for op in ops]]
-        t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        # t = self.all_data[[self.sidx[self.model.step] for _ in ops]]
+        t = self.step_data[[0]]
         inputs = self.RaggedArray(
             [p.inputs.reshape(p.inputs.shape[0], -1) for p in ps], dtype=np.float32
         )
