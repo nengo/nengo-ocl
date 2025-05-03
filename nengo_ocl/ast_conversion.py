@@ -624,6 +624,8 @@ class OclTranslator(ast.NodeVisitor):
         assert isinstance(expr.value, ast.Name)
         var = self.visit(expr.value)
         s = self.visit(expr.slice)
+        if isinstance(s, NumExp):
+            s = s.value
         return var[s]
 
     def _broadcast_args(self, func, args):
